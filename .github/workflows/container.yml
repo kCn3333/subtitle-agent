@@ -1,0 +1,86 @@
+name: Container
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    tags: ['v*.*.*']
+  workflow_dispatch:
+permissions:
+  contents: read
+  packages: write
+env:
+  IMAGE_NAME: ghcr.io/kcn3333/subtitle-agent
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=sha-,format=short
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+          labels: |
+            org.opencontainers.image.source=https://github.com/kCn3333/subtitle-agent
+      - if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Run tests in Python 3.12 image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: test
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: subtitle-agent:test
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VCS_REF=${{ github.sha }}
+            VERSION=${{ steps.meta.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Test container
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --name subtitle-agent-test -p 8080:8080 subtitle-agent:test
+          trap 'docker logs subtitle-agent-test; docker rm -f subtitle-agent-test' EXIT
+          for attempt in {1..30}; do
+            if python -c "import json,urllib.request; assert json.load(urllib.request.urlopen('http://127.0.0.1:8080/health'))['status']=='ok'"; then break; fi
+            if [ "$attempt" = 30 ]; then exit 1; fi
+            sleep 1
+          done
+          docker exec subtitle-agent-test ffmpeg -version
+          docker exec subtitle-agent-test ffprobe -version
+      - if: github.event_name != 'pull_request'
+        id: publish
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VCS_REF=${{ github.sha }}
+            VERSION=${{ steps.meta.outputs.version }}
+          cache-from: type=gha
+      - if: github.event_name != 'pull_request'
+        run: echo "### Image digest `${{ steps.publish.outputs.digest }}`" >> "$GITHUB_STEP_SUMMARY"

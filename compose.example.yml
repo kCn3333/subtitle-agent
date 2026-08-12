@@ -1,0 +1,26 @@
+services:
+  subtitle-agent:
+    image: ghcr.io/kcn3333/subtitle-agent:latest
+    container_name: subtitle-agent
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      APP_NAME: Subtitle Agent
+      APP_HOST: 0.0.0.0
+      APP_PORT: 8080
+      LOG_LEVEL: INFO
+      DATA_ROOT: /data
+      MEDIA_ROOTS: /media/movies,/media/shows
+      MAX_CONCURRENT_JOBS: 1
+      TZ: Europe/Warsaw
+    volumes:
+      - subtitle_agent_data:/data
+      - /media/movies:/media/movies:ro
+      - /media/shows:/media/shows:ro
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+volumes:
+  subtitle_agent_data:
