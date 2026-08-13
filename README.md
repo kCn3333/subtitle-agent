@@ -1,6 +1,6 @@
 # Subtitle Agent
 
-Lekki fundament usługi do przyszłego zarządzania napisami. Etap 1 udostępnia ciemne GUI, trwałe zadania demonstracyjne, konsolę Server-Sent Events i diagnostykę `ffmpeg`/`ffprobe`. Nie analizuje ani nie zapisuje napisów.
+Lekka usługa do bezpiecznej analizy mediów i napisów. Etap 2 sprawdza wskazany plik przez `ffprobe`, odkrywa wbudowane i zewnętrzne napisy, analizuje SRT, tworzy deterministyczne rankingi oraz przygotowuje angielską kopię roboczą wyłącznie pod `/data/work/jobs/<job_id>`. Nie synchronizuje napisów i niczego nie zapisuje w katalogu mediów.
 
 ## GUI
 
@@ -32,8 +32,10 @@ Obraz: `ghcr.io/kcn3333/subtitle-agent:latest`. Lokalnie uruchom `docker compose
 | `APP_PORT` | `8080` | Port HTTP |
 | `LOG_LEVEL` | `INFO` | Poziom logowania |
 | `DATA_ROOT` | `/data` | Zapisywalne dane i SQLite |
-| `MEDIA_ROOTS` | `/media/movies,/media/shows` | Dozwolone korzenie mediów |
+| `SUBTITLE_AGENT_MEDIA_ROOTS` | `/media/movies:/media/shows` | Dozwolone korzenie mediów rozdzielone dwukropkiem; starsze `MEDIA_ROOTS` pozostaje obsługiwane |
 | `MAX_CONCURRENT_JOBS` | `1` | Liczba równoległych zadań |
+| `FFPROBE_TIMEOUT_SECONDS` | `30` | Limit czasu analizy ffprobe |
+| `FFMPEG_TIMEOUT_SECONDS` | `120` | Limit czasu bezpiecznej ekstrakcji roboczej |
 
 `.env.example` nie zawiera sekretów. Klucz OpenAI nie jest obecnie obsługiwany.
 
@@ -41,11 +43,12 @@ Obraz: `ghcr.io/kcn3333/subtitle-agent:latest`. Lokalnie uruchom `docker compose
 
 - `GET /` — GUI.
 - `GET /health` — gotowość aplikacji i narzędzi.
-- `POST /api/jobs` — tworzy zadanie demonstracyjne (`{"mediaPath":"/media/shows/example.mkv"}`).
-- `GET /api/jobs/{job_id}` — stan zadania.
+- `POST /api/jobs` — tworzy trwałe zadanie analizy (`{"mediaPath":"/media/shows/example.mkv"}`).
+- `GET /api/jobs` — lista ostatnich zadań.
+- `GET /api/jobs/{job_id}` — stan i pełny raport zadania.
 - `GET /api/jobs/{job_id}/events` — historia i zdarzenia SSE; `Last-Event-ID` umożliwia wznowienie, heartbeat pojawia się po 15 s ciszy.
 
-Zdarzenia mają rosnącą sekwencję, czas ze strefą, etap, poziom, wiadomość i postęp 0–100. SQLite pracuje w WAL; maksymalnie 500 zdarzeń pozostaje na zadanie. Zadania niedokończone podczas restartu stają się `INTERRUPTED`.
+Zdarzenia mają rosnącą sekwencję, czas ze strefą, etap, poziom, wiadomość i postęp 0–100. SQLite pracuje w WAL; maksymalnie 500 zdarzeń pozostaje na zadanie. Zadania niedokończone podczas restartu stają się `INTERRUPTED`. Raport obejmuje dane techniczne, ścieżki napisów, analizę zewnętrznych SRT, rankingi z powodami punktacji, wybory oraz ostrzeżenia.
 
 ## GHCR i CI
 
@@ -53,8 +56,8 @@ GitHub Actions buduje `linux/amd64`, testuje `/health`, `ffmpeg` i `ffprobe`, a 
 
 ## Bezpieczeństwo i ograniczenia etapu 1
 
-Kontener działa jako UID/GID 10001, bez capabilities i z `no-new-privileges`. Walidacja odrzuca ścieżki względne, NUL, traversal i wyjście poza `MEDIA_ROOTS`. Repozytorium nie przechowuje `.env`, mediów ani sekretów. Brak jeszcze OpenAI, autonomicznego agenta, ekstrakcji/synchronizacji napisów, zapisu do bibliotek i Jellyfina.
+Kontener działa jako UID/GID 10001, bez capabilities i z `no-new-privileges`. Walidacja używa `Path.resolve(strict=True)` i odrzuca ścieżki względne, NUL, symlinki poza rootem, brak pliku, katalogi i nieobsługiwane rozszerzenia. Media pozostają `read-only`; tylko kopie robocze trafiają do `/data`. Repozytorium nie przechowuje `.env`, mediów ani sekretów. Brak jeszcze OpenAI, autonomicznego agenta, synchronizacji i publikowania napisów oraz Jellyfina.
 
 ## Kolejne etapy
 
-Etap 2 może dodać kontrolowane sondowanie pliku przez ffprobe, model domenowy ścieżek napisów, bezpieczny katalog roboczy i projekt procesu publikacji SRT. Integracje z OpenAI i Jellyfinem powinny wejść dopiero po osobnej decyzji i testach bezpieczeństwa zapisu.
+Kolejny etap może dodać właściwą synchronizację w katalogu roboczym, podgląd różnic czasowych oraz atomowy i jawnie zatwierdzany mechanizm publikacji SRT. Integracje z OpenAI i Jellyfinem powinny wejść dopiero po osobnej decyzji i testach bezpieczeństwa zapisu.

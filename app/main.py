@@ -25,7 +25,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         tools = probe_tools()
         logger.info("Narzędzia systemowe: %s; %s", tools.ffmpeg, tools.ffprobe)
         app.state.tools = tools
-        app.state.jobs = JobManager(config.data_root / "subtitle-agent.db", config.max_concurrent_jobs, config.demo_step_delay)
+        app.state.jobs = JobManager(config.data_root / "subtitle-agent.db", config)
         await app.state.jobs.start()
         try:
             yield
