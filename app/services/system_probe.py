@@ -34,4 +34,5 @@ def prepare_data_root(data_root: Path) -> Path:
         raise RuntimeError(f"DATA_ROOT nie jest zapisywalny: {data_root}") from exc
     jobs = data_root / "jobs"
     jobs.mkdir(exist_ok=True)
+    (data_root / "work" / "jobs").mkdir(parents=True, exist_ok=True)
     return jobs
