@@ -36,6 +36,16 @@ class JobStatus(StrEnum):
     AI_UNAVAILABLE = "AI_UNAVAILABLE"
     AI_BUDGET_EXCEEDED = "AI_BUDGET_EXCEEDED"
     SEMANTIC_FALLBACK = "SEMANTIC_FALLBACK"
+    READY_TO_PUBLISH = "READY_TO_PUBLISH"
+    PUBLISHING = "PUBLISHING"
+    PUBLISHED = "PUBLISHED"
+    PUBLISH_DISABLED = "PUBLISH_DISABLED"
+    PUBLISH_BLOCKED_QUALITY = "PUBLISH_BLOCKED_QUALITY"
+    PUBLISH_SOURCE_CHANGED = "PUBLISH_SOURCE_CHANGED"
+    PUBLISH_CONFLICT = "PUBLISH_CONFLICT"
+    PUBLISH_PERMISSION_DENIED = "PUBLISH_PERMISSION_DENIED"
+    PUBLISH_UNSUPPORTED_FILESYSTEM = "PUBLISH_UNSUPPORTED_FILESYSTEM"
+    PUBLISH_FAILED = "PUBLISH_FAILED"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
     INTERRUPTED = "INTERRUPTED"
@@ -58,11 +68,23 @@ class AlignmentMode(StrEnum):
     SEMANTIC_REQUIRED = "SEMANTIC_REQUIRED"
 
 
+class PublishMode(StrEnum):
+    PREVIEW_ONLY = "PREVIEW_ONLY"
+    MANUAL = "MANUAL"
+    AUTO_HIGH = "AUTO_HIGH"
+
+
 class AlignJobRequest(BaseModel):
     model_config = API_MODEL_CONFIG
     english_source_id: str | None = None
     polish_source_id: str | None = None
     mode: AlignmentMode = AlignmentMode.SEMANTIC_PREFERRED
+
+
+class PublishJobRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel, extra="forbid")
+    confirmed: bool
+    expected_preview_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 class JobResponse(BaseModel):

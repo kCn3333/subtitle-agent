@@ -259,3 +259,17 @@ def test_semantic_diagnostics_never_exposes_secret(client):
     payload = response.json()
     assert payload["enabled"] is False and payload["configured"] is False
     assert "key" not in str(payload).lower()
+
+
+def test_publish_api_rejects_arbitrary_target_fields(client, media_file):
+    job_id = create(client, media_file).json()["jobId"]
+    response = client.post(f"/api/jobs/{job_id}/publication", json={
+        "confirmed": True, "expectedPreviewSha256": "0" * 64,
+        "targetPath": "/media/movies/overwrite.srt", "version": 1})
+    assert response.status_code == 422
+
+
+def test_publish_diagnostic_is_safe_when_disabled(client):
+    response = client.get("/api/jobs/publishing/config")
+    assert response.status_code == 200
+    assert response.json()["enabled"] is False

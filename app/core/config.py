@@ -44,6 +44,14 @@ class Settings(BaseSettings):
     openai_semantic_window_size: int = 18
     openai_semantic_window_overlap: int = 4
     openai_min_confidence: float = 0.72
+    subtitle_agent_publish_enabled: bool = False
+    subtitle_agent_publish_mode: str = "PREVIEW_ONLY"
+    subtitle_agent_publish_mappings_json: dict[Path, Path] = Field(default_factory=lambda: {
+        Path("/media/movies"): Path("/publish/movies"), Path("/media/shows"): Path("/publish/shows")})
+    subtitle_agent_auto_publish_min_quality: str = "HIGH"
+    subtitle_agent_auto_publish_require_semantic: bool = True
+    subtitle_agent_publish_max_version: int = 999
+    subtitle_agent_publish_file_mode: int = 0o644
 
     @field_validator("media_roots", mode="before")
     @classmethod
@@ -91,6 +99,42 @@ class Settings(BaseSettings):
     @classmethod
     def confidence_range(cls, value: float) -> float:
         if not 0 <= value <= 1: raise ValueError("OPENAI_MIN_CONFIDENCE must be between 0 and 1")
+        return value
+
+    @field_validator("subtitle_agent_publish_mode")
+    @classmethod
+    def publish_mode(cls, value: str) -> str:
+        if value not in {"PREVIEW_ONLY", "MANUAL", "AUTO_HIGH"}:
+            raise ValueError("SUBTITLE_AGENT_PUBLISH_MODE is invalid")
+        return value
+
+    @field_validator("subtitle_agent_auto_publish_min_quality")
+    @classmethod
+    def publish_quality(cls, value: str) -> str:
+        if value not in {"HIGH", "MEDIUM"}:
+            raise ValueError("SUBTITLE_AGENT_AUTO_PUBLISH_MIN_QUALITY must be HIGH or MEDIUM")
+        return value
+
+    @field_validator("subtitle_agent_publish_max_version")
+    @classmethod
+    def publish_version(cls, value: int) -> int:
+        if not 1 <= value <= 999:
+            raise ValueError("SUBTITLE_AGENT_PUBLISH_MAX_VERSION must be between 1 and 999")
+        return value
+
+    @field_validator("subtitle_agent_publish_file_mode", mode="before")
+    @classmethod
+    def publish_file_mode(cls, value: object) -> int:
+        parsed = int(value, 8) if isinstance(value, str) else int(value)
+        if parsed < 0 or parsed > 0o777:
+            raise ValueError("SUBTITLE_AGENT_PUBLISH_FILE_MODE must be an octal mode up to 0777")
+        return parsed
+
+    @field_validator("subtitle_agent_publish_mappings_json")
+    @classmethod
+    def publish_mappings(cls, value: dict[Path, Path]) -> dict[Path, Path]:
+        if not value or any(not source.is_absolute() or not target.is_absolute() for source, target in value.items()):
+            raise ValueError("Publish mappings must contain absolute source and target paths")
         return value
 
     @model_validator(mode="after")
