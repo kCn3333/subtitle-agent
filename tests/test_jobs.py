@@ -3,6 +3,7 @@ import time
 
 from app.models.job import JobStatus
 from app.services.job_manager import JobManager
+from app.services.process_runner import ProcessTimeoutError
 
 
 def create(client, path):
@@ -30,8 +31,10 @@ def test_create_real_analysis_job(client, media_file):
     assert {path.name for path in media_file.parent.iterdir()} == before
     stages = [event.stage for event in client.app.state.jobs.events(body["jobId"])]
     assert stages == [JobStatus.QUEUED, JobStatus.VALIDATING_PATH, JobStatus.PROBING_MEDIA,
-                      JobStatus.DISCOVERING_SUBTITLES, JobStatus.ANALYZING_CANDIDATES,
-                      JobStatus.EXTRACTING_REFERENCE, JobStatus.COMPLETED]
+                      JobStatus.DISCOVERING_SUBTITLES, JobStatus.DISCOVERING_SUBTITLES,
+                      JobStatus.ANALYZING_CANDIDATES, JobStatus.ANALYZING_CANDIDATES,
+                      JobStatus.ANALYZING_CANDIDATES, JobStatus.EXTRACTING_REFERENCE,
+                      JobStatus.COMPLETED]
 
 
 def test_invalid_path_creates_persistent_failed_job(client, settings):
@@ -58,7 +61,7 @@ def test_list_jobs_and_sse_history(client, media_file, settings):
     jobs = client.get("/api/jobs").json()
     assert jobs[0]["jobId"] == job_id
     text = client.get(f"/api/jobs/{job_id}/events").text
-    assert text.count("event: job") == 7
+    assert text.count("event: job") == 10
     assert '"stage":"COMPLETED"' in text
     with sqlite3.connect(settings.data_root / "subtitle-agent.db") as db:
         assert db.execute("SELECT report_json FROM jobs WHERE id=?", (job_id,)).fetchone()[0]
@@ -130,3 +133,18 @@ def test_unknown_historical_event_does_not_break_history(settings):
     event = manager.events("future")[0]
     assert event.stage == "FUTURE_STAGE"
     assert "FUTURE_STAGE" in event.model_dump_json()
+
+
+def test_ffmpeg_timeout_has_actionable_job_message(client, media_file, monkeypatch):
+    async def timeout(*args, **kwargs):
+        raise ProcessTimeoutError("Proces przekroczył limit")
+
+    monkeypatch.setattr("app.services.job_manager.extract_reference", timeout)
+    monkeypatch.setattr("app.services.job_manager.rank_english", lambda *args: [{
+        "sourceType": "embedded", "streamIndex": 3, "codec": "subrip", "type": "text", "score": 70,
+    }])
+    job_id = create(client, media_file).json()["jobId"]
+    body = wait_terminal(client, job_id)
+    assert body["status"] == "FAILED"
+    assert "limit 1 s" in body["errorMessage"]
+    assert "magazynu sieciowego" in body["errorMessage"]

@@ -7,7 +7,7 @@
 <body><main>
   <header><div><p class="eyebrow">ETAP 2 · ANALIZA</p><h1>{{ app_name }}</h1><p>Bezpieczna analiza techniczna mediów i napisów — bez zmian w bibliotece.</p></div><span class="health">● ONLINE</span></header>
   <section class="card"><form id="job-form"><label for="media-path">Pełna ścieżka do filmu lub odcinka</label><div class="row"><input id="media-path" required placeholder="/media/movies/example.mkv"><button>Analizuj</button></div></form></section>
-  <section class="status card"><div><span>Status zadania</span><strong id="status">BRAK ZADANIA</strong></div><div><span>Postęp</span><strong id="progress">0%</strong></div></section>
+  <section class="status card"><div><span>Status zadania</span><strong id="status">BRAK ZADANIA</strong></div><div><span>Postęp</span><strong id="progress">0%</strong></div><div class="current"><span>Aktualnie</span><strong id="current-activity">Oczekiwanie na zadanie</strong></div></section>
   <section class="console-card"><div class="console-head"><span>Konsola postępu</span><button id="clear" type="button">Wyczyść widok konsoli</button></div><div id="console" class="console" aria-live="polite"></div></section>
   <section id="results" class="card results" hidden><h2>Wyniki analizy</h2><div id="result-content"></div><p class="safe-note">Na tym etapie żaden plik w katalogu mediów nie został zmieniony.</p></section>
 </main><script src="/static/app.js"></script></body></html>

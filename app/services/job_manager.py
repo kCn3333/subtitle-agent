@@ -14,6 +14,7 @@ from app.services.media_analysis import (
     UserInputError, discover_external_subtitles, extract_reference, probe_media,
     rank_english, rank_polish, validate_media_path,
 )
+from app.services.process_runner import ProcessExecutionError, ProcessTimeoutError
 
 
 TERMINAL = {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.INTERRUPTED}
@@ -26,6 +27,14 @@ LEGACY_EVENT_STAGES = {
 
 def now() -> datetime:
     return datetime.now().astimezone()
+
+
+def candidate_label(candidate: dict | None) -> str:
+    if not candidate:
+        return "brak"
+    if candidate.get("name"):
+        return str(candidate["name"])
+    return f"strumień {candidate.get('streamIndex', '?')} ({candidate.get('codec', 'nieznany kodek')})"
 
 
 class JobManager:
@@ -164,17 +173,51 @@ class JobManager:
 
                 await self._emit(job_id, "INFO", JobStatus.DISCOVERING_SUBTITLES, "Wyszukiwanie wbudowanych i zewnętrznych napisów", 50)
                 external = await asyncio.to_thread(discover_external_subtitles, media_path)
+                embedded = media["embeddedSubtitles"]
+                await self._emit(
+                    job_id, "INFO", JobStatus.DISCOVERING_SUBTITLES,
+                    f"Znaleziono: {len(embedded)} wbudowanych ścieżek napisów i {len(external)} plików zewnętrznych", 55,
+                )
 
                 await self._emit(job_id, "INFO", JobStatus.ANALYZING_CANDIDATES, "Klasyfikacja źródeł angielskich i polskich", 70)
-                english_ranking = rank_english(media["embeddedSubtitles"], external)
-                polish_ranking = rank_polish(media, external, media["embeddedSubtitles"])
+                english_ranking = rank_english(embedded, external)
+                polish_ranking = rank_polish(media, external, embedded)
                 selected_english = english_ranking[0] if english_ranking and english_ranking[0]["score"] > 0 else None
                 selected_polish = next((item for item in polish_ranking if item["eligibleByDefault"] and item["score"] > 0), None)
+                await self._emit(job_id, "INFO", JobStatus.ANALYZING_CANDIDATES,
+                                 f"Wybrane źródło angielskie: {candidate_label(selected_english)}", 75)
+                await self._emit(job_id, "SUCCESS" if selected_polish else "WARNING", JobStatus.ANALYZING_CANDIDATES,
+                                 f"Wybrane polskie napisy: {candidate_label(selected_polish)}", 80)
 
-                await self._emit(job_id, "INFO", JobStatus.EXTRACTING_REFERENCE, "Przygotowanie bezpiecznej kopii roboczej źródła angielskiego", 85)
-                working_reference = await extract_reference(
-                    selected_english, media_path, work_dir, self.settings.ffmpeg_timeout_seconds
+                extraction_message = (
+                    f"Ekstrakcja {candidate_label(selected_english)} do katalogu roboczego; "
+                    f"limit {self.settings.ffmpeg_timeout_seconds:g} s — ffmpeg może czytać cały plik"
+                    if selected_english else "Pominięto ekstrakcję: brak angielskiego źródła referencyjnego"
                 )
+                await self._emit(job_id, "INFO" if selected_english else "WARNING",
+                                 JobStatus.EXTRACTING_REFERENCE, extraction_message, 85)
+                try:
+                    working_reference = await extract_reference(
+                        selected_english, media_path, work_dir, self.settings.ffmpeg_timeout_seconds
+                    )
+                except ProcessTimeoutError:
+                    message = (
+                        f"Ekstrakcja przez ffmpeg przekroczyła limit {self.settings.ffmpeg_timeout_seconds:g} s. "
+                        "Plik może być duży lub odczyt z magazynu sieciowego jest zbyt wolny."
+                    )
+                    with self._lock, self._connect() as db:
+                        db.execute("UPDATE jobs SET error_message=? WHERE id=?", (message, job_id))
+                    await self._emit(job_id, "ERROR", JobStatus.FAILED, message, 100)
+                    continue
+                except ProcessExecutionError as exc:
+                    message = f"ffmpeg nie ukończył ekstrakcji: {exc}"
+                    with self._lock, self._connect() as db:
+                        db.execute("UPDATE jobs SET error_message=? WHERE id=?", (message, job_id))
+                    await self._emit(job_id, "ERROR", JobStatus.FAILED, message, 100)
+                    continue
+                if working_reference:
+                    await self._emit(job_id, "SUCCESS", JobStatus.EXTRACTING_REFERENCE,
+                                     f"Kopia robocza jest gotowa: {Path(working_reference).name}", 92)
                 warnings = []
                 if selected_english and selected_english.get("type") == "graphic":
                     warnings.append("Wybrana angielska ścieżka jest graficzna i w przyszłości będzie wymagać OCR")

@@ -25,3 +25,8 @@ def test_prefixed_media_roots_accept_colon_separator(monkeypatch):
     settings = Settings()
 
     assert settings.media_roots == [Path("/media/movies"), Path("/media/shows")]
+
+
+def test_default_ffmpeg_timeout_is_ten_minutes(monkeypatch):
+    monkeypatch.delenv("FFMPEG_TIMEOUT_SECONDS", raising=False)
+    assert Settings().ffmpeg_timeout_seconds == 600

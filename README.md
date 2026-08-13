@@ -35,7 +35,7 @@ Obraz: `ghcr.io/kcn3333/subtitle-agent:latest`. Lokalnie uruchom `docker compose
 | `SUBTITLE_AGENT_MEDIA_ROOTS` | `/media/movies:/media/shows` | Dozwolone korzenie mediów rozdzielone dwukropkiem; starsze `MEDIA_ROOTS` pozostaje obsługiwane |
 | `MAX_CONCURRENT_JOBS` | `1` | Liczba równoległych zadań |
 | `FFPROBE_TIMEOUT_SECONDS` | `30` | Limit czasu analizy ffprobe |
-| `FFMPEG_TIMEOUT_SECONDS` | `120` | Limit czasu bezpiecznej ekstrakcji roboczej |
+| `FFMPEG_TIMEOUT_SECONDS` | `600` | Limit czasu bezpiecznej ekstrakcji roboczej; odczyt dużego pliku z NAS może potrwać kilka minut |
 
 `.env.example` nie zawiera sekretów. Klucz OpenAI nie jest obecnie obsługiwany.
 

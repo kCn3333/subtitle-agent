@@ -14,7 +14,7 @@ services:
       SUBTITLE_AGENT_MEDIA_ROOTS: /media/movies:/media/shows
       MAX_CONCURRENT_JOBS: 1
       FFPROBE_TIMEOUT_SECONDS: 30
-      FFMPEG_TIMEOUT_SECONDS: 120
+      FFMPEG_TIMEOUT_SECONDS: 600
       TZ: Europe/Warsaw
     volumes:
       - subtitle_agent_data:/data

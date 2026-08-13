@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     )
     max_concurrent_jobs: int = 1
     ffprobe_timeout_seconds: float = 30
-    ffmpeg_timeout_seconds: float = 120
+    ffmpeg_timeout_seconds: float = 600
 
     @field_validator("media_roots", mode="before")
     @classmethod
