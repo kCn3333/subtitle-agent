@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from app.models.job import JobStatus
+from app.models.job import AlignmentMode, JobStatus
 from app.services.job_manager import JobManager
 from app.services.process_runner import ProcessTimeoutError
 
@@ -202,8 +202,48 @@ async def test_alignment_preview_persists_and_input_is_unchanged(settings, media
     assert polish_path.read_bytes() == before
     preview = Path(alignment["previewPath"])
     assert preview.is_file() and "<i>Polski tekst</i>" in preview.read_text()
+    assert job["report"]["semanticAlignment"]["fallbackUsed"] is True
     restarted = JobManager(settings.data_root / "alignment.db", settings)
     assert restarted.get("sync")["report"]["alignment"]["previewSha256"] == alignment["previewSha256"]
+
+
+@pytest.mark.anyio
+async def test_structural_only_never_constructs_openai_provider(settings, media_file, monkeypatch):
+    settings.data_root.mkdir(parents=True)
+    manager = JobManager(settings.data_root / "structural.db", settings)
+    work = settings.data_root / "work" / "jobs" / "structural"
+    work.mkdir(parents=True)
+    english_path, polish_path = work / "reference.srt", media_file.parent / "movie.pl.srt"
+    content = "\n\n".join(f"{i}\n00:00:{i:02d},000 --> 00:00:{i:02d},800\nText {i}" for i in range(1, 13)) + "\n"
+    english_path.write_text(content); polish_path.write_text(content)
+    english = {"sourceType": "embedded", "streamIndex": 1, "type": "text", "score": 70}
+    polish = {"sourceType": "external", "name": polish_path.name, "path": str(polish_path), "score": 80}
+    report = {"media": {"durationSeconds": 30}, "englishRanking": [english], "polishRanking": [polish],
+              "selectedEnglish": english, "selectedPolish": polish,
+              "workingFiles": {"englishReference": str(english_path)}}
+    _insert_analyzed_job(manager, "structural", report, media_file)
+    monkeypatch.setattr("app.services.job_manager.OpenAIAnchorProvider",
+                        lambda *_: (_ for _ in ()).throw(AssertionError("OpenAI must not be constructed")))
+    await manager.align("structural", None, None, AlignmentMode.STRUCTURAL_ONLY)
+    assert manager.get("structural")["status"] == "COMPLETED"
+
+
+@pytest.mark.anyio
+async def test_semantic_required_without_configuration_has_no_structural_result(settings, media_file):
+    settings.data_root.mkdir(parents=True)
+    manager = JobManager(settings.data_root / "required.db", settings)
+    english = {"sourceType": "embedded", "streamIndex": 1, "type": "text", "score": 70}
+    polish_path = media_file.parent / "required.pl.srt"; polish_path.write_text("1\n00:00:01,000 --> 00:00:02,000\nPL\n")
+    work = settings.data_root / "work" / "jobs" / "required"; work.mkdir(parents=True)
+    english_path = work / "reference.srt"; english_path.write_text("1\n00:00:01,000 --> 00:00:02,000\nEN\n")
+    polish = {"sourceType": "external", "name": polish_path.name, "path": str(polish_path), "score": 80}
+    report = {"media": {"durationSeconds": 30}, "englishRanking": [english], "polishRanking": [polish],
+              "selectedEnglish": english, "selectedPolish": polish,
+              "workingFiles": {"englishReference": str(english_path)}}
+    _insert_analyzed_job(manager, "required", report, media_file)
+    await manager.align("required", None, None, AlignmentMode.SEMANTIC_REQUIRED)
+    job = manager.get("required")
+    assert job["status"] == "AI_UNAVAILABLE" and "alignment" not in job["report"]
 
 
 def test_preview_endpoint_rejects_recorded_path_outside_job(client, settings, media_file):
@@ -211,3 +251,11 @@ def test_preview_endpoint_rejects_recorded_path_outside_job(client, settings, me
     _insert_analyzed_job(manager, "unsafe", {"alignment": {"previewPath": "/etc/passwd"}}, media_file)
     response = client.get("/api/jobs/unsafe/preview")
     assert response.status_code == 404
+
+
+def test_semantic_diagnostics_never_exposes_secret(client):
+    response = client.get("/api/jobs/semantic/config")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["enabled"] is False and payload["configured"] is False
+    assert "key" not in str(payload).lower()

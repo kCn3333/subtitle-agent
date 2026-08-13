@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import AsyncIterator
 
 from app.core.config import Settings
-from app.models.job import JobEvent, JobStatus
+from app.models.job import AlignmentMode, JobEvent, JobStatus
 from app.services.media_analysis import (
     UserInputError, discover_external_subtitles, extract_reference, probe_media,
     rank_english, rank_polish, validate_media_path,
@@ -17,9 +17,12 @@ from app.services.media_analysis import (
 from app.services.process_runner import ProcessExecutionError, ProcessTimeoutError
 from app.services.alignment import (StructuralAnchorProvider, fit_models, parse_cues, public_model,
                                     quality, select_model, sha256, transform, write_preview)
+from app.services.semantic import (CompositeAnchorProvider, OpenAIAnchorProvider, SemanticBatchError,
+                                   SemanticBudgetExceeded, SemanticUnavailable)
 
 
-TERMINAL = {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.INTERRUPTED, JobStatus.REVIEW_REQUIRED, JobStatus.NEEDS_OCR}
+TERMINAL = {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.INTERRUPTED, JobStatus.REVIEW_REQUIRED,
+            JobStatus.NEEDS_OCR, JobStatus.AI_UNAVAILABLE, JobStatus.AI_BUDGET_EXCEEDED}
 LEGACY_EVENT_STAGES = {
     "INSPECTING": JobStatus.VALIDATING_PATH,
     "CHECKING_TOOLS": JobStatus.PROBING_MEDIA,
@@ -82,10 +85,11 @@ class JobManager:
             for legacy, current in LEGACY_EVENT_STAGES.items():
                 db.execute("UPDATE events SET stage=? WHERE stage=?", (current, legacy))
             stamp = now().isoformat()
-            db.execute("UPDATE jobs SET status=?, finished_at=?, error_message=? WHERE status NOT IN (?,?,?,?,?)",
+            db.execute("UPDATE jobs SET status=?, finished_at=?, error_message=? WHERE status NOT IN (?,?,?,?,?,?,?)",
                        (JobStatus.INTERRUPTED, stamp, "Zadanie przerwane przez restart aplikacji",
                         JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.INTERRUPTED,
-                        JobStatus.REVIEW_REQUIRED, JobStatus.NEEDS_OCR))
+                        JobStatus.REVIEW_REQUIRED, JobStatus.NEEDS_OCR, JobStatus.AI_UNAVAILABLE,
+                        JobStatus.AI_BUDGET_EXCEEDED))
 
     async def start(self) -> None:
         self._workers = [asyncio.create_task(self._worker()) for _ in range(self.max_concurrent)]
@@ -161,10 +165,11 @@ class JobManager:
             db.execute("UPDATE jobs SET report_json=?, resolved_media_path=? WHERE id=?",
                        (json.dumps(report, ensure_ascii=False), resolved_path, job_id))
 
-    async def start_alignment(self, job_id: str, english_source_id: str | None, polish_source_id: str | None) -> None:
+    async def start_alignment(self, job_id: str, english_source_id: str | None, polish_source_id: str | None,
+                              mode: AlignmentMode) -> None:
         async def run() -> None:
             try:
-                await self.align(job_id, english_source_id, polish_source_id)
+                await self.align(job_id, english_source_id, polish_source_id, mode)
             except UserInputError as exc:
                 with self._lock, self._connect() as db:
                     db.execute("UPDATE jobs SET error_message=? WHERE id=?", (str(exc), job_id))
@@ -176,7 +181,8 @@ class JobManager:
                 await self._emit(job_id, "ERROR", JobStatus.FAILED, message, 100)
         asyncio.create_task(run())
 
-    async def align(self, job_id: str, english_source_id: str | None, polish_source_id: str | None) -> None:
+    async def align(self, job_id: str, english_source_id: str | None, polish_source_id: str | None,
+                    mode: AlignmentMode = AlignmentMode.SEMANTIC_PREFERRED) -> None:
         job = self.get(job_id)
         if not job or not job.get("report"):
             raise UserInputError("Najpierw wykonaj analizę materiału")
@@ -212,12 +218,71 @@ class JobManager:
             asyncio.to_thread(parse_cues, english_path, "english"), asyncio.to_thread(parse_cues, polish_path, "polish"))
         duration_ms = round((report.get("media", {}).get("durationSeconds") or 0) * 1000)
         await self._emit(job_id, "INFO", JobStatus.BUILDING_ANCHORS, "Budowanie strukturalnych punktów dopasowania", 30)
-        anchors = StructuralAnchorProvider().provide(english_cues, polish_cues, duration_ms, {"english": english, "polish": polish})
+        structural = StructuralAnchorProvider().provide(english_cues, polish_cues, duration_ms, {"english": english, "polish": polish})
+        anchors = structural
+        structural_model = select_model(fit_models(
+            structural, self.settings.alignment_min_scale, self.settings.alignment_max_scale,
+            self.settings.alignment_max_segments, self.settings.alignment_min_points_per_segment
+        ))
+        semantic_report = {"mode": mode, "enabled": self.settings.openai_semantic_alignment_enabled,
+                           "configured": self.settings.openai_configured, "fallbackUsed": False,
+                           "model": self.settings.openai_model, "promptVersion": "semantic-anchor-v1",
+                           "qualityBefore": quality(structural_model)}
+        semantic_allowed = self.settings.openai_semantic_alignment_enabled and self.settings.openai_configured
+        if mode != AlignmentMode.STRUCTURAL_ONLY and semantic_allowed:
+            await self._emit(job_id, "INFO", JobStatus.PREPARING_SEMANTIC_WINDOWS,
+                             "Przygotowanie prywatnych okien semantycznych — przebieg 1/2", 34)
+            try:
+                await self._emit(job_id, "INFO", JobStatus.REQUESTING_SEMANTIC_ANCHORS,
+                                 "Żądanie semantycznych relacji EN–PL przez Responses API", 38)
+                async def semantic_progress(pass_number: int) -> None:
+                    if pass_number == 2:
+                        await self._emit(job_id, "INFO", JobStatus.REFINING_SEMANTIC_ANCHORS,
+                                         "Doprecyzowanie kotwic semantycznych — przebieg 2/2", 40)
+                semantic = await OpenAIAnchorProvider(self.settings).provide_async(
+                    english_cues, polish_cues, duration_ms,
+                    {"english": english, "polish": polish, "structural": structural}, semantic_progress)
+                await self._emit(job_id, "INFO", JobStatus.VALIDATING_SEMANTIC_ANCHORS,
+                                 f"Zatwierdzono {len(semantic.anchors)}, odrzucono {len(semantic.rejected)} kotwic", 42)
+                anchors = CompositeAnchorProvider.combine(structural, semantic.anchors)
+                semantic_report.update({"usage": semantic.telemetry.to_dict(), "acceptedRelations": semantic.accepted,
+                                        "rejectedRelations": semantic.rejected,
+                                        "finalAnchors": [{"referenceTime": a.reference_time, "sourceTime": a.source_time,
+                                                          "weight": a.confidence, "origin": a.origin} for a in semantic.anchors]})
+            except SemanticBudgetExceeded as exc:
+                semantic_report.update({"error": "AI_BUDGET_EXCEEDED", "message": str(exc)})
+                if mode == AlignmentMode.SEMANTIC_REQUIRED:
+                    report["semanticAlignment"] = semantic_report
+                    self._save_report(job_id, report, job.get("resolved_media_path") or job["media_path"])
+                    await self._emit(job_id, "WARNING", JobStatus.AI_BUDGET_EXCEEDED, "Wyczerpano budżet żądań AI", 100)
+                    return
+                semantic_report["fallbackUsed"] = True
+                await self._emit(job_id, "WARNING", JobStatus.SEMANTIC_FALLBACK, "Budżet AI wyczerpany — fallback strukturalny", 44)
+            except (SemanticUnavailable, SemanticBatchError) as exc:
+                semantic_report.update({"error": "AI_UNAVAILABLE", "message": str(exc)})
+                if mode == AlignmentMode.SEMANTIC_REQUIRED:
+                    report["semanticAlignment"] = semantic_report
+                    self._save_report(job_id, report, job.get("resolved_media_path") or job["media_path"])
+                    await self._emit(job_id, "WARNING", JobStatus.AI_UNAVAILABLE, "OpenAI jest niedostępne dla tego zadania", 100)
+                    return
+                semantic_report["fallbackUsed"] = True
+                await self._emit(job_id, "WARNING", JobStatus.SEMANTIC_FALLBACK, "OpenAI niedostępne — fallback strukturalny", 44)
+        elif mode != AlignmentMode.STRUCTURAL_ONLY:
+            semantic_report.update({"error": "NOT_CONFIGURED", "fallbackUsed": mode == AlignmentMode.SEMANTIC_PREFERRED})
+            if mode == AlignmentMode.SEMANTIC_REQUIRED:
+                report["semanticAlignment"] = semantic_report
+                self._save_report(job_id, report, job.get("resolved_media_path") or job["media_path"])
+                await self._emit(job_id, "WARNING", JobStatus.AI_UNAVAILABLE,
+                                 "Semantyczne dopasowanie jest wyłączone lub brak klucza", 100)
+                return
+            await self._emit(job_id, "WARNING", JobStatus.SEMANTIC_FALLBACK,
+                             "Semantyka nieaktywna — użyto kotwic strukturalnych", 44)
         await self._emit(job_id, "INFO", JobStatus.FITTING_MODELS, f"Dopasowanie modeli do {len(anchors)} punktów", 45)
         models = fit_models(anchors, self.settings.alignment_min_scale, self.settings.alignment_max_scale,
                             self.settings.alignment_max_segments, self.settings.alignment_min_points_per_segment)
         await self._emit(job_id, "INFO", JobStatus.SELECTING_STRATEGY, "Deterministyczny wybór najprostszego wiarygodnego modelu", 60)
         model = select_model(models); grade = quality(model)
+        semantic_report["qualityAfter"] = grade
         if not model:
             grade = "UNUSABLE"
             alignment = {"status": "REVIEW_REQUIRED", "quality": grade, "warnings": ["Za mało wiarygodnych punktów"],
@@ -246,6 +311,7 @@ class JobManager:
                          "selectedEnglish": english, "selectedPolish": polish, "warnings": warnings,
                          "readyForPublication": status == "COMPLETED", "mediaDirectoryModified": False}
         report["alignment"] = alignment
+        report["semanticAlignment"] = semantic_report
         self._save_report(job_id, report, job.get("resolved_media_path") or job["media_path"])
         terminal = JobStatus.COMPLETED if alignment["status"] == "COMPLETED" else JobStatus.REVIEW_REQUIRED
         await self._emit(job_id, "SUCCESS" if terminal == JobStatus.COMPLETED else "WARNING", terminal,
