@@ -91,7 +91,42 @@ def test_existing_stage_one_database_is_migrated(settings):
             id TEXT PRIMARY KEY, media_path TEXT NOT NULL, status TEXT NOT NULL,
             progress INTEGER NOT NULL, created_at TEXT NOT NULL, started_at TEXT,
             finished_at TEXT, error_message TEXT)""")
+        db.execute("""CREATE TABLE events (
+            job_id TEXT NOT NULL, sequence INTEGER NOT NULL, timestamp TEXT NOT NULL,
+            level TEXT NOT NULL, stage TEXT NOT NULL, message TEXT NOT NULL,
+            progress INTEGER NOT NULL, PRIMARY KEY(job_id, sequence))""")
+        db.execute("INSERT INTO jobs VALUES (?,?,?,?,?,?,?,?)", (
+            "legacy", "/media/shows/example.mkv", "COMPLETED", 100,
+            "2026-01-01T00:00:00+00:00", None, "2026-01-01T00:00:03+00:00", None,
+        ))
+        for sequence, stage in enumerate(("QUEUED", "INSPECTING", "CHECKING_TOOLS", "READY", "COMPLETED"), 1):
+            db.execute("INSERT INTO events VALUES (?,?,?,?,?,?,?)", (
+                "legacy", sequence, "2026-01-01T00:00:00+00:00", "INFO", stage, stage, sequence * 20,
+            ))
     manager = JobManager(db_path, settings)
     with manager._connect() as db:
         columns = {row[1] for row in db.execute("PRAGMA table_info(jobs)")}
     assert {"resolved_media_path", "report_json"}.issubset(columns)
+    assert [event.stage for event in manager.events("legacy")] == [
+        JobStatus.QUEUED, JobStatus.VALIDATING_PATH, JobStatus.PROBING_MEDIA,
+        JobStatus.COMPLETED, JobStatus.COMPLETED,
+    ]
+
+
+def test_unknown_historical_event_does_not_break_history(settings):
+    settings.data_root.mkdir(parents=True)
+    manager = JobManager(settings.data_root / "unknown.db", settings)
+    with manager._connect() as db:
+        db.execute("""INSERT INTO jobs
+            (id,media_path,status,progress,created_at,started_at,finished_at,error_message,resolved_media_path,report_json)
+            VALUES (?,?,?,?,?,?,?,?,?,?)""", (
+                "future", "/media/shows/x.mkv", "COMPLETED", 100,
+                "2026-01-01T00:00:00+00:00", None, "2026-01-01T00:00:01+00:00", None, None, None,
+            ))
+        db.execute("INSERT INTO events VALUES (?,?,?,?,?,?,?)", (
+            "future", 1, "2026-01-01T00:00:00+00:00", "INFO",
+            "FUTURE_STAGE", "Historyczny wpis", 50,
+        ))
+    event = manager.events("future")[0]
+    assert event.stage == "FUTURE_STAGE"
+    assert "FUTURE_STAGE" in event.model_dump_json()

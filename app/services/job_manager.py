@@ -17,6 +17,11 @@ from app.services.media_analysis import (
 
 
 TERMINAL = {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.INTERRUPTED}
+LEGACY_EVENT_STAGES = {
+    "INSPECTING": JobStatus.VALIDATING_PATH,
+    "CHECKING_TOOLS": JobStatus.PROBING_MEDIA,
+    "READY": JobStatus.COMPLETED,
+}
 
 
 def now() -> datetime:
@@ -63,6 +68,8 @@ class JobManager:
                 db.execute("ALTER TABLE jobs ADD COLUMN resolved_media_path TEXT")
             if "report_json" not in columns:
                 db.execute("ALTER TABLE jobs ADD COLUMN report_json TEXT")
+            for legacy, current in LEGACY_EVENT_STAGES.items():
+                db.execute("UPDATE events SET stage=? WHERE stage=?", (current, legacy))
             stamp = now().isoformat()
             db.execute("UPDATE jobs SET status=?, finished_at=?, error_message=? WHERE status NOT IN (?,?,?)",
                        (JobStatus.INTERRUPTED, stamp, "Zadanie przerwane przez restart aplikacji",
