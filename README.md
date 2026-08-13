@@ -1,6 +1,6 @@
 # Subtitle Agent
 
-Lekka usługa do bezpiecznej analizy mediów i napisów. Etap 4 opcjonalnie dodaje semantyczne kotwice EN–PL z OpenAI do deterministycznej synchronizacji etapu 3. Model wskazuje wyłącznie relacje między segmentami: nie generuje czasów, tekstu ani modelu synchronizacji. Podgląd powstaje wyłącznie pod `/data/work/jobs/<job_id>`; nic nie jest zapisywane w katalogu mediów.
+Lekka usługa do bezpiecznej analizy mediów i napisów. Etap 5 dodaje jawnie włączane, wersjonowane publikowanie zatwierdzonego preview obok filmu. Analiza nadal korzysta wyłącznie z mountów `/media:ro`; wydzielony publisher jako jedyny może zapisać nowy plik przez osobny widok `/publish:rw`.
 
 ## GUI
 
@@ -53,6 +53,13 @@ Obraz: `ghcr.io/kcn3333/subtitle-agent:latest`. Lokalnie uruchom `docker compose
 | `OPENAI_MIN_CONFIDENCE` | `0.72` | Minimalne confidence kandydata |
 | `OPENAI_API_KEY_FILE` | brak | Plik sekretu; ma pierwszeństwo przed `OPENAI_API_KEY` |
 | `OPENAI_API_KEY` | brak | Sekret z otoczenia, używany tylko bez pliku sekretu |
+| `SUBTITLE_AGENT_PUBLISH_ENABLED` | `false` | Główny przełącznik publikacji |
+| `SUBTITLE_AGENT_PUBLISH_MODE` | `PREVIEW_ONLY` | `PREVIEW_ONLY`, `MANUAL` albo `AUTO_HIGH` |
+| `SUBTITLE_AGENT_PUBLISH_MAPPINGS_JSON` | mapowanie movies/shows | Jednoznaczny obiekt JSON z rootów `/media` do `/publish` |
+| `SUBTITLE_AGENT_AUTO_PUBLISH_MIN_QUALITY` | `HIGH` | Udokumentowany minimalny poziom automatyczny; `AUTO_HIGH` zawsze wymaga HIGH |
+| `SUBTITLE_AGENT_AUTO_PUBLISH_REQUIRE_SEMANTIC` | `true` | Wymaga zaakceptowanych kotwic semantycznych bez fallbacku |
+| `SUBTITLE_AGENT_PUBLISH_MAX_VERSION` | `999` | Najwyższa wersja `vNNN` |
+| `SUBTITLE_AGENT_PUBLISH_FILE_MODE` | `0644` | Tryb wyłącznie nowo utworzonego pliku |
 
 `.env.example` zawiera wyłącznie pusty placeholder. Brak klucza albo wyłączona funkcja nie blokuje startu ani etapów 2–3. `GET /api/jobs/semantic/config` pokazuje tylko stan, model i niesekretne limity; nie wykonuje żądania API.
 
@@ -66,6 +73,33 @@ Provider wykonuje dwa przebiegi ograniczonych okien (początek, środek, koniec 
 
 W Portainerze utwórz sekret `openai_api_key` i zamontuj go jako `/run/secrets/openai_api_key`, zgodnie z `compose.example.yml`. W środowisku bez obsługi sekretów można ustawić `OPENAI_API_KEY` w chronionych zmiennych stosu (nigdy w pliku repozytorium), usuwając `OPENAI_API_KEY_FILE`. Pusty lub nieczytelny plik sekretu celowo zatrzymuje start.
 
+### Bezpieczne publikowanie i Portainer
+
+Domyślny `PREVIEW_ONLY` niczego nie zapisuje w bibliotece i działa bez `/publish`. Najpierw wdroż aplikację w tym trybie, sprawdź analizę oraz OpenAI, a następnie na hoście ustal prawa:
+
+```bash
+stat -c '%u:%g %A %n' /media/movies /media/shows
+findmnt -T /media/movies
+findmnt -T /media/shows
+```
+
+Kontener pozostaje UID/GID `10001:10001`. Nie wykonuje `chown`, `chmod` katalogów ani zmian ACL. Jeżeli zapis zapewnia grupa katalogu, dodaj w Portainerze `group_add` z faktycznym GID odczytanym na hoście — dokumentacja celowo nie zgaduje tej wartości.
+
+Po sprawdzeniu uprawnień odkomentuj opcjonalne i wrażliwe mounty w `compose.example.yml`:
+
+```yaml
+- /media/movies:/publish/movies:rw
+- /media/shows:/publish/shows:rw
+```
+
+Widoki `/media/...:ro` muszą pozostać bez zmian. Uruchom diagnostykę `GET /api/jobs/publishing/config`, włącz `MANUAL`, opublikuj jeden testowy plik i sprawdź go w Jellyfinie. Dopiero później rozważ `AUTO_HIGH`. Jellyfin może wykryć plik przez monitoring systemu, ale czasami potrzebny jest ręczny skan biblioteki; aplikacja nie wywołuje Jellyfin API.
+
+Publisher wybiera najdłuższy pasujący media root, zachowuje względny katalog filmu i używa dokładnego rdzenia nazwy wideo: `<media_stem>.AI-Sync-v001.pl.srt`. Sprawdza, czy widoki RO/RW mają te same `st_dev` i `st_ino`, nie przechodzi przez symlink poza root i nie tworzy katalogów. Pierwszy wolny numer jest rezerwowany po blokadzie per film; symlink także jest kolizją.
+
+Zapis odbywa się do losowego ukrytego pliku przez `O_CREAT|O_EXCL`, następnie `flush`, `fsync`, ustawienie trybu i hard link do nieistniejącej nazwy, po czym `fsync` katalogu. Nie używa `replace` ani nadpisującego `rename`. Gdy system plików nie wspiera bezpiecznego hard linku, wynik to `PUBLISH_UNSUPPORTED_FILESYSTEM`, a preview zostaje w `/data`.
+
+W `MANUAL` dopuszczone są tylko HIGH/MEDIUM bez krytycznych ostrzeżeń. `AUTO_HIGH` wymaga HIGH, zgodnych hashy i tożsamości źródeł, pełnej walidacji oraz — domyślnie — kotwic semantycznych bez fallbacku. Powtórzenie zakończonej publikacji jest idempotentne; brak lub zmiana opublikowanego pliku daje `PUBLISH_CONFLICT`, nigdy nadpisanie.
+
 ## API
 
 - `GET /` — GUI.
@@ -76,6 +110,9 @@ W Portainerze utwórz sekret `openai_api_key` i zamontuj go jako `/run/secrets/o
 - `GET /api/jobs/{job_id}/events` — historia i zdarzenia SSE; `Last-Event-ID` umożliwia wznowienie, heartbeat pojawia się po 15 s ciszy.
 - `POST /api/jobs/{job_id}/alignment` — synchronizuje wyłącznie źródła zapisane w raporcie zadania.
 - `GET /api/jobs/semantic/config` — bezpieczna diagnostyka aktywacji, modelu i limitów bez sekretu i bez płatnego requestu.
+- `GET /api/jobs/publishing/config` — niesekretna diagnostyka trybu, mapowań i praw procesu; nic nie zapisuje w katalogu filmu.
+- `GET /api/jobs/{job_id}/publication/preview` — przewidywana nazwa i powód blokady, wyliczane po stronie serwera.
+- `POST /api/jobs/{job_id}/publication` — idempotentna publikacja przyjmująca tylko potwierdzenie i oczekiwany SHA-256 preview.
 - `GET /api/jobs/{job_id}/preview` — pobiera roboczy podgląd SRT bez przyjmowania ścieżki.
 
 Zdarzenia mają rosnącą sekwencję, czas ze strefą, etap, poziom, wiadomość i postęp 0–100. SQLite pracuje w WAL; maksymalnie 500 zdarzeń pozostaje na zadanie. Zadania niedokończone podczas restartu stają się `INTERRUPTED`. Raport obejmuje dane techniczne, ścieżki napisów, analizę zewnętrznych SRT, rankingi z powodami punktacji, wybory oraz ostrzeżenia.
@@ -84,10 +121,10 @@ Zdarzenia mają rosnącą sekwencję, czas ze strefą, etap, poziom, wiadomość
 
 GitHub Actions buduje `linux/amd64`, testuje `/health`, `ffmpeg` i `ffprobe`, a poza pull requestem publikuje `latest`, `sha-*` i tagi semver przy użyciu `GITHUB_TOKEN` — bez PAT i sekretów aplikacji. Publiczny obraz można pobierać anonimowo. Po pierwszej publikacji może być konieczne jednorazowe ustawienie pakietu jako **Public** w GitHub Packages; publiczne repozytorium nie gwarantuje automatycznie publicznego pakietu GHCR.
 
-## Bezpieczeństwo i ograniczenia etapu 4
+## Bezpieczeństwo i ograniczenia etapu 5
 
-Kontener działa jako UID/GID 10001, bez capabilities i z `no-new-privileges`. Media pozostają `read-only`; tylko kopie robocze i atomowo zapisany preview trafiają do `/data`. Repozytorium nie przechowuje `.env`, mediów ani sekretów. Klucz jest maskowany przez `SecretStr`, nie jest serializowany do raportu i nie może pochodzić z API klienta. Napisy graficzne kończą się kontrolowanym `NEEDS_OCR`. Nadal brak OCR, publikowania napisów oraz Jellyfina. Standardowe testy są całkowicie mockowane i nie wykonują płatnych żądań; ewentualny live smoke test wymaga osobnego `OPENAI_RUN_LIVE_TESTS=1`.
+Kontener działa jako UID/GID 10001, bez capabilities i z `no-new-privileges`. Publisher nigdy nie usuwa ani nie nadpisuje SRT, filmu, NFO lub katalogu. Audyt SQLite zapisuje czas, tryb, wynik, jakość, ścieżki RO/RW, wersję, hashe, rozmiar, tożsamość źródła i niesekretny błąd — bez treści napisów i klucza. Nadal brak OCR oraz Jellyfin API. Standardowe testy nie wykonują płatnych żądań ani zapisu do rzeczywistego `/media`.
 
 ## Kolejne etapy
 
-Kolejny etap może dodać OCR oraz atomowy, jawnie zatwierdzany mechanizm publikacji SRT. Integracja z Jellyfinem i zapis do katalogu mediów wymagają osobnej decyzji i testów bezpieczeństwa.
+Kolejny etap może dodać OCR albo opcjonalne, uwierzytelnione odświeżenie Jellyfina. Żadna z tych funkcji nie należy do etapu 5.

@@ -24,11 +24,21 @@ services:
       OPENAI_MODEL: gpt-5.6-terra
       OPENAI_REASONING_EFFORT: low
       OPENAI_API_KEY_FILE: /run/secrets/openai_api_key
+      SUBTITLE_AGENT_PUBLISH_ENABLED: "false"
+      SUBTITLE_AGENT_PUBLISH_MODE: PREVIEW_ONLY
+      SUBTITLE_AGENT_PUBLISH_MAPPINGS_JSON: '{"/media/movies":"/publish/movies","/media/shows":"/publish/shows"}'
+      SUBTITLE_AGENT_AUTO_PUBLISH_MIN_QUALITY: HIGH
+      SUBTITLE_AGENT_AUTO_PUBLISH_REQUIRE_SEMANTIC: "true"
+      SUBTITLE_AGENT_PUBLISH_MAX_VERSION: 999
+      SUBTITLE_AGENT_PUBLISH_FILE_MODE: "0644"
       TZ: Europe/Warsaw
     volumes:
       - subtitle_agent_data:/data
       - /media/movies:/media/movies:ro
       - /media/shows:/media/shows:ro
+      # Dodaj dopiero po diagnostyce UID/GID i najpierw użyj trybu MANUAL:
+      # - /media/movies:/publish/movies:rw
+      # - /media/shows:/publish/shows:rw
     security_opt:
       - no-new-privileges:true
     cap_drop:

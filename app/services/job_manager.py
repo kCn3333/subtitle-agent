@@ -19,10 +19,15 @@ from app.services.alignment import (StructuralAnchorProvider, fit_models, parse_
                                     quality, select_model, sha256, transform, write_preview)
 from app.services.semantic import (CompositeAnchorProvider, OpenAIAnchorProvider, SemanticBatchError,
                                    SemanticBudgetExceeded, SemanticUnavailable)
+from app.services.publisher import (PublishBlockedQuality, PublishConflict, PublishDisabled, PublishError,
+                                    PublishSourceChanged, SubtitlePublisher, identity)
 
 
 TERMINAL = {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.INTERRUPTED, JobStatus.REVIEW_REQUIRED,
-            JobStatus.NEEDS_OCR, JobStatus.AI_UNAVAILABLE, JobStatus.AI_BUDGET_EXCEEDED}
+            JobStatus.NEEDS_OCR, JobStatus.AI_UNAVAILABLE, JobStatus.AI_BUDGET_EXCEEDED,
+            JobStatus.READY_TO_PUBLISH, JobStatus.PUBLISHED, JobStatus.PUBLISH_DISABLED,
+            JobStatus.PUBLISH_BLOCKED_QUALITY, JobStatus.PUBLISH_SOURCE_CHANGED, JobStatus.PUBLISH_CONFLICT,
+            JobStatus.PUBLISH_PERMISSION_DENIED, JobStatus.PUBLISH_UNSUPPORTED_FILESYSTEM, JobStatus.PUBLISH_FAILED}
 LEGACY_EVENT_STAGES = {
     "INSPECTING": JobStatus.VALIDATING_PATH,
     "CHECKING_TOOLS": JobStatus.PROBING_MEDIA,
@@ -49,6 +54,7 @@ class JobManager:
         self.max_concurrent = settings.max_concurrent_jobs
         self._lock = threading.RLock()
         self._conditions: dict[str, asyncio.Condition] = {}
+        self._publish_locks: dict[str, asyncio.Lock] = {}
         self._queue: asyncio.Queue[str] = asyncio.Queue()
         self._workers: list[asyncio.Task[None]] = []
         self._closed = False
@@ -76,6 +82,14 @@ class JobManager:
                     progress INTEGER NOT NULL CHECK(progress BETWEEN 0 AND 100),
                     PRIMARY KEY(job_id, sequence), FOREIGN KEY(job_id) REFERENCES jobs(id)
                 );
+                CREATE TABLE IF NOT EXISTS publication_attempts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT NOT NULL, attempted_at TEXT NOT NULL,
+                    mode TEXT NOT NULL, result TEXT NOT NULL, quality TEXT, source_ro_path TEXT,
+                    target_rw_path TEXT, target_name TEXT, version INTEGER, preview_sha256 TEXT,
+                    published_sha256 TEXT, size_bytes INTEGER, source_identity_json TEXT,
+                    automatic INTEGER NOT NULL, error_message TEXT,
+                    FOREIGN KEY(job_id) REFERENCES jobs(id)
+                );
             """)
             columns = {row[1] for row in db.execute("PRAGMA table_info(jobs)")}
             if "resolved_media_path" not in columns:
@@ -85,11 +99,10 @@ class JobManager:
             for legacy, current in LEGACY_EVENT_STAGES.items():
                 db.execute("UPDATE events SET stage=? WHERE stage=?", (current, legacy))
             stamp = now().isoformat()
-            db.execute("UPDATE jobs SET status=?, finished_at=?, error_message=? WHERE status NOT IN (?,?,?,?,?,?,?)",
-                       (JobStatus.INTERRUPTED, stamp, "Zadanie przerwane przez restart aplikacji",
-                        JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.INTERRUPTED,
-                        JobStatus.REVIEW_REQUIRED, JobStatus.NEEDS_OCR, JobStatus.AI_UNAVAILABLE,
-                        JobStatus.AI_BUDGET_EXCEEDED))
+            terminal_values = tuple(str(item) for item in TERMINAL)
+            placeholders = ",".join("?" for _ in terminal_values)
+            db.execute(f"UPDATE jobs SET status=?, finished_at=?, error_message=? WHERE status NOT IN ({placeholders})",
+                       (JobStatus.INTERRUPTED, stamp, "Zadanie przerwane przez restart aplikacji", *terminal_values))
 
     async def start(self) -> None:
         self._workers = [asyncio.create_task(self._worker()) for _ in range(self.max_concurrent)]
@@ -164,6 +177,98 @@ class JobManager:
         with self._lock, self._connect() as db:
             db.execute("UPDATE jobs SET report_json=?, resolved_media_path=? WHERE id=?",
                        (json.dumps(report, ensure_ascii=False), resolved_path, job_id))
+
+    def _audit_publication(self, job_id: str, mode: str, result: str, quality: str | None,
+                           automatic: bool, details: dict | None = None, error: str | None = None) -> None:
+        details = details or {}
+        with self._lock, self._connect() as db:
+            db.execute("""INSERT INTO publication_attempts
+                (job_id,attempted_at,mode,result,quality,source_ro_path,target_rw_path,target_name,version,
+                 preview_sha256,published_sha256,size_bytes,source_identity_json,automatic,error_message)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (
+                job_id, details.get("attemptedAt", now().isoformat()), mode, result, quality,
+                details.get("sourcePath"), details.get("targetPath"), details.get("targetName"),
+                details.get("version"), details.get("previewSha256"), details.get("publishedSha256"),
+                details.get("sizeBytes"), json.dumps(details.get("mediaIdentity")) if details.get("mediaIdentity") else None,
+                int(automatic), error))
+
+    def publication_attempts(self, job_id: str) -> list[dict]:
+        with self._lock, self._connect() as db:
+            return [dict(row) for row in db.execute(
+                "SELECT * FROM publication_attempts WHERE job_id=? ORDER BY id", (job_id,)).fetchall()]
+
+    async def publish(self, job_id: str, confirmed: bool, expected_hash: str, automatic: bool = False) -> dict:
+        lock = self._publish_locks.setdefault(job_id, asyncio.Lock())
+        async with lock:
+            return await self._publish_once(job_id, confirmed, expected_hash, automatic)
+
+    async def _publish_once(self, job_id: str, confirmed: bool, expected_hash: str,
+                            automatic: bool = False) -> dict:
+        job = self.get(job_id)
+        if not job or not job.get("report"):
+            raise UserInputError("Nie znaleziono raportu zadania")
+        report = job["report"]; alignment = report.get("alignment") or {}; existing = report.get("publication") or {}
+        publisher = SubtitlePublisher(self.settings); mode = self.settings.subtitle_agent_publish_mode
+        async def reject(exc: PublishError) -> None:
+            details = {"attemptedAt": now().isoformat(), "sourcePath": job.get("resolved_media_path") or job["media_path"],
+                       "previewSha256": alignment.get("previewSha256")}
+            report["publication"] = {"status": exc.status, "message": str(exc), **details}
+            self._save_report(job_id, report, job.get("resolved_media_path") or job["media_path"])
+            self._audit_publication(job_id, mode, exc.status, alignment.get("quality"), automatic, details, str(exc))
+            await self._emit(job_id, "WARNING", JobStatus(exc.status), str(exc), 100)
+            raise exc
+        if existing.get("status") == "PUBLISHED":
+            target = Path(existing["targetPath"])
+            if target.is_file() and sha256(target) == existing.get("publishedSha256"):
+                return existing
+            exc = PublishConflict("Baza wskazuje publikację, ale plik zniknął albo zmienił zawartość")
+            existing.update({"status": exc.status, "message": str(exc)})
+            report["publication"] = existing; self._save_report(job_id, report, job.get("resolved_media_path") or job["media_path"])
+            self._audit_publication(job_id, mode, exc.status, alignment.get("quality"), automatic,
+                                    {"targetPath": str(target)}, str(exc))
+            await self._emit(job_id, "WARNING", JobStatus.PUBLISH_CONFLICT, str(exc), 100)
+            raise exc
+        if not self.settings.subtitle_agent_publish_enabled or mode == "PREVIEW_ONLY":
+            await reject(PublishDisabled("Publikowanie jest wyłączone lub działa w PREVIEW_ONLY"))
+        if not automatic and (mode != "MANUAL" or not confirmed):
+            await reject(PublishDisabled("Ręczna publikacja wymaga trybu MANUAL i potwierdzenia"))
+        quality_grade = alignment.get("quality")
+        if quality_grade not in ({"HIGH"} if automatic else {"HIGH", "MEDIUM"}):
+            await reject(PublishBlockedQuality("Jakość synchronizacji nie pozwala na publikację"))
+        if alignment.get("warnings") or alignment.get("status") != "COMPLETED":
+            await reject(PublishBlockedQuality("Wynik ma krytyczne ostrzeżenia albo nie przeszedł walidacji"))
+        semantic = report.get("semanticAlignment") or {}; usage = semantic.get("usage") or {}
+        if automatic and self.settings.subtitle_agent_auto_publish_require_semantic and not usage.get("accepted_anchors"):
+            await reject(PublishBlockedQuality("AUTO_HIGH wymaga zaakceptowanych kotwic semantycznych"))
+        if automatic and semantic.get("fallbackUsed"):
+            await reject(PublishBlockedQuality("AUTO_HIGH blokuje wynik z fallbackiem"))
+        preview_hash = alignment.get("previewSha256"); preview = Path(alignment.get("previewPath") or "")
+        if expected_hash != preview_hash:
+            await reject(PublishSourceChanged("Oczekiwany SHA-256 preview jest nieaktualny"))
+        media = Path(job.get("resolved_media_path") or job["media_path"])
+        polish = Path((alignment.get("selectedPolish") or {}).get("path") or "")
+        if alignment.get("mediaIdentity") != identity(media):
+            await reject(PublishSourceChanged("Film zmienił się od synchronizacji"))
+        if not polish.is_file() or alignment.get("inputSha256") != sha256(polish):
+            await reject(PublishSourceChanged("Źródłowy polski SRT zmienił się od synchronizacji"))
+        await self._emit(job_id, "INFO", JobStatus.PUBLISHING, "Bezpieczna publikacja nowej wersji napisów", 98)
+        try:
+            plan = await asyncio.to_thread(publisher.plan, media)
+            result = await asyncio.to_thread(publisher.publish, plan, preview, preview_hash)
+            result.update({"status": "PUBLISHED", "mode": mode, "quality": quality_grade,
+                           "automatic": automatic, "sourcePath": str(media),
+                           "message": "Utworzono nowy plik napisów. Żaden istniejący plik nie został zmieniony ani usunięty."})
+            report["publication"] = result; self._save_report(job_id, report, str(media))
+            self._audit_publication(job_id, mode, "PUBLISHED", quality_grade, automatic, result)
+            await self._emit(job_id, "SUCCESS", JobStatus.PUBLISHED, result["message"], 100)
+            return result
+        except PublishError as exc:
+            details = {"sourcePath": str(media), "previewSha256": preview_hash}
+            report["publication"] = {"status": exc.status, "message": str(exc), **details}
+            self._save_report(job_id, report, str(media)); self._audit_publication(
+                job_id, mode, exc.status, quality_grade, automatic, details, str(exc))
+            await self._emit(job_id, "WARNING", JobStatus(exc.status), str(exc), 100)
+            raise
 
     async def start_alignment(self, job_id: str, english_source_id: str | None, polish_source_id: str | None,
                               mode: AlignmentMode) -> None:
@@ -308,12 +413,22 @@ class JobManager:
                          "firstAfterMs": transformed[0].start_ms if transformed else None,
                          "lastAfterMs": transformed[-1].end_ms if transformed else None,
                          "inputSha256": input_hash, "previewSha256": sha256(preview), "previewPath": str(preview),
+                         "mediaIdentity": identity(Path(job.get("resolved_media_path") or job["media_path"])),
                          "selectedEnglish": english, "selectedPolish": polish, "warnings": warnings,
                          "readyForPublication": status == "COMPLETED", "mediaDirectoryModified": False}
         report["alignment"] = alignment
         report["semanticAlignment"] = semantic_report
         self._save_report(job_id, report, job.get("resolved_media_path") or job["media_path"])
         terminal = JobStatus.COMPLETED if alignment["status"] == "COMPLETED" else JobStatus.REVIEW_REQUIRED
+        if terminal == JobStatus.COMPLETED and self.settings.subtitle_agent_publish_enabled:
+            if self.settings.subtitle_agent_publish_mode == "MANUAL":
+                terminal = JobStatus.READY_TO_PUBLISH
+            elif self.settings.subtitle_agent_publish_mode == "AUTO_HIGH":
+                try:
+                    await self.publish(job_id, True, alignment["previewSha256"], automatic=True)
+                except PublishError:
+                    pass
+                return
         await self._emit(job_id, "SUCCESS" if terminal == JobStatus.COMPLETED else "WARNING", terminal,
                          f"Synchronizacja: {alignment['quality']} — plik pozostaje tylko podglądem", 100)
 
