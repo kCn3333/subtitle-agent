@@ -1,8 +1,9 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Annotated
 
 from pydantic import field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -13,7 +14,9 @@ class Settings(BaseSettings):
     app_port: int = 8080
     log_level: str = "INFO"
     data_root: Path = Path("/data")
-    media_roots: list[Path] = [Path("/media/movies"), Path("/media/shows")]
+    # NoDecode keeps pydantic-settings from treating this environment value as
+    # JSON before our documented comma-separated parser can process it.
+    media_roots: Annotated[list[Path], NoDecode] = [Path("/media/movies"), Path("/media/shows")]
     max_concurrent_jobs: int = 1
     demo_step_delay: float = 0.25
 
