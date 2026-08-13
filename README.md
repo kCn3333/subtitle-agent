@@ -1,6 +1,6 @@
 # Subtitle Agent
 
-Lekka usługa do bezpiecznej analizy mediów i napisów. Etap 2 sprawdza wskazany plik przez `ffprobe`, odkrywa wbudowane i zewnętrzne napisy, analizuje SRT, tworzy deterministyczne rankingi oraz przygotowuje angielską kopię roboczą wyłącznie pod `/data/work/jobs/<job_id>`. Nie synchronizuje napisów i niczego nie zapisuje w katalogu mediów.
+Lekka usługa do bezpiecznej analizy mediów i napisów. Etap 3 dodaje deterministyczną synchronizację tekstowych napisów modelami identity, offset, affine drift i piecewise linear. Podgląd powstaje wyłącznie pod `/data/work/jobs/<job_id>`; nic nie jest zapisywane w katalogu mediów.
 
 ## GUI
 
@@ -36,6 +36,10 @@ Obraz: `ghcr.io/kcn3333/subtitle-agent:latest`. Lokalnie uruchom `docker compose
 | `MAX_CONCURRENT_JOBS` | `1` | Liczba równoległych zadań |
 | `FFPROBE_TIMEOUT_SECONDS` | `30` | Limit czasu analizy ffprobe |
 | `FFMPEG_TIMEOUT_SECONDS` | `600` | Limit czasu bezpiecznej ekstrakcji roboczej; odczyt dużego pliku z NAS może potrwać kilka minut |
+| `ALIGNMENT_MIN_SCALE` / `ALIGNMENT_MAX_SCALE` | `0.94` / `1.06` | Bezpieczny zakres współczynnika affine |
+| `ALIGNMENT_MAX_SEGMENTS` | `3` | Maksymalna liczba odcinków piecewise |
+| `ALIGNMENT_MIN_POINTS_PER_SEGMENT` | `4` | Minimalna liczba punktów w odcinku |
+| `ALIGNMENT_END_TOLERANCE_MS` | `1000` | Tolerancja końca filmu w milisekundach |
 
 `.env.example` nie zawiera sekretów. Klucz OpenAI nie jest obecnie obsługiwany.
 
@@ -47,6 +51,8 @@ Obraz: `ghcr.io/kcn3333/subtitle-agent:latest`. Lokalnie uruchom `docker compose
 - `GET /api/jobs` — lista ostatnich zadań.
 - `GET /api/jobs/{job_id}` — stan i pełny raport zadania.
 - `GET /api/jobs/{job_id}/events` — historia i zdarzenia SSE; `Last-Event-ID` umożliwia wznowienie, heartbeat pojawia się po 15 s ciszy.
+- `POST /api/jobs/{job_id}/alignment` — synchronizuje wyłącznie źródła zapisane w raporcie zadania.
+- `GET /api/jobs/{job_id}/preview` — pobiera roboczy podgląd SRT bez przyjmowania ścieżki.
 
 Zdarzenia mają rosnącą sekwencję, czas ze strefą, etap, poziom, wiadomość i postęp 0–100. SQLite pracuje w WAL; maksymalnie 500 zdarzeń pozostaje na zadanie. Zadania niedokończone podczas restartu stają się `INTERRUPTED`. Raport obejmuje dane techniczne, ścieżki napisów, analizę zewnętrznych SRT, rankingi z powodami punktacji, wybory oraz ostrzeżenia.
 
@@ -54,9 +60,9 @@ Zdarzenia mają rosnącą sekwencję, czas ze strefą, etap, poziom, wiadomość
 
 GitHub Actions buduje `linux/amd64`, testuje `/health`, `ffmpeg` i `ffprobe`, a poza pull requestem publikuje `latest`, `sha-*` i tagi semver przy użyciu `GITHUB_TOKEN` — bez PAT i sekretów aplikacji. Publiczny obraz można pobierać anonimowo. Po pierwszej publikacji może być konieczne jednorazowe ustawienie pakietu jako **Public** w GitHub Packages; publiczne repozytorium nie gwarantuje automatycznie publicznego pakietu GHCR.
 
-## Bezpieczeństwo i ograniczenia etapu 1
+## Bezpieczeństwo i ograniczenia etapu 3
 
-Kontener działa jako UID/GID 10001, bez capabilities i z `no-new-privileges`. Walidacja używa `Path.resolve(strict=True)` i odrzuca ścieżki względne, NUL, symlinki poza rootem, brak pliku, katalogi i nieobsługiwane rozszerzenia. Media pozostają `read-only`; tylko kopie robocze trafiają do `/data`. Repozytorium nie przechowuje `.env`, mediów ani sekretów. Brak jeszcze OpenAI, autonomicznego agenta, synchronizacji i publikowania napisów oraz Jellyfina.
+Kontener działa jako UID/GID 10001, bez capabilities i z `no-new-privileges`. Media pozostają `read-only`; tylko kopie robocze i atomowo zapisany preview trafiają do `/data`. Repozytorium nie przechowuje `.env`, mediów ani sekretów. Napisy graficzne kończą się kontrolowanym `NEEDS_OCR`. Brak OpenAI, OCR, publikowania napisów oraz Jellyfina.
 
 ## Kolejne etapy
 
