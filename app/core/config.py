@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     max_concurrent_jobs: int = 1
     ffprobe_timeout_seconds: float = 30
     ffmpeg_timeout_seconds: float = 600
+    alignment_min_scale: float = 0.94
+    alignment_max_scale: float = 1.06
+    alignment_max_segments: int = 3
+    alignment_min_points_per_segment: int = 4
+    alignment_end_tolerance_ms: int = 1000
 
     @field_validator("media_roots", mode="before")
     @classmethod

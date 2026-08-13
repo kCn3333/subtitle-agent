@@ -1,5 +1,9 @@
 import sqlite3
 import time
+import json
+from pathlib import Path
+
+import pytest
 
 from app.models.job import JobStatus
 from app.services.job_manager import JobManager
@@ -148,3 +152,62 @@ def test_ffmpeg_timeout_has_actionable_job_message(client, media_file, monkeypat
     assert body["status"] == "FAILED"
     assert "limit 1 s" in body["errorMessage"]
     assert "magazynu sieciowego" in body["errorMessage"]
+
+
+def _insert_analyzed_job(manager, job_id, report, media_path):
+    with manager._connect() as db:
+        db.execute("""INSERT INTO jobs
+            (id,media_path,status,progress,created_at,started_at,finished_at,error_message,resolved_media_path,report_json)
+            VALUES (?,?,?,?,?,?,?,?,?,?)""", (
+                job_id, str(media_path), "COMPLETED", 100, "2026-01-01T00:00:00+00:00", None,
+                "2026-01-01T00:00:01+00:00", None, str(media_path), json.dumps(report),
+            ))
+
+
+@pytest.mark.anyio
+async def test_graphic_source_finishes_as_needs_ocr(settings, media_file):
+    settings.data_root.mkdir(parents=True)
+    manager = JobManager(settings.data_root / "ocr.db", settings)
+    english = {"sourceType": "embedded", "streamIndex": 2, "codec": "hdmv_pgs_subtitle", "type": "graphic", "score": 70}
+    polish = {"sourceType": "external", "name": "movie.pl.srt", "path": str(media_file.parent / "movie.pl.srt"), "score": 80}
+    _insert_analyzed_job(manager, "ocr", {"englishRanking": [english], "polishRanking": [polish],
+                         "selectedEnglish": english, "selectedPolish": polish}, media_file)
+    await manager.align("ocr", None, None)
+    job = manager.get("ocr")
+    assert job["status"] == "NEEDS_OCR"
+    assert job["report"]["alignment"]["status"] == "NEEDS_OCR"
+
+
+@pytest.mark.anyio
+async def test_alignment_preview_persists_and_input_is_unchanged(settings, media_file):
+    settings.data_root.mkdir(parents=True)
+    manager = JobManager(settings.data_root / "alignment.db", settings)
+    work = settings.data_root / "work" / "jobs" / "sync"
+    work.mkdir(parents=True)
+    english_path, polish_path = work / "reference.srt", media_file.parent / "Example Movie.pl.srt"
+    content = "\n\n".join(f"{i}\n00:00:{i:02d},000 --> 00:00:{i:02d},800\nTekst {i}" for i in range(1, 13)) + "\n"
+    english_path.write_text(content, encoding="utf-8")
+    polish_path.write_text(content.replace("Tekst", "<i>Polski tekst</i>"), encoding="utf-8")
+    before = polish_path.read_bytes()
+    english = {"sourceType": "embedded", "streamIndex": 2, "codec": "subrip", "type": "text", "score": 70}
+    polish = {"sourceType": "external", "name": polish_path.name, "path": str(polish_path), "format": "srt", "score": 80}
+    report = {"media": {"durationSeconds": 30}, "englishRanking": [english], "polishRanking": [polish],
+              "selectedEnglish": english, "selectedPolish": polish,
+              "workingFiles": {"englishReference": str(english_path)}}
+    _insert_analyzed_job(manager, "sync", report, media_file)
+    await manager.align("sync", None, None)
+    job = manager.get("sync"); alignment = job["report"]["alignment"]
+    assert alignment["model"]["strategy"] == "IDENTITY"
+    assert alignment["quality"] == "HIGH"
+    assert polish_path.read_bytes() == before
+    preview = Path(alignment["previewPath"])
+    assert preview.is_file() and "<i>Polski tekst</i>" in preview.read_text()
+    restarted = JobManager(settings.data_root / "alignment.db", settings)
+    assert restarted.get("sync")["report"]["alignment"]["previewSha256"] == alignment["previewSha256"]
+
+
+def test_preview_endpoint_rejects_recorded_path_outside_job(client, settings, media_file):
+    manager = client.app.state.jobs
+    _insert_analyzed_job(manager, "unsafe", {"alignment": {"previewPath": "/etc/passwd"}}, media_file)
+    response = client.get("/api/jobs/unsafe/preview")
+    assert response.status_code == 404

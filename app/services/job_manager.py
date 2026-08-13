@@ -15,9 +15,11 @@ from app.services.media_analysis import (
     rank_english, rank_polish, validate_media_path,
 )
 from app.services.process_runner import ProcessExecutionError, ProcessTimeoutError
+from app.services.alignment import (StructuralAnchorProvider, fit_models, parse_cues, public_model,
+                                    quality, select_model, sha256, transform, write_preview)
 
 
-TERMINAL = {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.INTERRUPTED}
+TERMINAL = {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.INTERRUPTED, JobStatus.REVIEW_REQUIRED, JobStatus.NEEDS_OCR}
 LEGACY_EVENT_STAGES = {
     "INSPECTING": JobStatus.VALIDATING_PATH,
     "CHECKING_TOOLS": JobStatus.PROBING_MEDIA,
@@ -80,9 +82,10 @@ class JobManager:
             for legacy, current in LEGACY_EVENT_STAGES.items():
                 db.execute("UPDATE events SET stage=? WHERE stage=?", (current, legacy))
             stamp = now().isoformat()
-            db.execute("UPDATE jobs SET status=?, finished_at=?, error_message=? WHERE status NOT IN (?,?,?)",
+            db.execute("UPDATE jobs SET status=?, finished_at=?, error_message=? WHERE status NOT IN (?,?,?,?,?)",
                        (JobStatus.INTERRUPTED, stamp, "Zadanie przerwane przez restart aplikacji",
-                        JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.INTERRUPTED))
+                        JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.INTERRUPTED,
+                        JobStatus.REVIEW_REQUIRED, JobStatus.NEEDS_OCR))
 
     async def start(self) -> None:
         self._workers = [asyncio.create_task(self._worker()) for _ in range(self.max_concurrent)]
@@ -157,6 +160,96 @@ class JobManager:
         with self._lock, self._connect() as db:
             db.execute("UPDATE jobs SET report_json=?, resolved_media_path=? WHERE id=?",
                        (json.dumps(report, ensure_ascii=False), resolved_path, job_id))
+
+    async def start_alignment(self, job_id: str, english_source_id: str | None, polish_source_id: str | None) -> None:
+        async def run() -> None:
+            try:
+                await self.align(job_id, english_source_id, polish_source_id)
+            except UserInputError as exc:
+                with self._lock, self._connect() as db:
+                    db.execute("UPDATE jobs SET error_message=? WHERE id=?", (str(exc), job_id))
+                await self._emit(job_id, "ERROR", JobStatus.FAILED, str(exc), 100)
+            except Exception as exc:
+                message = f"Synchronizacja nie powiodła się ({type(exc).__name__})"
+                with self._lock, self._connect() as db:
+                    db.execute("UPDATE jobs SET error_message=? WHERE id=?", (message, job_id))
+                await self._emit(job_id, "ERROR", JobStatus.FAILED, message, 100)
+        asyncio.create_task(run())
+
+    async def align(self, job_id: str, english_source_id: str | None, polish_source_id: str | None) -> None:
+        job = self.get(job_id)
+        if not job or not job.get("report"):
+            raise UserInputError("Najpierw wykonaj analizę materiału")
+        report = job["report"]
+        english_options = report.get("englishRanking") or []
+        polish_options = report.get("polishRanking") or []
+        def source_id(item: dict) -> str:
+            return f"{item.get('sourceType')}:{item.get('streamIndex', item.get('name'))}"
+        def choose(options: list[dict], requested: str | None, selected: dict | None) -> dict | None:
+            wanted = requested or (source_id(selected) if selected else None)
+            return next((item for item in options if source_id(item) == wanted), None)
+        english = choose(english_options, english_source_id, report.get("selectedEnglish"))
+        polish = choose(polish_options, polish_source_id, report.get("selectedPolish"))
+        if english_source_id and not english or polish_source_id and not polish:
+            raise UserInputError("Wybrane źródło nie należy do raportu zadania")
+        await self._emit(job_id, "INFO", JobStatus.SELECTING_SOURCES,
+                         f"Źródła: EN {candidate_label(english)}, PL {candidate_label(polish)}", 5)
+        if not english or not polish:
+            raise UserInputError("Brak kompletnej pary angielskich i polskich napisów")
+        if english.get("type") == "graphic":
+            report["alignment"] = {"status": "NEEDS_OCR", "quality": "UNUSABLE",
+                                   "warnings": ["Angielskie źródło jest graficzne i wymaga OCR"],
+                                   "selectedEnglish": english, "selectedPolish": polish}
+            self._save_report(job_id, report, job.get("resolved_media_path") or job["media_path"])
+            await self._emit(job_id, "WARNING", JobStatus.NEEDS_OCR, "Wybrane napisy graficzne wymagają OCR", 100)
+            return
+        english_path = Path(report.get("workingFiles", {}).get("englishReference") or "")
+        polish_path = Path(polish.get("path") or "")
+        if not english_path.is_file() or polish.get("sourceType") != "external" or not polish_path.is_file():
+            raise UserInputError("Etap 3 wymaga tekstowej kopii angielskiej i zewnętrznego polskiego pliku")
+        await self._emit(job_id, "INFO", JobStatus.PARSING_SUBTITLES, "Parsowanie napisów do modelu milisekundowego", 15)
+        english_cues, polish_cues = await asyncio.gather(
+            asyncio.to_thread(parse_cues, english_path, "english"), asyncio.to_thread(parse_cues, polish_path, "polish"))
+        duration_ms = round((report.get("media", {}).get("durationSeconds") or 0) * 1000)
+        await self._emit(job_id, "INFO", JobStatus.BUILDING_ANCHORS, "Budowanie strukturalnych punktów dopasowania", 30)
+        anchors = StructuralAnchorProvider().provide(english_cues, polish_cues, duration_ms, {"english": english, "polish": polish})
+        await self._emit(job_id, "INFO", JobStatus.FITTING_MODELS, f"Dopasowanie modeli do {len(anchors)} punktów", 45)
+        models = fit_models(anchors, self.settings.alignment_min_scale, self.settings.alignment_max_scale,
+                            self.settings.alignment_max_segments, self.settings.alignment_min_points_per_segment)
+        await self._emit(job_id, "INFO", JobStatus.SELECTING_STRATEGY, "Deterministyczny wybór najprostszego wiarygodnego modelu", 60)
+        model = select_model(models); grade = quality(model)
+        if not model:
+            grade = "UNUSABLE"
+            alignment = {"status": "REVIEW_REQUIRED", "quality": grade, "warnings": ["Za mało wiarygodnych punktów"],
+                         "selectedEnglish": english, "selectedPolish": polish, "anchorCount": len(anchors)}
+        else:
+            await self._emit(job_id, "INFO", JobStatus.TRANSFORMING_TIMESTAMPS,
+                             f"Transformacja: {model['strategy']}, offset {model.get('offsetMs')} ms, scale {model.get('scale')}", 72)
+            transformed, validation = transform(polish_cues, model, duration_ms, self.settings.alignment_end_tolerance_ms)
+            await self._emit(job_id, "INFO", JobStatus.VALIDATING_OUTPUT, "Walidacja kolejności i zakresu czasów", 84)
+            preview = self.settings.data_root / "work" / "jobs" / job_id / "preview.AI-Sync.pl.srt"
+            input_hash = sha256(polish_path)
+            await self._emit(job_id, "INFO", JobStatus.GENERATING_PREVIEW, "Atomowy zapis podglądu UTF-8 w katalogu roboczym", 92)
+            write_preview(transformed, preview)
+            warnings = []
+            if validation["reversedSegments"] or validation["overlappingSegments"]: warnings.append("Wynik zawiera konflikty czasowe")
+            status = "COMPLETED" if grade in {"HIGH", "MEDIUM"} and not warnings else "REVIEW_REQUIRED"
+            alignment = {"status": status, "quality": grade, "model": public_model(model),
+                         "models": [public_model(item) for item in models], "anchorCount": len(anchors),
+                         "anchorSummary": [{"referenceTime": a.reference_time, "sourceTime": a.source_time,
+                                            "confidence": a.confidence, "origin": a.origin} for a in anchors],
+                         "validation": validation, "firstBeforeMs": polish_cues[0].start_ms if polish_cues else None,
+                         "lastBeforeMs": polish_cues[-1].end_ms if polish_cues else None,
+                         "firstAfterMs": transformed[0].start_ms if transformed else None,
+                         "lastAfterMs": transformed[-1].end_ms if transformed else None,
+                         "inputSha256": input_hash, "previewSha256": sha256(preview), "previewPath": str(preview),
+                         "selectedEnglish": english, "selectedPolish": polish, "warnings": warnings,
+                         "readyForPublication": status == "COMPLETED", "mediaDirectoryModified": False}
+        report["alignment"] = alignment
+        self._save_report(job_id, report, job.get("resolved_media_path") or job["media_path"])
+        terminal = JobStatus.COMPLETED if alignment["status"] == "COMPLETED" else JobStatus.REVIEW_REQUIRED
+        await self._emit(job_id, "SUCCESS" if terminal == JobStatus.COMPLETED else "WARNING", terminal,
+                         f"Synchronizacja: {alignment['quality']} — plik pozostaje tylko podglądem", 100)
 
     async def _worker(self) -> None:
         while True:

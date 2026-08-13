@@ -1,7 +1,10 @@
-from fastapi import APIRouter, Header, HTTPException, Request, status
-from fastapi.responses import StreamingResponse
+from pathlib import Path
 
-from app.models.job import CreateJobRequest, CreateJobResponse, JobResponse
+from fastapi import APIRouter, Header, HTTPException, Request, status
+from fastapi.responses import FileResponse, StreamingResponse
+
+from app.models.job import AlignJobRequest, CreateJobRequest, CreateJobResponse, JobResponse
+from app.services.media_analysis import UserInputError
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
@@ -35,6 +38,27 @@ async def get_job(job_id: str, request: Request) -> JobResponse:
     if not job:
         raise not_found()
     return response_from_job(job)
+
+
+@router.post("/{job_id}/alignment", status_code=status.HTTP_202_ACCEPTED)
+async def align_job(job_id: str, payload: AlignJobRequest, request: Request) -> dict:
+    if not request.app.state.jobs.get(job_id):
+        raise not_found()
+    await request.app.state.jobs.start_alignment(job_id, payload.english_source_id, payload.polish_source_id)
+    return {"jobId": job_id, "status": "SELECTING_SOURCES"}
+
+
+@router.get("/{job_id}/preview")
+async def download_preview(job_id: str, request: Request) -> FileResponse:
+    job = request.app.state.jobs.get(job_id)
+    if not job:
+        raise not_found()
+    alignment = (job.get("report") or {}).get("alignment") or {}
+    expected = (request.app.state.settings.data_root / "work" / "jobs" / job_id / "preview.AI-Sync.pl.srt").resolve()
+    recorded = alignment.get("previewPath")
+    if not recorded or Path(recorded).resolve() != expected or not expected.is_file():
+        raise HTTPException(status_code=404, detail={"code": "PREVIEW_NOT_FOUND", "message": "Podgląd nie istnieje"})
+    return FileResponse(expected, media_type="application/x-subrip", filename="preview.AI-Sync.pl.srt")
 
 
 @router.get("/{job_id}/events")
