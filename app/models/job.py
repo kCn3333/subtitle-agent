@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 def to_camel(value: str) -> str:
@@ -53,6 +53,18 @@ class JobEvent(BaseModel):
     sequence: int
     timestamp: datetime
     level: str
-    stage: JobStatus
+    # Keep future/legacy database values readable so one historical row cannot
+    # break the entire SSE stream. Known values remain strongly typed.
+    stage: JobStatus | str
     message: str
     progress: int = Field(ge=0, le=100)
+
+    @field_validator("stage", mode="before")
+    @classmethod
+    def preserve_unknown_stage(cls, value: object) -> object:
+        if isinstance(value, str):
+            try:
+                return JobStatus(value)
+            except ValueError:
+                return value
+        return value
