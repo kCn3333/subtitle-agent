@@ -44,8 +44,19 @@ async def get_job(job_id: str, request: Request) -> JobResponse:
 async def align_job(job_id: str, payload: AlignJobRequest, request: Request) -> dict:
     if not request.app.state.jobs.get(job_id):
         raise not_found()
-    await request.app.state.jobs.start_alignment(job_id, payload.english_source_id, payload.polish_source_id)
+    await request.app.state.jobs.start_alignment(job_id, payload.english_source_id, payload.polish_source_id, payload.mode)
     return {"jobId": job_id, "status": "SELECTING_SOURCES"}
+
+
+@router.get("/semantic/config")
+async def semantic_config(request: Request) -> dict:
+    settings = request.app.state.settings
+    return {"enabled": settings.openai_semantic_alignment_enabled, "configured": settings.openai_configured,
+            "model": settings.openai_model, "limits": {"timeoutSeconds": settings.openai_timeout_seconds,
+            "maxRetries": settings.openai_max_retries, "maxRequestsPerJob": settings.openai_max_requests_per_job,
+            "maxInputTokensPerJob": settings.openai_max_input_tokens_per_job,
+            "maxOutputTokensPerJob": settings.openai_max_output_tokens_per_job,
+            "maxConcurrentRequests": settings.openai_max_concurrent_requests}}
 
 
 @router.get("/{job_id}/preview")

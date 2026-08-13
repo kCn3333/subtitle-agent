@@ -20,6 +20,10 @@ services:
       ALIGNMENT_MAX_SEGMENTS: 3
       ALIGNMENT_MIN_POINTS_PER_SEGMENT: 4
       ALIGNMENT_END_TOLERANCE_MS: 1000
+      OPENAI_SEMANTIC_ALIGNMENT_ENABLED: "false"
+      OPENAI_MODEL: gpt-5.6-terra
+      OPENAI_REASONING_EFFORT: low
+      OPENAI_API_KEY_FILE: /run/secrets/openai_api_key
       TZ: Europe/Warsaw
     volumes:
       - subtitle_agent_data:/data
@@ -29,5 +33,10 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    secrets:
+      - openai_api_key
 volumes:
   subtitle_agent_data:
+secrets:
+  openai_api_key:
+    file: ./secrets/openai_api_key
