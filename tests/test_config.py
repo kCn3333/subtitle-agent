@@ -43,6 +43,7 @@ def test_missing_openai_key_does_not_break_settings(monkeypatch):
 def test_openai_key_file_has_priority_and_is_masked(tmp_path, monkeypatch):
     secret = tmp_path / "key"
     secret.write_text("file-placeholder-secret\n")
-    settings = Settings(openai_api_key="environment-placeholder", openai_api_key_file=secret)
+    settings = Settings(subtitle_agent_app_mode="ADVANCED", openai_api_key="environment-placeholder",
+                        openai_api_key_file=secret)
     assert settings.openai_api_key.get_secret_value() == "file-placeholder-secret"
     assert "file-placeholder-secret" not in repr(settings)

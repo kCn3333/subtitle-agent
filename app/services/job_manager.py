@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import AsyncIterator
 
 from app.core.config import Settings
-from app.models.job import AlignmentMode, JobEvent, JobStatus
+from app.models.job import AlignmentMode, JobEvent, JobStatus, WorkpackTaskType
 from app.services.media_analysis import (
     UserInputError, discover_external_subtitles, extract_reference, probe_media,
     rank_english, rank_polish, validate_media_path,
@@ -21,6 +21,9 @@ from app.services.semantic import (CompositeAnchorProvider, OpenAIAnchorProvider
                                    SemanticBudgetExceeded, SemanticUnavailable)
 from app.services.publisher import (PublishBlockedQuality, PublishConflict, PublishDisabled, PublishError,
                                     PublishSourceChanged, SubtitlePublisher, identity)
+from app.services.workpack import (SCHEMA_VERSION, build_zip, copy_polish_candidates, diagnostic_hypotheses,
+                                   extract_embedded, graphic_timeline, media_summary, request_text, safe_filename,
+                                   sha256_file, subtitle_streams, timeline, write_json)
 
 
 TERMINAL = {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.INTERRUPTED, JobStatus.REVIEW_REQUIRED,
@@ -28,6 +31,7 @@ TERMINAL = {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.INTERRUPTED, JobSta
             JobStatus.READY_TO_PUBLISH, JobStatus.PUBLISHED, JobStatus.PUBLISH_DISABLED,
             JobStatus.PUBLISH_BLOCKED_QUALITY, JobStatus.PUBLISH_SOURCE_CHANGED, JobStatus.PUBLISH_CONFLICT,
             JobStatus.PUBLISH_PERMISSION_DENIED, JobStatus.PUBLISH_UNSUPPORTED_FILESYSTEM, JobStatus.PUBLISH_FAILED}
+TERMINAL.update({JobStatus.WORKPACK_READY, JobStatus.WORKPACK_INCOMPLETE})
 LEGACY_EVENT_STAGES = {
     "INSPECTING": JobStatus.VALIDATING_PATH,
     "CHECKING_TOOLS": JobStatus.PROBING_MEDIA,
@@ -74,7 +78,8 @@ class JobManager:
                     id TEXT PRIMARY KEY, media_path TEXT NOT NULL, status TEXT NOT NULL,
                     progress INTEGER NOT NULL CHECK(progress BETWEEN 0 AND 100),
                     created_at TEXT NOT NULL, started_at TEXT, finished_at TEXT, error_message TEXT,
-                    resolved_media_path TEXT, report_json TEXT
+                    resolved_media_path TEXT, report_json TEXT, job_type TEXT NOT NULL DEFAULT 'ANALYZE_MEDIA',
+                    task_type TEXT
                 );
                 CREATE TABLE IF NOT EXISTS events (
                     job_id TEXT NOT NULL, sequence INTEGER NOT NULL, timestamp TEXT NOT NULL,
@@ -96,6 +101,10 @@ class JobManager:
                 db.execute("ALTER TABLE jobs ADD COLUMN resolved_media_path TEXT")
             if "report_json" not in columns:
                 db.execute("ALTER TABLE jobs ADD COLUMN report_json TEXT")
+            if "job_type" not in columns:
+                db.execute("ALTER TABLE jobs ADD COLUMN job_type TEXT NOT NULL DEFAULT 'ANALYZE_MEDIA'")
+            if "task_type" not in columns:
+                db.execute("ALTER TABLE jobs ADD COLUMN task_type TEXT")
             for legacy, current in LEGACY_EVENT_STAGES.items():
                 db.execute("UPDATE events SET stage=? WHERE stage=?", (current, legacy))
             stamp = now().isoformat()
@@ -127,6 +136,34 @@ class JobManager:
         self._conditions[job_id] = asyncio.Condition()
         await self._queue.put(job_id)
         return self.get(job_id)
+
+    async def create_workpack(self, media_path: str, task_type: WorkpackTaskType) -> dict:
+        job_id = str(uuid.uuid4()); stamp = now().isoformat()
+        with self._lock, self._connect() as db:
+            db.execute("""INSERT INTO jobs
+                (id,media_path,status,progress,created_at,started_at,finished_at,error_message,resolved_media_path,
+                 report_json,job_type,task_type) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (job_id, media_path, JobStatus.QUEUED, 0, stamp, None, None, None, None, None,
+                 "PREPARE_WORKPACK", task_type.value))
+            self._insert_event(db, job_id, "INFO", JobStatus.QUEUED, "Zadanie przygotowania workpacka zostało utworzone", 0)
+        self._conditions[job_id] = asyncio.Condition(); await self._queue.put(job_id)
+        return self.get(job_id)
+
+    async def rebuild_workpack(self, job_id: str, reference_source_id: str) -> None:
+        job = self.get(job_id)
+        if not job or job.get("job_type") != "PREPARE_WORKPACK" or not job.get("report"):
+            raise UserInputError("Nie znaleziono danych workpacka")
+        detected = job["report"].get("englishRanking") or []
+        if reference_source_id not in {f"{item.get('sourceType')}:{item.get('streamIndex')}" for item in detected}:
+            raise UserInputError("Wybrana referencja nie została wykryta w analizie")
+        async def run() -> None:
+            try:
+                await self._prepare_workpack(job_id, job["report"], reference_source_id)
+            except Exception as exc:
+                message = f"Ponowne budowanie workpacka nie powiodło się ({type(exc).__name__})"
+                with self._lock, self._connect() as db: db.execute("UPDATE jobs SET error_message=? WHERE id=?", (message, job_id))
+                await self._emit(job_id, "ERROR", JobStatus.FAILED, message, 100)
+        asyncio.create_task(run())
 
     def get(self, job_id: str) -> dict | None:
         with self._lock, self._connect() as db:
@@ -432,11 +469,154 @@ class JobManager:
         await self._emit(job_id, "SUCCESS" if terminal == JobStatus.COMPLETED else "WARNING", terminal,
                          f"Synchronizacja: {alignment['quality']} — plik pozostaje tylko podglądem", 100)
 
+    async def _prepare_workpack(self, job_id: str, cached: dict | None = None,
+                                requested_reference: str | None = None) -> None:
+        job = self.get(job_id)
+        task_type = WorkpackTaskType(job.get("task_type") or WorkpackTaskType.SYNC_AND_LANGUAGE_REVIEW)
+        await self._emit(job_id, "INFO", JobStatus.VALIDATING_PATH, "Bezpieczna weryfikacja ścieżki", 5)
+        media_path = validate_media_path(job["media_path"], self.settings.media_roots)
+        job_dir = self.settings.data_root / "work" / "jobs" / job_id
+        job_dir.mkdir(parents=True, exist_ok=True)
+        if cached:
+            media = cached["media"]; external = cached["externalSubtitles"]
+            english_ranking = cached["englishRanking"]; polish_ranking = cached["polishRanking"]
+            await self._emit(job_id, "INFO", JobStatus.PROBING_MEDIA,
+                             "Użyto zapisanej analizy ffprobe; źródło nie było ponownie sondowane", 15)
+        else:
+            await self._emit(job_id, "INFO", JobStatus.PROBING_MEDIA, "Analiza techniczna materiału przez ffprobe", 15)
+            media = await probe_media(media_path, self.settings.ffprobe_timeout_seconds)
+            await self._emit(job_id, "INFO", JobStatus.DISCOVERING_SUBTITLES, "Wykrywanie osadzonych i zewnętrznych napisów", 25)
+            external = await asyncio.to_thread(discover_external_subtitles, media_path)
+            english_ranking = rank_english(media["embeddedSubtitles"], external)
+            polish_ranking = rank_polish(media, external, media["embeddedSubtitles"])
+        await self._emit(job_id, "INFO", JobStatus.SELECTING_REFERENCE, "Ranking angielskich źródeł referencyjnych", 32)
+        selected = None
+        if requested_reference:
+            selected = next((item for item in english_ranking
+                             if f"{item.get('sourceType')}:{item.get('streamIndex')}" == requested_reference), None)
+        elif english_ranking and english_ranking[0].get("score", 0) > 0:
+            selected = english_ranking[0]
+        margin = self.settings.workpack_reference_score_margin
+        ambiguous = bool(selected and not requested_reference and len(english_ranking) > 1 and
+                         selected.get("score", 0) - english_ranking[1].get("score", 0) < margin)
+        alternatives = []
+        if ambiguous and self.settings.workpack_include_reference_alternatives:
+            alternatives = [item for item in english_ranking if item is not selected][
+                :self.settings.workpack_max_reference_alternatives]
+            await self._emit(job_id, "WARNING", JobStatus.REFERENCE_AMBIGUOUS,
+                             f"Wybór niejednoznaczny: różnica jest mniejsza niż {margin} punktów", 36)
+        warnings: list[str] = []
+        if ambiguous: warnings.append("Wybór angielskiej referencji jest niejednoznaczny")
+        if not selected:
+            warnings.append("Nie znaleziono wiarygodnej angielskiej referencji")
+            await self._emit(job_id, "WARNING", JobStatus.NO_ENGLISH_REFERENCE, warnings[-1], 40)
+        reference_files: list[Path] = []
+        if selected:
+            await self._emit(job_id, "INFO", JobStatus.EXTRACTING_REFERENCE,
+                             f"Ekstrakcja strumienia {selected.get('streamIndex')} ({selected.get('codec')})", 43)
+            reference_files = await extract_embedded(selected, media_path, job_dir / "reference" / "selected",
+                                                     self.settings.ffmpeg_timeout_seconds)
+        alternative_files: list[Path] = []
+        for number, alternative in enumerate(alternatives, 1):
+            extracted = await extract_embedded(alternative, media_path,
+                                               job_dir / "reference" / "alternatives" / f"source-{number:03d}",
+                                               self.settings.ffmpeg_timeout_seconds)
+            for path in extracted:
+                variant = path.name.removeprefix("selected")
+                destination = job_dir / "reference" / "alternatives" / f"alternative-{number:03d}{variant}"
+                destination.parent.mkdir(parents=True, exist_ok=True); path.replace(destination); alternative_files.append(destination)
+        await self._emit(job_id, "INFO", JobStatus.COLLECTING_POLISH_CANDIDATES,
+                         "Kopiowanie polskich kandydatów byte-for-byte", 58)
+        polish, omitted_polish = await asyncio.to_thread(copy_polish_candidates, polish_ranking, job_dir / "polish",
+                                                         self.settings.workpack_max_polish_candidates)
+        if not polish:
+            warnings.append("Nie znaleziono zewnętrznych polskich kandydatów")
+            await self._emit(job_id, "WARNING", JobStatus.NO_POLISH_CANDIDATES, warnings[-1], 62)
+        if omitted_polish: warnings.append(f"Pominięto {len(omitted_polish)} kandydatów z powodu limitu")
+        await self._emit(job_id, "INFO", JobStatus.BUILDING_TIMELINES, "Budowanie technicznych timeline'ów", 68)
+        selected_srt = next((path for path in reference_files if path.name == "selected.eng.srt"), None)
+        reference_timeline = timeline(selected_srt, "reference") if selected_srt else None
+        pgs_timeline = None
+        if selected and selected.get("type") == "graphic":
+            pgs_timeline = await graphic_timeline(media_path, int(selected["streamIndex"]), self.settings.ffprobe_timeout_seconds)
+        polish_timelines = {item["archiveName"]: timeline(job_dir / item["archiveName"], item["archiveName"])
+                            for item in polish if Path(item["archiveName"]).suffix.lower() == ".srt"}
+        for item in polish:
+            details = polish_timelines.get(item["archiveName"], {})
+            item.update({"encoding": (item.get("analysis") or {}).get("encoding"),
+                         "cueCount": details.get("cue_count"), "firstMs": details.get("first_ms"),
+                         "lastMs": details.get("last_ms"), "coverage": (details.get("last_ms") or 0) /
+                         max(1, round((media.get("durationSeconds") or 0) * 1000)),
+                         "parserWarnings": details.get("warnings", [])})
+        analysis = job_dir / "analysis"
+        write_json(analysis / "media-summary.json", media_summary(media))
+        write_json(analysis / "subtitle-streams.json", subtitle_streams(media))
+        ranking_safe = [{key: item.get(key) for key in ("streamIndex", "codec", "language", "title", "type", "score", "reasons", "default", "forced", "hearingImpaired")}
+                        for item in english_ranking]
+        write_json(analysis / "source-ranking.json", {"english": ranking_safe,
+                   "polish": [{"name": item.get("name"), "score": item.get("score"), "reasons": item.get("reasons")} for item in polish_ranking]})
+        if reference_timeline: write_json(analysis / "reference-timeline.json", reference_timeline)
+        if pgs_timeline: write_json(analysis / "reference-pgs-timeline.json", pgs_timeline)
+        write_json(analysis / "polish-timelines.json", polish_timelines)
+        hypotheses = diagnostic_hypotheses(selected_srt, polish, job_dir,
+                                            round((media.get("durationSeconds") or 0) * 1000))
+        write_json(analysis / "synchronization-hypotheses.json", hypotheses)
+        await self._emit(job_id, "INFO", JobStatus.BUILDING_MANIFEST, "Tworzenie manifestu bez ścieżek hosta", 78)
+        reference_entry = None
+        if selected:
+            reference_entry = {key: selected.get(key) for key in ("streamIndex", "codec", "type", "language", "title", "default", "forced", "hearingImpaired", "score", "reasons")}
+            reference_entry.update({"confidence": "AMBIGUOUS" if ambiguous else "RECOMMENDED",
+                                    "files": [{"name": path.relative_to(job_dir).as_posix(), "sha256": sha256_file(path)} for path in reference_files],
+                                    "cueCount": (reference_timeline or pgs_timeline or {}).get("cue_count", (pgs_timeline or {}).get("event_count")),
+                                    "firstMs": (reference_timeline or {}).get("first_ms"), "lastMs": (reference_timeline or {}).get("last_ms")})
+        expected = f"{safe_filename(media_path.stem)}.AI-Reviewed-v001.pl.srt"
+        manifest = {"schema_version": SCHEMA_VERSION, "job_id": job_id, "task_type": task_type.value,
+                    "media": media_summary(media), "reference": reference_entry,
+                    "reference_alternatives": ranking_safe[1:1 + len(alternatives)],
+                    "polish_candidates": [{key: item.get(key) for key in ("archiveName", "originalName", "languageHint", "encoding", "sizeBytes", "cueCount", "firstMs", "lastMs", "coverage", "parserWarnings", "score", "sha256", "generatedResult")} for item in polish],
+                    "omitted_polish_candidates": [{"originalName": item.get("name"), "reason": item.get("omissionReason")} for item in omitted_polish],
+                    "timing_analysis": {"hypothesisCount": len(hypotheses)},
+                    "expected_output": {"filename": expected, "encoding": "UTF-8", "format": "SRT",
+                                        "preserve_timing": True, "modify_media": False},
+                    "warnings": warnings, "files": []}
+        (job_dir / "REQUEST.md").write_text(request_text(task_type, manifest), encoding="utf-8")
+        recommended = reference_files[0].relative_to(job_dir).as_posix() if reference_files else "brak"
+        polish_names = ", ".join(item["archiveName"] for item in polish) or "brak"
+        (job_dir / "README.txt").write_text(
+            f"Subtitle Agent workpack\nReferencja: {recommended}\nPolscy kandydaci: {polish_names}\n"
+            f"Typ referencji: {(selected or {}).get('type', 'brak')}\nWybór jednoznaczny: {'nie' if ambiguous else 'tak'}\n"
+            "Prześlij najlepiej całe archiwum ZIP do ChatGPT wraz z REQUEST.md.\n", encoding="utf-8")
+        manifest["files"] = sorted(["manifest.json", "checksums.sha256"] + [
+            path.relative_to(job_dir).as_posix() for path in job_dir.rglob("*")
+            if path.is_file() and path.suffix != ".zip" and path.name not in {"manifest.json", "checksums.sha256"}])
+        write_json(job_dir / "manifest.json", manifest)
+        await self._emit(job_id, "INFO", JobStatus.BUILDING_WORKPACK, "Pakowanie ZIP i obliczanie SHA-256", 90)
+        archive, version, archive_hash, omitted_files = await asyncio.to_thread(
+            build_zip, job_dir, media_path.stem, self.settings.workpack_max_archive_bytes, self.settings.workpack_max_files)
+        if omitted_files:
+            warnings.append(f"Pominięto {len(omitted_files)} plików z powodu limitu archiwum")
+        workpack = {"schemaVersion": SCHEMA_VERSION, "version": version, "path": str(archive),
+                    "filename": archive.name, "sizeBytes": archive.stat().st_size, "sha256": archive_hash,
+                    "files": manifest["files"], "warnings": warnings, "omittedFiles": omitted_files,
+                    "referenceAmbiguous": ambiguous}
+        report = {"jobType": "PREPARE_WORKPACK", "taskType": task_type.value, "media": media,
+                  "externalSubtitles": external, "englishRanking": english_ranking, "polishRanking": polish_ranking,
+                  "selectedEnglish": selected, "referenceAlternatives": alternatives,
+                  "polishCandidates": polish, "workpack": workpack, "warnings": warnings,
+                  "mediaDirectoryModified": False}
+        self._save_report(job_id, report, str(media_path))
+        terminal = JobStatus.WORKPACK_INCOMPLETE if warnings or omitted_files else JobStatus.WORKPACK_READY
+        await self._emit(job_id, "WARNING" if terminal == JobStatus.WORKPACK_INCOMPLETE else "SUCCESS", terminal,
+                         f"Workpack gotowy: {archive.name} ({archive.stat().st_size} B)", 100)
+
     async def _worker(self) -> None:
         while True:
             job_id = await self._queue.get()
             try:
                 job = self.get(job_id)
+                if job.get("job_type") == "PREPARE_WORKPACK":
+                    await self._prepare_workpack(job_id)
+                    continue
                 await self._emit(job_id, "INFO", JobStatus.VALIDATING_PATH, "Bezpieczna weryfikacja ścieżki", 10)
                 media_path = validate_media_path(job["media_path"], self.settings.media_roots)
                 work_dir = self.settings.data_root / "work" / "jobs" / job_id

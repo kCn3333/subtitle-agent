@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from app.api.jobs import router as jobs_router
+from app.api.workpacks import router as workpacks_router
 from app.core.config import Settings, get_settings
 from app.services.job_manager import JobManager
 from app.services.system_probe import prepare_data_root, probe_tools
@@ -44,13 +45,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/")
     async def index(request: Request):
-        return templates.TemplateResponse(request=request, name="index.html", context={"app_name": config.app_name})
+        return templates.TemplateResponse(request=request, name="index.html", context={"app_name": config.app_name,
+                                                                                       "app_mode": config.subtitle_agent_app_mode})
 
     @app.get("/health")
     async def health(request: Request):
         return {"status": "ok", "ffmpeg": bool(request.app.state.tools.ffmpeg), "ffprobe": bool(request.app.state.tools.ffprobe)}
 
     app.include_router(jobs_router)
+    app.include_router(workpacks_router)
     return app
 
 

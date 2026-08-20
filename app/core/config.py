@@ -23,6 +23,13 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("SUBTITLE_AGENT_MEDIA_ROOTS", "MEDIA_ROOTS"),
     )
     max_concurrent_jobs: int = 1
+    subtitle_agent_app_mode: str = "WORKPACK"
+    workpack_reference_score_margin: int = 10
+    workpack_max_reference_alternatives: int = 2
+    workpack_include_reference_alternatives: bool = True
+    workpack_max_polish_candidates: int = 10
+    workpack_max_archive_bytes: int = 104857600
+    workpack_max_files: int = 100
     ffprobe_timeout_seconds: float = 30
     ffmpeg_timeout_seconds: float = 600
     alignment_min_scale: float = 0.94
@@ -73,6 +80,22 @@ class Settings(BaseSettings):
     def positive_jobs(cls, value: int) -> int:
         if value < 1:
             raise ValueError("MAX_CONCURRENT_JOBS must be at least 1")
+        return value
+
+    @field_validator("subtitle_agent_app_mode")
+    @classmethod
+    def app_mode(cls, value: str) -> str:
+        value = value.upper()
+        if value not in {"WORKPACK", "ADVANCED"}:
+            raise ValueError("SUBTITLE_AGENT_APP_MODE must be WORKPACK or ADVANCED")
+        return value
+
+    @field_validator("workpack_reference_score_margin", "workpack_max_reference_alternatives",
+                     "workpack_max_polish_candidates", "workpack_max_archive_bytes", "workpack_max_files")
+    @classmethod
+    def positive_workpack_limit(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("Workpack limits must be at least 1")
         return value
 
     @field_validator("openai_timeout_seconds")
@@ -139,6 +162,11 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def load_api_key_file(self):
+        if self.subtitle_agent_app_mode == "WORKPACK":
+            # WORKPACK is deliberately independent from credentials, even if
+            # stale OpenAI variables remain in the container environment.
+            self.openai_api_key = None
+            return self
         if self.openai_api_key_file is not None:
             try:
                 value = self.openai_api_key_file.read_text(encoding="utf-8").strip()

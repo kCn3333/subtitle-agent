@@ -11,42 +11,25 @@ services:
       APP_PORT: 8080
       LOG_LEVEL: INFO
       DATA_ROOT: /data
+      SUBTITLE_AGENT_APP_MODE: WORKPACK
       SUBTITLE_AGENT_MEDIA_ROOTS: /media/movies:/media/shows
       MAX_CONCURRENT_JOBS: 1
       FFPROBE_TIMEOUT_SECONDS: 30
       FFMPEG_TIMEOUT_SECONDS: 600
-      ALIGNMENT_MIN_SCALE: 0.94
-      ALIGNMENT_MAX_SCALE: 1.06
-      ALIGNMENT_MAX_SEGMENTS: 3
-      ALIGNMENT_MIN_POINTS_PER_SEGMENT: 4
-      ALIGNMENT_END_TOLERANCE_MS: 1000
-      OPENAI_SEMANTIC_ALIGNMENT_ENABLED: "false"
-      OPENAI_MODEL: gpt-5.6-terra
-      OPENAI_REASONING_EFFORT: low
-      OPENAI_API_KEY_FILE: /run/secrets/openai_api_key
-      SUBTITLE_AGENT_PUBLISH_ENABLED: "false"
-      SUBTITLE_AGENT_PUBLISH_MODE: PREVIEW_ONLY
-      SUBTITLE_AGENT_PUBLISH_MAPPINGS_JSON: '{"/media/movies":"/publish/movies","/media/shows":"/publish/shows"}'
-      SUBTITLE_AGENT_AUTO_PUBLISH_MIN_QUALITY: HIGH
-      SUBTITLE_AGENT_AUTO_PUBLISH_REQUIRE_SEMANTIC: "true"
-      SUBTITLE_AGENT_PUBLISH_MAX_VERSION: 999
-      SUBTITLE_AGENT_PUBLISH_FILE_MODE: "0644"
+      WORKPACK_REFERENCE_SCORE_MARGIN: 10
+      WORKPACK_MAX_REFERENCE_ALTERNATIVES: 2
+      WORKPACK_INCLUDE_REFERENCE_ALTERNATIVES: "true"
+      WORKPACK_MAX_POLISH_CANDIDATES: 10
+      WORKPACK_MAX_ARCHIVE_BYTES: 104857600
+      WORKPACK_MAX_FILES: 100
       TZ: Europe/Warsaw
     volumes:
       - subtitle_agent_data:/data
       - /media/movies:/media/movies:ro
       - /media/shows:/media/shows:ro
-      # Dodaj dopiero po diagnostyce UID/GID i najpierw użyj trybu MANUAL:
-      # - /media/movies:/publish/movies:rw
-      # - /media/shows:/publish/shows:rw
     security_opt:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    secrets:
-      - openai_api_key
 volumes:
   subtitle_agent_data:
-secrets:
-  openai_api_key:
-    file: ./secrets/openai_api_key
