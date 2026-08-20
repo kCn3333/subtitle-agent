@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from app.api.jobs import router as jobs_router
-from app.api.workpacks import router as workpacks_router
+from app.api.workpacks import router as workpacks_router, tasks_router
 from app.core.config import Settings, get_settings
 from app.services.job_manager import JobManager
 from app.services.system_probe import prepare_data_root, probe_tools
@@ -54,6 +54,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(jobs_router)
     app.include_router(workpacks_router)
+    app.include_router(tasks_router)
     return app
 
 

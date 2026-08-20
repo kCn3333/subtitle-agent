@@ -10,14 +10,17 @@
   <section class="card"><form id="job-form">
     <label for="media-path">Pełna ścieżka do filmu lub odcinka</label>
     <div class="row"><input id="media-path" required placeholder="/media/shows/Example/Season 1/example.mkv">
-      <select id="task-type" aria-label="Typ zadania"><option>SYNC_AND_LANGUAGE_REVIEW</option><option>SYNC_ONLY</option>
-        <option>PREPARE_SYNC</option><option>PREPARE_TRANSLATION</option><option>INSPECT</option></select>
-      <button>Przygotuj pakiet</button></div></form></section>
+      <select id="task-type" aria-label="Tryb zadania">
+        <option value="INSPECT">Sprawdź napisy</option>
+        <option value="PREPARE_SYNC">Przygotuj do synchronizacji</option>
+        <option value="PREPARE_TRANSLATION">Przygotuj do tłumaczenia</option>
+      </select>
+      <button>Uruchom</button></div></form></section>
   <section class="status card"><div><span>Status zadania</span><strong id="status">BRAK ZADANIA</strong></div>
     <div><span>Postęp</span><strong id="progress">0%</strong></div><div class="current"><span>Aktualnie</span><strong id="current-activity">Oczekiwanie</strong></div></section>
   <section class="console-card"><div class="console-head"><span>Konsola postępu</span><button id="clear" type="button">Wyczyść widok konsoli</button></div>
     <div id="console" class="console" aria-live="polite"></div></section>
-  <section id="results" class="card results" hidden><h2>Gotowy workpack</h2><div id="result-content"></div>
+  <section id="results" class="card results" hidden><h2>Wynik analizy</h2><div id="result-content"></div>
     <div id="reference-choice" hidden><label>Wybierz wykrytą referencję<select id="reference-source"></select></label>
       <button id="rebuild" type="button">Zbuduj ponownie z tą referencją</button></div>
     <a id="download" class="button" hidden>Pobierz pakiet ZIP</a>

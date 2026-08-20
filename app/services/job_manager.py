@@ -26,8 +26,8 @@ from app.services.semantic import (CompositeAnchorProvider, OpenAIAnchorProvider
 from app.services.publisher import (PublishBlockedQuality, PublishConflict, PublishDisabled, PublishError,
                                     PublishSourceChanged, SubtitlePublisher, identity)
 from app.services.workpack import (SCHEMA_VERSION, build_zip, copy_polish_candidates, diagnostic_hypotheses,
-                                   extract_embedded, graphic_timeline, media_summary, request_text, safe_filename,
-                                   sha256_file, subtitle_streams, timeline, write_json)
+                                   extract_embedded, graphic_timeline, inspection_report, media_summary, request_text,
+                                   safe_filename, sha256_file, subtitle_streams, timeline, write_json)
 
 
 TERMINAL = {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.INTERRUPTED, JobStatus.REVIEW_REQUIRED,
@@ -514,6 +514,11 @@ class JobManager:
                                 if not requirements.require_text_english or item.get("type") == "text"]
             if eligible_english and eligible_english[0].get("score", 0) > 0:
                 selected = eligible_english[0]
+            elif (requirements.require_text_english and english_ranking and
+                  english_ranking[0].get("score", 0) > 0):
+                # Keep the best graphic source visible in the report, but never
+                # pretend that it is a translation-ready text reference.
+                selected = english_ranking[0]
         margin = self.settings.workpack_reference_score_margin
         ambiguous = bool(selected and not requested_reference and len(english_ranking) > 1 and
                          selected.get("score", 0) - english_ranking[1].get("score", 0) < margin)
@@ -559,7 +564,7 @@ class JobManager:
         selected_srt = next((path for path in reference_files if path.name == "selected.eng.srt"), None)
         reference_timeline = timeline(selected_srt, "reference") if selected_srt else None
         pgs_timeline = None
-        if selected and selected.get("type") == "graphic":
+        if selected and selected.get("type") == "graphic" and not requirements.require_text_english:
             pgs_timeline = await graphic_timeline(media_path, int(selected["streamIndex"]), self.settings.ffprobe_timeout_seconds)
         polish_timelines = {item["archiveName"]: timeline(job_dir / item["archiveName"], item["archiveName"])
                             for item in polish if Path(item["archiveName"]).suffix.lower() == ".srt"}
@@ -582,10 +587,22 @@ class JobManager:
         if reference_timeline: write_json(analysis / "reference-timeline.json", reference_timeline)
         if pgs_timeline: write_json(analysis / "reference-pgs-timeline.json", pgs_timeline)
         write_json(analysis / "polish-timelines.json", polish_timelines)
-        hypotheses = (diagnostic_hypotheses(selected_srt, polish, job_dir,
+        hypothesis_candidates = polish if requirements.copy_polish else [
+            item for item in polish_ranking if item.get("sourceType") == "external"
+            and item.get("eligibleByDefault", True)
+            and ((item.get("languageHint") or (item.get("analysis") or {}).get("detected_language")) in {"pl", "pol", "polish"})]
+        hypotheses = (diagnostic_hypotheses(selected_srt, hypothesis_candidates, job_dir,
                                             round((media.get("durationSeconds") or 0) * 1000))
                       if requirements.build_hypotheses else [])
         write_json(analysis / "synchronization-hypotheses.json", hypotheses)
+        inspection = inspection_report(media, english_ranking, polish_ranking, rejected_external, hypotheses)
+        write_json(analysis / "inspection-report.json", inspection)
+        if requirements.name == "PREPARE_SYNC":
+            write_json(analysis / "timing-comparison.json", {
+                "kind": "DIAGNOSTIC_HYPOTHESES", "readySynchronization": False,
+                "hypotheses": hypotheses,
+                "notice": "Hipotezy wymagają weryfikacji; nie są gotową synchronizacją.",
+            })
         await self._emit(job_id, "INFO", JobStatus.BUILDING_MANIFEST, "Tworzenie manifestu bez ścieżek hosta", 78)
         reference_entry = None
         if selected:
@@ -595,7 +612,8 @@ class JobManager:
                                     "cueCount": (reference_timeline or pgs_timeline or {}).get("cue_count", (pgs_timeline or {}).get("event_count")),
                                     "firstMs": (reference_timeline or {}).get("first_ms"), "lastMs": (reference_timeline or {}).get("last_ms")})
         expected = f"{safe_filename(media_path.stem)}.AI-Reviewed-v001.pl.srt"
-        manifest = {"schema_version": SCHEMA_VERSION, "job_id": job_id, "task_type": task_type.value,
+        manifest = {"schema_version": SCHEMA_VERSION, "job_id": job_id, "mode": requirements.name,
+                    "task_type": task_type.value,
                     "media": media_summary(media), "reference": reference_entry,
                     "reference_alternatives": ranking_safe[1:1 + len(alternatives)],
                     "polish_candidates": [{key: item.get(key) for key in ("archiveName", "originalName", "languageHint", "encoding", "sizeBytes", "cueCount", "firstMs", "lastMs", "coverage", "parserWarnings", "score", "sha256", "generatedResult", "matchConfidence", "matchReasons", "matchAutomatic")} for item in polish],
@@ -605,25 +623,36 @@ class JobManager:
                                         "preserve_timing": True, "modify_media": False},
                     "warnings": warnings, "files": []}
         (job_dir / "REQUEST.md").write_text(request_text(task_type, manifest), encoding="utf-8")
-        recommended = reference_files[0].relative_to(job_dir).as_posix() if reference_files else "brak"
-        polish_names = ", ".join(item["archiveName"] for item in polish) or "brak"
-        (job_dir / "README.txt").write_text(
-            f"Subtitle Agent workpack\nReferencja: {recommended}\nPolscy kandydaci: {polish_names}\n"
-            f"Typ referencji: {(selected or {}).get('type', 'brak')}\nWybór jednoznaczny: {'nie' if ambiguous else 'tak'}\n"
-            "Prześlij najlepiej całe archiwum ZIP do ChatGPT wraz z REQUEST.md.\n", encoding="utf-8")
-        manifest["files"] = sorted(["manifest.json", "checksums.sha256"] + [
-            path.relative_to(job_dir).as_posix() for path in job_dir.rglob("*")
-            if path.is_file() and path.suffix != ".zip" and path.name not in {"manifest.json", "checksums.sha256"}])
+        common_files = {"manifest.json", "REQUEST.md", "analysis/media-summary.json",
+                        "analysis/subtitle-streams.json"}
+        if requirements.name == "INSPECT":
+            package_files = common_files | {"analysis/inspection-report.json"}
+        elif requirements.name == "PREPARE_TRANSLATION":
+            package_files = common_files | {path.relative_to(job_dir).as_posix() for path in reference_files
+                                           if path.name == "selected.eng.srt"}
+        else:
+            package_files = common_files | {"analysis/inspection-report.json", "analysis/timing-comparison.json"}
+            package_files |= {path.relative_to(job_dir).as_posix() for path in reference_files
+                              if selected and (selected.get("type") == "graphic" or path.name == "selected.eng.srt")}
+            package_files |= {item["archiveName"] for item in polish}
+        manifest["files"] = sorted(package_files | {"checksums.sha256"})
         write_json(job_dir / "manifest.json", manifest)
-        await self._emit(job_id, "INFO", JobStatus.BUILDING_WORKPACK, "Pakowanie ZIP i obliczanie SHA-256", 90)
-        archive, version, archive_hash, omitted_files = await asyncio.to_thread(
-            build_zip, job_dir, media_path.stem, self.settings.workpack_max_archive_bytes, self.settings.workpack_max_files)
+        needs_ocr = bool(requirements.require_text_english and selected and selected.get("type") == "graphic")
+        archive = None
+        archive_hash = None
+        version = 0
+        omitted_files: list[str] = []
+        if not needs_ocr:
+            await self._emit(job_id, "INFO", JobStatus.BUILDING_WORKPACK, "Pakowanie ZIP i obliczanie SHA-256", 90)
+            archive, version, archive_hash, omitted_files = await asyncio.to_thread(
+                build_zip, job_dir, media_path.stem, self.settings.workpack_max_archive_bytes,
+                self.settings.workpack_max_files, package_files)
         if omitted_files:
             warnings.append(f"Pominięto {len(omitted_files)} plików z powodu limitu archiwum")
-        workpack = {"schemaVersion": SCHEMA_VERSION, "version": version, "path": str(archive),
-                    "filename": archive.name, "sizeBytes": archive.stat().st_size, "sha256": archive_hash,
-                    "files": manifest["files"], "warnings": warnings, "omittedFiles": omitted_files,
-                    "referenceAmbiguous": ambiguous}
+        workpack = ({"schemaVersion": SCHEMA_VERSION, "version": version, "path": str(archive),
+                     "filename": archive.name, "sizeBytes": archive.stat().st_size, "sha256": archive_hash,
+                     "files": manifest["files"], "warnings": warnings, "omittedFiles": omitted_files,
+                     "referenceAmbiguous": ambiguous} if archive else None)
         blocking_requirements: list[str] = []
         if requirements.require_english and not requirements.require_text_english and not selected:
             blocking_requirements.append("Brak wymaganej angielskiej referencji")
@@ -631,35 +660,12 @@ class JobManager:
             blocking_requirements.append("Brak wymaganej tekstowej referencji angielskiej")
         if requirements.require_polish and not polish:
             blocking_requirements.append("Brak prawidłowo dopasowanego kandydata polskiego")
-        duration_seconds = media.get("durationSeconds") or 0
-        inspected_polish = []
-        for item in polish_ranking:
-            if item.get("sourceType") != "external":
-                continue
-            analysis_data = item.get("analysis") or {}
-            language = (item.get("languageHint") or analysis_data.get("detected_language") or "").casefold()
-            if language not in {"pl", "pol", "polish"}:
-                continue
-            inspected_polish.append({
-                "name": item.get("name"), "score": item.get("score"), "rankingReasons": item.get("reasons", []),
-                "matchConfidence": item.get("matchConfidence"), "matchReasons": item.get("matchReasons", []),
-                "matchAutomatic": item.get("matchAutomatic"), "segments": analysis_data.get("segment_count"),
-                "firstTimestamp": analysis_data.get("first_time"), "lastTimestamp": analysis_data.get("last_time"),
-                "movieCoverage": ((analysis_data.get("last_time") or 0) / duration_seconds if duration_seconds else None),
-                "structuralErrors": {
-                    "malformedSegments": analysis_data.get("malformed_segments", 0),
-                    "reversedIntervals": analysis_data.get("reversed_intervals", 0),
-                    "overlappingSegments": analysis_data.get("overlapping_segments", 0),
-                    "monotonic": analysis_data.get("monotonic"),
-                    "warnings": analysis_data.get("warnings", []),
-                },
-            })
         report = {"reportVersion": 2, "pipeline": requirements.name,
                   "jobType": "PREPARE_WORKPACK", "taskType": task_type.value, "media": media,
                   "mediaInspection": media_summary(media),
                   "externalSubtitles": external, "englishRanking": english_ranking, "polishRanking": polish_ranking,
                   "embeddedSubtitleTracks": media.get("embeddedSubtitles", []),
-                  "polishCandidateInspection": inspected_polish,
+                  "polishCandidateInspection": inspection["polishCandidates"],
                   "rejectedSubtitleCandidates": rejected_external,
                   "rejectedPolishCandidates": [item for item in rejected_external
                                                 if item.get("languageHint") in {"pl", "pol", "polish"}],
@@ -668,9 +674,11 @@ class JobManager:
                   "workpack": workpack, "warnings": warnings, "incompleteReasons": blocking_requirements,
                   "mediaDirectoryModified": False}
         self._save_report(job_id, report, str(media_path))
-        terminal = JobStatus.WORKPACK_INCOMPLETE if blocking_requirements else JobStatus.WORKPACK_READY
-        await self._emit(job_id, "WARNING" if terminal == JobStatus.WORKPACK_INCOMPLETE else "SUCCESS", terminal,
-                         f"Workpack gotowy: {archive.name} ({archive.stat().st_size} B)", 100)
+        terminal = (JobStatus.NEEDS_OCR if needs_ocr else
+                    JobStatus.WORKPACK_INCOMPLETE if blocking_requirements else JobStatus.WORKPACK_READY)
+        message = ("Translacja wymaga OCR angielskiej ścieżki graficznej" if needs_ocr else
+                   f"Workpack gotowy: {archive.name} ({archive.stat().st_size} B)")
+        await self._emit(job_id, "WARNING" if terminal != JobStatus.WORKPACK_READY else "SUCCESS", terminal, message, 100)
 
     async def _worker(self) -> None:
         while True:
