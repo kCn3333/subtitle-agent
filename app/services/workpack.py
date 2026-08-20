@@ -60,6 +60,7 @@ def media_summary(media: dict) -> dict:
         "extension": Path(media.get("name") or "").suffix.lower(),
         "container": media.get("container"),
         "duration_ms": round((media.get("durationSeconds") or 0) * 1000),
+        "size_bytes": media.get("sizeBytes"), "bitrate": media.get("bitrate"),
         "fps": {"fraction": rate, "decimal": decimal},
         "width": media.get("width"), "height": media.get("height"),
         "video_codec": media.get("videoCodec"),
@@ -75,7 +76,7 @@ def subtitle_streams(media: dict) -> list[dict]:
 
 
 def inspection_report(media: dict, english_ranking: list[dict], polish_ranking: list[dict],
-                      rejected: list[dict], hypotheses: list[dict]) -> dict:
+                      rejected: list[dict], hypotheses: list[dict], ignored_files: int = 0) -> dict:
     duration = media.get("durationSeconds") or 0
     polish = []
     for item in polish_ranking:
@@ -104,7 +105,7 @@ def inspection_report(media: dict, english_ranking: list[dict], polish_ranking: 
         "embeddedSubtitleTracks": subtitle_streams(media),
         "englishRanking": [{key: item.get(key) for key in english_keys} for item in english_ranking],
         "polishCandidates": polish, "rejectedPolishCandidates": rejected_polish,
-        "synchronizationHypotheses": hypotheses,
+        "ignoredUnrelatedSubtitleFiles": ignored_files, "synchronizationHypotheses": hypotheses,
     }
 
 

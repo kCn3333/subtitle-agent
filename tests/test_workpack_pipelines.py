@@ -6,7 +6,7 @@ import zipfile
 def _wait(client, job_id: str) -> dict:
     for _ in range(300):
         body = client.get(f"/api/workpacks/{job_id}").json()
-        if body["status"] in {"WORKPACK_READY", "WORKPACK_INCOMPLETE", "NEEDS_OCR", "FAILED"}:
+        if body["status"] in {"INSPECTION_READY", "WORKPACK_READY", "WORKPACK_INCOMPLETE", "NEEDS_OCR", "FAILED"}:
             return body
         time.sleep(.01)
     raise AssertionError("pipeline did not finish")
@@ -45,7 +45,7 @@ def test_inspection_v2_does_not_copy_materials_and_keeps_rejections(client, sett
     (media.parent / "Lost.S01E24.pl.srt").write_text("1\n00:00:01,000 --> 00:00:02,000\nInny\n")
     response = client.post("/api/workpacks", json={"mediaPath": str(media), "taskType": "INSPECT"})
     body = _wait(client, response.json()["jobId"])
-    assert body["status"] == "WORKPACK_READY"
+    assert body["status"] == "INSPECTION_READY"
     report = body["report"]
     assert report["reportVersion"] == 2 and report["pipeline"] == "INSPECT"
     assert report["media"]["identity"]["kind"] == "EPISODE"
@@ -56,11 +56,11 @@ def test_inspection_v2_does_not_copy_materials_and_keeps_rejections(client, sett
     assert report["embeddedSubtitleTracks"] == []
     assert report["polishCandidateInspection"][0]["segments"] == 1
     assert report["polishCandidateInspection"][0]["structuralErrors"]["malformedSegments"] == 0
-    assert {item["name"] for item in report["rejectedSubtitleCandidates"]} == {"Lost.S01E24.pl.srt"}
-    assert {item["name"] for item in report["rejectedPolishCandidates"]} == {"Lost.S01E24.pl.srt"}
+    assert report["rejectedSubtitleCandidates"] == [] and report["rejectedPolishCandidates"] == []
+    assert report["ignoredUnrelatedSubtitleFiles"] == 1
     assert report["polishCandidates"] == [] and report["incompleteReasons"] == []
-    with zipfile.ZipFile(report["workpack"]["path"]) as archive:
-        assert not any(name.startswith(("polish/", "reference/")) for name in archive.namelist())
+    assert report["workpack"] is None
+    assert not (settings.data_root / "work" / "jobs" / body["jobId"]).exists()
 
 
 def test_sync_requires_english_and_a_valid_polish_candidate(client, media_file):
@@ -118,6 +118,20 @@ def test_translation_rejects_graphic_english_reference(client, media_file, monke
     assert body["status"] == "NEEDS_OCR"
     assert "Brak wymaganej tekstowej referencji angielskiej" in body["report"]["incompleteReasons"]
     assert body["report"]["workpack"] is None
+
+
+def test_graphic_inspection_uses_timeline_without_export_and_leaves_no_directory(client, media_file, settings, monkeypatch):
+    _configure_probe(monkeypatch, "graphic")
+    async def forbidden_extract(*args, **kwargs):
+        raise AssertionError("INSPECT must not export PGS/SUP")
+    async def fake_timeline(*args, **kwargs):
+        return {"event_count": 1, "events": [{"start_ms": 1000}]}
+    monkeypatch.setattr("app.services.job_manager.extract_embedded", forbidden_extract)
+    monkeypatch.setattr("app.services.job_manager.graphic_timeline", fake_timeline)
+    created = client.post("/api/tasks", json={"mediaPath": str(media_file), "mode": "INSPECT"})
+    body = _wait(client, created.json()["jobId"])
+    assert body["status"] == "INSPECTION_READY" and body["report"]["workpack"] is None
+    assert not (settings.data_root / "work" / "jobs" / body["jobId"]).exists()
 
 
 def test_unified_tasks_api_accepts_mode_and_legacy_endpoint_remains(client, media_file):

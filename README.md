@@ -32,7 +32,7 @@ Każdy plik otrzymuje ustrukturyzowaną tożsamość `MOVIE`, `EPISODE` albo `UN
 
 ### Pipeline'y workpacków i raport inspekcji v2
 
-Przygotowanie materiałów ma trzy niezależne profile. `INSPECT` tworzy raport techniczny bez kopiowania referencji i kandydatów do archiwum. `PREPARE_SYNC` wymaga angielskiej referencji oraz co najmniej jednego jednoznacznie dopasowanego kandydata PL. `PREPARE_TRANSLATION` wymaga tekstowej referencji EN i nie wymaga napisów PL. Status `WORKPACK_INCOMPLETE` wynika wyłącznie z niespełnionych wymagań wybranego profilu; ostrzeżenia diagnostyczne pozostają informacyjne.
+Przygotowanie materiałów ma trzy niezależne profile. `INSPECT` tworzy raport techniczny bez ZIP-a i kończy się `INSPECTION_READY`; jego tymczasowy katalog roboczy jest usuwany po zapisaniu raportu w SQLite. `PREPARE_SYNC` wymaga angielskiej referencji oraz co najmniej jednego jednoznacznie dopasowanego kandydata PL. `PREPARE_TRANSLATION` wymaga tekstowej referencji EN i nie wymaga napisów PL. Status `WORKPACK_INCOMPLETE` wynika wyłącznie z niespełnionych wymagań wybranego profilu; ostrzeżenia diagnostyczne pozostają informacyjne.
 
 Raport v2 zawiera tożsamość medium, parametry techniczne z dokładnym ułamkiem FPS, wszystkie ścieżki osadzone, rankingi z uzasadnieniami, zaakceptowanych i odrzuconych kandydatów PL, statystyki oraz błędy struktury SRT. Dla synchronizacji zapisuje wyłącznie hipotezę modelu wraz z liczbą kotwic, rozrzutem, pokryciem i pewnością. Pole `sufficientAnchors=false` oznacza, że wyniku nie wolno traktować jako gotowej synchronizacji.
 
@@ -73,6 +73,8 @@ Wybierz **Stacks → Add stack → Web editor**, wklej `compose.example.yml`, zm
 | `WORKPACK_MAX_POLISH_CANDIDATES` | `10` | Limit plików PL |
 | `WORKPACK_MAX_ARCHIVE_BYTES` | `104857600` | Limit ZIP 100 MiB |
 | `WORKPACK_MAX_FILES` | `100` | Limit wpisów ZIP |
+| `WORKPACK_RETENTION_HOURS` | `72` | Czas dostępności artefaktów ZIP; raport pozostaje w SQLite |
+| `WORKPACK_CLEANUP_INTERVAL_HOURS` | `6` | Okres bezpiecznego cleanupu artefaktów |
 
 Pozostałe standardowe zmienne to `APP_NAME`, `APP_HOST`, `APP_PORT` i `LOG_LEVEL`. `.env.example` zawiera wyłącznie niesekretne wartości.
 

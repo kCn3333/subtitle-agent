@@ -4,7 +4,7 @@ import sqlite3
 import threading
 import uuid
 from contextlib import suppress
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import AsyncIterator
 
@@ -15,6 +15,7 @@ from app.services.media_analysis import (
     parse_media_identity, probe_media, rank_english, rank_polish, validate_media_path,
 )
 from app.services.inspection_service import InspectionService
+from app.services.artifact_retention import remove_job_directory, remove_previous_archives
 from app.services.synchronization_pack_service import SynchronizationPackService
 from app.services.translation_pack_service import TranslationPackService
 from app.services.workpack_pipeline import PipelineRequirements, WorkpackPipelineService
@@ -36,6 +37,7 @@ TERMINAL = {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.INTERRUPTED, JobSta
             JobStatus.PUBLISH_BLOCKED_QUALITY, JobStatus.PUBLISH_SOURCE_CHANGED, JobStatus.PUBLISH_CONFLICT,
             JobStatus.PUBLISH_PERMISSION_DENIED, JobStatus.PUBLISH_UNSUPPORTED_FILESYSTEM, JobStatus.PUBLISH_FAILED}
 TERMINAL.update({JobStatus.WORKPACK_READY, JobStatus.WORKPACK_INCOMPLETE})
+TERMINAL.add(JobStatus.INSPECTION_READY)
 LEGACY_EVENT_STAGES = {
     "INSPECTING": JobStatus.VALIDATING_PATH,
     "CHECKING_TOOLS": JobStatus.PROBING_MEDIA,
@@ -73,6 +75,7 @@ class JobManager:
         self._publish_locks: dict[str, asyncio.Lock] = {}
         self._queue: asyncio.Queue[str] = asyncio.Queue()
         self._workers: list[asyncio.Task[None]] = []
+        self._maintenance_task: asyncio.Task[None] | None = None
         self._closed = False
         self._init_db()
 
@@ -126,15 +129,58 @@ class JobManager:
                        (JobStatus.INTERRUPTED, stamp, "Zadanie przerwane przez restart aplikacji", *terminal_values))
 
     async def start(self) -> None:
+        await asyncio.to_thread(self.cleanup_expired_artifacts)
         self._workers = [asyncio.create_task(self._worker()) for _ in range(self.max_concurrent)]
+        self._maintenance_task = asyncio.create_task(self._maintenance())
 
     async def close(self) -> None:
         self._closed = True
+        if self._maintenance_task:
+            self._maintenance_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._maintenance_task
         for worker in self._workers:
             worker.cancel()
         for worker in self._workers:
             with suppress(asyncio.CancelledError):
                 await worker
+
+    async def _maintenance(self) -> None:
+        while True:
+            await asyncio.sleep(self.settings.workpack_cleanup_interval_hours * 3600)
+            await asyncio.to_thread(self.cleanup_expired_artifacts)
+
+    def cleanup_expired_artifacts(self) -> int:
+        cutoff = now() - timedelta(hours=self.settings.workpack_retention_hours)
+        jobs_root = self.settings.data_root / "work" / "jobs"
+        if not jobs_root.exists() or jobs_root.is_symlink():
+            return 0
+        with self._lock, self._connect() as db:
+            rows = db.execute("""SELECT id,finished_at,report_json FROM jobs
+                               WHERE job_type='PREPARE_WORKPACK' AND finished_at IS NOT NULL""").fetchall()
+        removed = 0
+        for row in rows:
+            try:
+                finished = datetime.fromisoformat(row["finished_at"])
+            except (TypeError, ValueError):
+                continue
+            if finished.tzinfo is None:
+                finished = finished.astimezone()
+            if finished >= cutoff:
+                continue
+            report = json.loads(row["report_json"]) if row["report_json"] else {}
+            if not report.get("workpack"):
+                continue
+            job_dir = jobs_root / row["id"]
+            if job_dir.exists() and not remove_job_directory(jobs_root, job_dir):
+                continue
+            report["workpack"]["artifactExpired"] = True
+            report["workpack"]["path"] = None
+            with self._lock, self._connect() as db:
+                db.execute("UPDATE jobs SET report_json=? WHERE id=?",
+                           (json.dumps(report, ensure_ascii=False), row["id"]))
+            removed += 1
+        return removed
 
     async def create(self, media_path: str) -> dict:
         job_id = str(uuid.uuid4())
@@ -493,6 +539,7 @@ class JobManager:
         if cached:
             media = cached["media"]; external = cached["externalSubtitles"]
             rejected_external = cached.get("rejectedSubtitleCandidates", [])
+            ignored_external = cached.get("ignoredUnrelatedSubtitleFiles", 0)
             english_ranking = cached["englishRanking"]; polish_ranking = cached["polishRanking"]
             await self._emit(job_id, "INFO", JobStatus.PROBING_MEDIA,
                              "Użyto zapisanej analizy ffprobe; źródło nie było ponownie sondowane", 15)
@@ -501,7 +548,8 @@ class JobManager:
             media = await probe_media(media_path, self.settings.ffprobe_timeout_seconds)
             media.setdefault("identity", parse_media_identity(media_path.name).model_dump(mode="json"))
             await self._emit(job_id, "INFO", JobStatus.DISCOVERING_SUBTITLES, "Wykrywanie osadzonych i zewnętrznych napisów", 25)
-            external, rejected_external = await asyncio.to_thread(discover_external_subtitles_with_rejections, media_path)
+            external, rejected_external, ignored_external = await asyncio.to_thread(
+                discover_external_subtitles_with_rejections, media_path)
             english_ranking = rank_english(media["embeddedSubtitles"], external)
             polish_ranking = rank_polish(media, external, media["embeddedSubtitles"])
         await self._emit(job_id, "INFO", JobStatus.SELECTING_REFERENCE, "Ranking angielskich źródeł referencyjnych", 32)
@@ -535,7 +583,8 @@ class JobManager:
             await self._emit(job_id, "WARNING", JobStatus.NO_ENGLISH_REFERENCE, warnings[-1], 40)
         reference_files: list[Path] = []
         if (selected and requirements.extract_reference and
-                (not requirements.require_text_english or selected.get("type") == "text")):
+                (not requirements.require_text_english or selected.get("type") == "text") and
+                not (requirements.name == "INSPECT" and selected.get("type") == "graphic")):
             await self._emit(job_id, "INFO", JobStatus.EXTRACTING_REFERENCE,
                              f"Ekstrakcja strumienia {selected.get('streamIndex')} ({selected.get('codec')})", 43)
             reference_files = await extract_embedded(selected, media_path, job_dir / "reference" / "selected",
@@ -595,7 +644,8 @@ class JobManager:
                                             round((media.get("durationSeconds") or 0) * 1000))
                       if requirements.build_hypotheses else [])
         write_json(analysis / "synchronization-hypotheses.json", hypotheses)
-        inspection = inspection_report(media, english_ranking, polish_ranking, rejected_external, hypotheses)
+        inspection = inspection_report(media, english_ranking, polish_ranking, rejected_external, hypotheses,
+                                       ignored_external)
         write_json(analysis / "inspection-report.json", inspection)
         if requirements.name == "PREPARE_SYNC":
             write_json(analysis / "timing-comparison.json", {
@@ -642,7 +692,8 @@ class JobManager:
         archive_hash = None
         version = 0
         omitted_files: list[str] = []
-        if not needs_ocr:
+        if not needs_ocr and requirements.name != "INSPECT":
+            await asyncio.to_thread(remove_previous_archives, self.settings.data_root / "work" / "jobs", job_dir)
             await self._emit(job_id, "INFO", JobStatus.BUILDING_WORKPACK, "Pakowanie ZIP i obliczanie SHA-256", 90)
             archive, version, archive_hash, omitted_files = await asyncio.to_thread(
                 build_zip, job_dir, media_path.stem, self.settings.workpack_max_archive_bytes,
@@ -669,14 +720,20 @@ class JobManager:
                   "rejectedSubtitleCandidates": rejected_external,
                   "rejectedPolishCandidates": [item for item in rejected_external
                                                 if item.get("languageHint") in {"pl", "pol", "polish"}],
+                  "ignoredUnrelatedSubtitleFiles": ignored_external,
                   "selectedEnglish": selected, "referenceAlternatives": alternatives,
                   "polishCandidates": polish, "synchronizationHypotheses": hypotheses,
                   "workpack": workpack, "warnings": warnings, "incompleteReasons": blocking_requirements,
                   "mediaDirectoryModified": False}
         self._save_report(job_id, report, str(media_path))
-        terminal = (JobStatus.NEEDS_OCR if needs_ocr else
+        if requirements.name == "INSPECT":
+            await asyncio.to_thread(remove_job_directory, self.settings.data_root / "work" / "jobs", job_dir)
+        terminal = (JobStatus.INSPECTION_READY if requirements.name == "INSPECT" else
+                    JobStatus.NEEDS_OCR if needs_ocr else
                     JobStatus.WORKPACK_INCOMPLETE if blocking_requirements else JobStatus.WORKPACK_READY)
-        message = ("Translacja wymaga OCR angielskiej ścieżki graficznej" if needs_ocr else
+        message = ("Inspekcja zakończona; raport zapisano bez artefaktów plikowych"
+                   if terminal == JobStatus.INSPECTION_READY else
+                   "Translacja wymaga OCR angielskiej ścieżki graficznej" if needs_ocr else
                    f"Workpack gotowy: {archive.name} ({archive.stat().st_size} B)")
         await self._emit(job_id, "WARNING" if terminal != JobStatus.WORKPACK_READY else "SUCCESS", terminal, message, 100)
 
@@ -771,6 +828,7 @@ class JobManager:
                 await self._emit(job_id, "ERROR", JobStatus.FAILED, safe_error, 100)
             finally:
                 self._queue.task_done()
+                await asyncio.to_thread(self.cleanup_expired_artifacts)
 
     async def stream(self, job_id: str, after: int = 0) -> AsyncIterator[str]:
         condition = self._conditions.setdefault(job_id, asyncio.Condition())

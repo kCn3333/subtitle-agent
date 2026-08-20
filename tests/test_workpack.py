@@ -1,7 +1,9 @@
 import hashlib
 import json
 import time
+import uuid
 import zipfile
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -10,6 +12,7 @@ from fastapi.testclient import TestClient
 from app.core.config import Settings
 from app.main import create_app
 from app.services.media_analysis import rank_english
+from app.services.artifact_retention import remove_job_directory
 from app.services.system_probe import ToolInfo
 from app.services.workpack import (build_zip, copy_polish_candidates, extract_embedded, graphic_timeline,
                                    media_summary, safe_archive_name, safe_filename, sha256_file, timeline)
@@ -48,6 +51,14 @@ def test_ranking_prefers_full_dialogue_and_penalizes_partial_tracks():
     assert ranked[0]["streamIndex"] == 2
     assert next(x for x in ranked if x["streamIndex"] == 3)["score"] < ranked[0]["score"]
     assert next(x for x in ranked if x["streamIndex"] == 4)["score"] < ranked[0]["score"]
+
+
+def test_english_ranking_excludes_foreign_language_tracks():
+    ranked = rank_english([
+        {"streamIndex": 1, "language": "eng", "title": "Full Dialogue", "type": "text"},
+        {"streamIndex": 2, "language": "dan", "title": "Dansk", "type": "text"},
+    ], [])
+    assert [item["streamIndex"] for item in ranked] == [1]
 
 
 def test_ambiguity_can_be_calculated_from_margin():
@@ -133,9 +144,10 @@ async def test_dvd_reference_requires_idx_and_sub(tmp_path, monkeypatch):
 
 def test_media_summary_drops_full_path_and_has_exact_fps():
     summary=media_summary({"path":"/private/secret/Movie.mkv","name":"Movie.mkv","durationSeconds":2.5,
-                           "avgFrameRate":"24000/1001","audioTracks":[]})
+                           "avgFrameRate":"24000/1001","sizeBytes":123,"bitrate":456,"audioTracks":[]})
     assert "path" not in summary and summary["duration_ms"] == 2500
     assert summary["fps"]["fraction"] == "24000/1001"
+    assert summary["size_bytes"] == 123 and summary["bitrate"] == 456
 
 
 def test_zip_checksums_order_security_and_no_media(tmp_path):
@@ -200,6 +212,44 @@ def test_download_rejects_recorded_path_outside_job(client, settings):
                     json.dumps({'workpack':{'path':str(outside),'sha256':sha256_file(outside),'filename':'outside.zip'}}),
                     'PREPARE_WORKPACK','SYNC_ONLY'))
     assert client.get(f'/api/workpacks/{job_id}/download').status_code == 404
+
+
+def test_expired_artifact_returns_410_and_report_remains(client, settings):
+    manager = client.app.state.jobs
+    job_id = str(uuid.uuid4())
+    job_dir = settings.data_root / "work" / "jobs" / job_id
+    job_dir.mkdir(parents=True)
+    archive = job_dir / "old.zip"; archive.write_bytes(b"zip")
+    finished = (datetime.now().astimezone() - timedelta(days=10)).isoformat()
+    report = {"workpack": {"path": str(archive), "filename": archive.name,
+                           "sha256": sha256_file(archive)}}
+    with manager._lock, manager._connect() as db:
+        db.execute("""INSERT INTO jobs (id,media_path,status,progress,created_at,finished_at,report_json,job_type,task_type)
+                    VALUES (?,?,?,?,?,?,?,?,?)""", (job_id, "/media/x.mkv", "WORKPACK_READY", 100, finished,
+                    finished, json.dumps(report), "PREPARE_WORKPACK", "PREPARE_SYNC"))
+    response = client.get(f"/api/workpacks/{job_id}/download")
+    assert response.status_code == 410 and response.json()["detail"]["code"] == "ARTIFACT_EXPIRED"
+    assert client.get(f"/api/workpacks/{job_id}").status_code == 200
+
+
+def test_cleanup_removes_only_expired_uuid_directories_and_refuses_symlinks(tmp_path):
+    from app.services.job_manager import JobManager
+    root = tmp_path / "data"; root.mkdir()
+    settings = Settings(data_root=root, media_roots=[tmp_path], workpack_retention_hours=1)
+    manager = JobManager(root / "subtitle-agent.db", settings)
+    jobs_root = root / "work" / "jobs"; jobs_root.mkdir(parents=True)
+    expired_id = str(uuid.uuid4()); expired_dir = jobs_root / expired_id; expired_dir.mkdir(); (expired_dir / "pack.zip").write_bytes(b"x")
+    unsafe_id = str(uuid.uuid4()); unsafe_dir = jobs_root / unsafe_id; unsafe_dir.mkdir(); (unsafe_dir / "link").symlink_to(tmp_path)
+    finished = (datetime.now().astimezone() - timedelta(hours=2)).isoformat()
+    with manager._lock, manager._connect() as db:
+        for job_id, directory in ((expired_id, expired_dir), (unsafe_id, unsafe_dir)):
+            report = {"workpack": {"path": str(directory / "pack.zip"), "filename": "pack.zip", "sha256": "x"}}
+            db.execute("""INSERT INTO jobs (id,media_path,status,progress,created_at,finished_at,report_json,job_type,task_type)
+                        VALUES (?,?,?,?,?,?,?,?,?)""", (job_id, "/media/x", "WORKPACK_READY", 100, finished,
+                        finished, json.dumps(report), "PREPARE_WORKPACK", "PREPARE_SYNC"))
+    assert manager.cleanup_expired_artifacts() == 1
+    assert not expired_dir.exists() and unsafe_dir.exists()
+    assert remove_job_directory(jobs_root, unsafe_dir) is False
 
 
 def test_compose_has_no_openai_publish_or_rw_mount():
