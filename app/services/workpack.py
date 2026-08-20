@@ -6,7 +6,7 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 from app.models.job import WorkpackTaskType
-from app.services.alignment import StructuralAnchorProvider, fit_models, parse_cues, public_model, quality
+from app.services.alignment import StructuralAnchorProvider, fit_models, parse_cues, public_model, quality, select_model
 from app.services.process_runner import run_process
 
 SCHEMA_VERSION = "subtitle-workpack-v1"
@@ -151,14 +151,31 @@ def diagnostic_hypotheses(reference_path: Path | None, polish: list[dict], job_d
         cues = parse_cues(candidate, item["archiveName"])
         anchors = StructuralAnchorProvider().provide(english, cues, duration_ms, {})
         models = fit_models(anchors)
-        results.append({"candidate": item["archiveName"], "anchor_count": len(anchors),
-                        "models": [{**public_model(model), "quality": quality(model),
-                                    "rejection_reasons": [] if quality(model) in {"HIGH", "MEDIUM"} else ["Słaba hipoteza diagnostyczna"]}
-                                   for model in models]})
+        selected = select_model(models)
+        grade = quality(selected)
+        model_names = {"IDENTITY": "zgodne osie czasu", "GLOBAL_OFFSET": "stałe przesunięcie",
+                       "AFFINE_DRIFT": "dryf liniowy", "PIECEWISE_LINEAR": "model odcinkowy"}
+        results.append({
+            "candidate": item["archiveName"], "originalName": item.get("originalName"),
+            "matchConfidence": item.get("matchConfidence"), "matchReasons": item.get("matchReasons", []),
+            "englishSegments": len(english), "polishSegments": len(cues), "anchorCount": len(anchors),
+            "hypothesis": model_names.get((selected or {}).get("strategy"), "brak wiarygodnej hipotezy"),
+            "offsetMs": (selected or {}).get("offsetMs"), "spreadMs": (selected or {}).get("p95ResidualMs"),
+            "analysisCoverage": (selected or {}).get("coverage", 0), "confidence": grade,
+            "sufficientAnchors": grade in {"HIGH", "MEDIUM"},
+            "verification": "Porównaj segmenty z początku, środka i końca",
+            "models": [{**public_model(model), "quality": quality(model),
+                        "rejection_reasons": [] if quality(model) in {"HIGH", "MEDIUM"} else
+                        ["Za mało wiarygodnych kotwic do uznania hipotezy za synchronizację"]}
+                       for model in models],
+        })
     return results
 
 
 REQUESTS = {
+    WorkpackTaskType.INSPECT: "Oceń wykryte napisy: wskaż pełne dialogi, komentarz, SDH, forced i ścieżki częściowe. Uzasadnij wybór najlepszego źródła.",
+    WorkpackTaskType.PREPARE_SYNC: "Dopasuj polskie napisy znajdujące się w katalogu polish/ do angielskiej referencji z reference/selected/. Angielskie napisy są poprawnie zsynchronizowane z filmem. Zachowaj polską treść.",
+    WorkpackTaskType.PREPARE_TRANSLATION: "Wykonaj kompletne profesjonalne tłumaczenie angielskich napisów na język polski, zachowując ich synchronizację.",
     WorkpackTaskType.SYNC_ONLY: "Dopasuj polskie napisy znajdujące się w katalogu polish/ do angielskiej referencji z reference/selected/. Angielskie napisy są poprawnie zsynchronizowane z filmem. Zachowaj polską treść, o ile nie zawiera oczywistych błędów technicznych.",
     WorkpackTaskType.LANGUAGE_REVIEW: "Popraw polskie napisy pod względem gramatycznym, stylistycznym, ortograficznym i interpunkcyjnym. Zachowaj dokładnie synchronizację wskazanego polskiego pliku bazowego.",
     WorkpackTaskType.SYNC_AND_LANGUAGE_REVIEW: "Dopasuj polskie napisy do poprawnie zsynchronizowanej angielskiej referencji, a następnie wykonaj profesjonalną korektę językową. Zachowaj znaczenie dialogów, naturalny język polski i czytelność napisów.",
@@ -175,6 +192,10 @@ def write_json(path: Path, value: object) -> None:
 def request_text(task: WorkpackTaskType, manifest: dict) -> str:
     polish = "\n".join(f"- {item['archiveName']} ({item['originalName']})" for item in manifest["polish_candidates"]) or "- brak"
     warnings = "\n".join(f"- {item}" for item in manifest["warnings"]) or "- brak"
+    if task in {WorkpackTaskType.INSPECT, WorkpackTaskType.INSPECT_SUBTITLES}:
+        return (f"# Zadanie: {task.value}\n\n{REQUESTS[task]}\n\nNie generuj ani nie synchronizuj napisów. "
+                "Opisz ustalenia na podstawie plików analysis/ i manifest.json.\n\n"
+                f"## Ostrzeżenia\n{warnings}\n")
     return (f"# Zadanie: {task.value}\n\n{REQUESTS[task]}\n\nZwróć kompletny, poprawny plik UTF-8 SRT o nazwie "
             f"`{manifest['expected_output']['filename']}`. Zachowaj prawidłową numerację i timing. "
             "Manifest `manifest.json` jest źródłem danych technicznych.\n\n## Polskie materiały\n"

@@ -79,6 +79,10 @@ class AlignmentMode(StrEnum):
 
 
 class WorkpackTaskType(StrEnum):
+    INSPECT = "INSPECT"
+    PREPARE_SYNC = "PREPARE_SYNC"
+    PREPARE_TRANSLATION = "PREPARE_TRANSLATION"
+    # Legacy task names remain accepted for existing clients and persisted jobs.
     SYNC_ONLY = "SYNC_ONLY"
     LANGUAGE_REVIEW = "LANGUAGE_REVIEW"
     SYNC_AND_LANGUAGE_REVIEW = "SYNC_AND_LANGUAGE_REVIEW"
