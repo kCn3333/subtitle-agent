@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request, status
@@ -66,10 +67,21 @@ async def download(job_id: str, request: Request) -> FileResponse:
     job = request.app.state.jobs.get(job_id)
     workpack = ((job or {}).get("report") or {}).get("workpack") if job else None
     if not job or job.get("job_type") != "PREPARE_WORKPACK" or not workpack: raise missing()
+    if workpack.get("artifactExpired"):
+        raise HTTPException(status_code=410, detail={"code": "ARTIFACT_EXPIRED",
+                                                     "message": "Artefakt wygasł; raport pozostaje dostępny"})
     job_dir = (request.app.state.settings.data_root / "work" / "jobs" / job_id).resolve()
     archive = Path(workpack.get("path") or "").resolve()
     if not archive.is_relative_to(job_dir) or archive.parent != job_dir or archive.suffix.lower() != ".zip" or not archive.is_file():
         raise missing()
+    finished = datetime.fromisoformat(job["finished_at"]) if job.get("finished_at") else None
+    if finished is not None and finished.tzinfo is None:
+        finished = finished.astimezone()
+    expired = finished is not None and finished < datetime.now().astimezone() - timedelta(
+        hours=request.app.state.settings.workpack_retention_hours)
+    if expired:
+        raise HTTPException(status_code=410, detail={"code": "ARTIFACT_EXPIRED",
+                                                     "message": "Artefakt wygasł; raport pozostaje dostępny"})
     digest = sha256_file(archive)
     if digest != workpack.get("sha256"): raise HTTPException(
         status_code=409, detail={"code": "WORKPACK_HASH_MISMATCH", "message": "Suma kontrolna workpacka jest niezgodna"})

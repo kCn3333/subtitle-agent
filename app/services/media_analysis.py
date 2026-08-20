@@ -180,9 +180,10 @@ def _flags(name: str) -> dict:
     }
 
 
-def discover_external_subtitles_with_rejections(media_path: Path) -> tuple[list[dict], list[dict]]:
+def discover_external_subtitles_with_rejections(media_path: Path) -> tuple[list[dict], list[dict], int]:
     results: list[dict] = []
     rejected: list[dict] = []
+    ignored = 0
     media_directory = media_path.parent.resolve(strict=True)
     media_identity = parse_media_identity(media_path.name)
     for entry in media_path.parent.iterdir():
@@ -197,10 +198,9 @@ def discover_external_subtitles_with_rejections(media_path: Path) -> tuple[list[
         candidate_identity = parse_media_identity(entry.name)
         match = match_media_identity(media_identity, candidate_identity)
         if not match.accepted:
-            rejected.append({"name": entry.name, "format": entry.suffix.lower().lstrip("."),
-                             "mediaIdentity": candidate_identity.model_dump(mode="json"),
-                             "matchConfidence": match.confidence, "matchReasons": match.reasons,
-                             "matchAutomatic": False, **_flags(entry.name)})
+            # Explicitly different episodes/movies are not candidates for this
+            # medium. Keep only an aggregate count to avoid huge season reports.
+            ignored += 1
             continue
         item = {"path": str(resolved_entry), "name": entry.name, "format": entry.suffix.lower().lstrip("."),
                 "mediaIdentity": candidate_identity.model_dump(mode="json"),
@@ -213,11 +213,11 @@ def discover_external_subtitles_with_rejections(media_path: Path) -> tuple[list[
                 item["analysis"] = {"warnings": [f"Nie można odczytać pliku: {type(exc).__name__}"]}
         results.append(item)
     return (sorted(results, key=lambda item: item["name"].casefold()),
-            sorted(rejected, key=lambda item: item["name"].casefold()))
+            sorted(rejected, key=lambda item: item["name"].casefold()), ignored)
 
 
 def discover_external_subtitles(media_path: Path) -> list[dict]:
-    accepted, _ = discover_external_subtitles_with_rejections(media_path)
+    accepted, _, _ = discover_external_subtitles_with_rejections(media_path)
     return accepted
 
 
@@ -228,7 +228,12 @@ def _penalty_text(item: dict) -> str:
 def rank_english(embedded: list[dict], external: list[dict]) -> list[dict]:
     # The reference source for synchronization is deliberately limited to
     # embedded tracks; external files are evaluated as Polish candidates.
-    candidates = [{**item, "sourceType": "embedded"} for item in embedded]
+    candidates = []
+    for item in embedded:
+        language = (item.get("language") or "").casefold()
+        label = _penalty_text(item)
+        if language in {"eng", "en", "english"} or "english" in label:
+            candidates.append({**item, "sourceType": "embedded"})
     ranked = []
     for item in candidates:
         score, reasons, text = 0, [], _penalty_text(item)

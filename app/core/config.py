@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     workpack_max_polish_candidates: int = 10
     workpack_max_archive_bytes: int = 104857600
     workpack_max_files: int = 100
+    workpack_retention_hours: int = 72
+    workpack_cleanup_interval_hours: int = 6
     ffprobe_timeout_seconds: float = 30
     ffmpeg_timeout_seconds: float = 600
     alignment_min_scale: float = 0.94
@@ -91,7 +93,8 @@ class Settings(BaseSettings):
         return value
 
     @field_validator("workpack_reference_score_margin", "workpack_max_reference_alternatives",
-                     "workpack_max_polish_candidates", "workpack_max_archive_bytes", "workpack_max_files")
+                     "workpack_max_polish_candidates", "workpack_max_archive_bytes", "workpack_max_files",
+                     "workpack_retention_hours", "workpack_cleanup_interval_hours")
     @classmethod
     def positive_workpack_limit(cls, value: int) -> int:
         if value < 1:
