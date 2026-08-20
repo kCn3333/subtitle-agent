@@ -5,8 +5,8 @@ Subtitle Agent przygotowuje mały, samowystarczalny workpack ZIP z napisami i an
 ## Przepływ
 
 1. Podaj absolutną ścieżkę filmu pod jednym z dozwolonych mountów `/media:ro`.
-2. Wybierz `SYNC_ONLY`, `LANGUAGE_REVIEW`, `SYNC_AND_LANGUAGE_REVIEW`, `TRANSLATE_TO_POLISH` albo `INSPECT_SUBTITLES`.
-3. Aplikacja uruchamia ffprobe, klasyfikuje napisy, wyodrębnia angielską referencję i kopiuje polskie pliki byte-for-byte do `/data/work/jobs/<uuid>`.
+2. Wybierz „Sprawdź napisy”, „Przygotuj do synchronizacji” albo „Przygotuj do tłumaczenia”.
+3. Aplikacja uruchamia ffprobe, klasyfikuje napisy i wykonuje tylko operacje potrzebne dla trybu `INSPECT`, `PREPARE_SYNC` albo `PREPARE_TRANSLATION`.
 4. Pobierz ZIP i prześlij najlepiej całe archiwum do ChatGPT. `REQUEST.md` zawiera gotowe polecenie, a `manifest.json` jest źródłem danych technicznych.
 
 GUI pokazuje logi na żywo przez SSE, ranking angielskich ścieżek, kandydatów PL, ostrzeżenia, rozmiar i SHA-256. Historia zadania i metadane pobierania pozostają w SQLite po restarcie.
@@ -14,16 +14,15 @@ GUI pokazuje logi na żywo przez SSE, ranking angielskich ścieżek, kandydatów
 ## Zawartość ZIP
 
 ```text
-manifest.json                 wersjonowany subtitle-workpack-v1
+manifest.json                 wersjonowany subtitle-workpack-v2
 REQUEST.md                    instrukcja po polsku dla wybranego zadania
-README.txt                    krótki przewodnik po paczce
 checksums.sha256              sumy wszystkich pozostałych wpisów
-reference/selected/           angielska referencja i tekstowa kopia UTF-8 SRT
-polish/                       kandydaci skopiowani bez zmian
-analysis/                     media, strumienie, rankingi, timeline i hipotezy
+reference/selected/           wymagana angielska referencja
+polish/                       wyłącznie kandydaci paczki synchronizacyjnej
+analysis/                     raport v2 i pliki techniczne wymagane przez dany tryb
 ```
 
-SubRip, ASS, SSA, WebVTT i mov_text otrzymują kopię SRT; zachowywany jest też oryginalny format strumienia. PGS jest eksportowany jako `.sup` wraz z timeline pakietów. Nie jest wykonywany OCR. DVD/VobSub wymaga kompletnej pary `.idx` + `.sub`. Hipotezy synchronizacji są tylko diagnostyczne i słaby wynik nie jest przedstawiany jako gotowa synchronizacja.
+SubRip, ASS, SSA, WebVTT i mov_text otrzymują tekstową kopię SRT. PGS jest eksportowany jako `.sup` wraz z timeline pakietów, a DVD/VobSub jako kompletna para `.idx` + `.sub`. Nie jest wykonywany OCR. Translacja mająca wyłącznie graficzną referencję kończy się `NEEDS_OCR` i nie publikuje pozornie gotowej paczki tekstowej. Hipotezy synchronizacji są tylko diagnostyczne i słaby wynik nie jest przedstawiany jako gotowa synchronizacja.
 
 Ranking preferuje angielski, pełne dialogi, format tekstowy i tytuł `Full Dialogue`. Mocno obniża ocenę commentary, forced, SDH/CC, hearing impaired, signs/songs/foreign parts oraz `Japanese Parts Only`. Gdy dwie najlepsze ścieżki dzieli mniej niż skonfigurowany margines, GUI oznacza wybór jako niejednoznaczny i pozwala przebudować paczkę z innym wykrytym strumieniem bez ponownego ffprobe.
 
@@ -36,6 +35,8 @@ Każdy plik otrzymuje ustrukturyzowaną tożsamość `MOVIE`, `EPISODE` albo `UN
 Przygotowanie materiałów ma trzy niezależne profile. `INSPECT` tworzy raport techniczny bez kopiowania referencji i kandydatów do archiwum. `PREPARE_SYNC` wymaga angielskiej referencji oraz co najmniej jednego jednoznacznie dopasowanego kandydata PL. `PREPARE_TRANSLATION` wymaga tekstowej referencji EN i nie wymaga napisów PL. Status `WORKPACK_INCOMPLETE` wynika wyłącznie z niespełnionych wymagań wybranego profilu; ostrzeżenia diagnostyczne pozostają informacyjne.
 
 Raport v2 zawiera tożsamość medium, parametry techniczne z dokładnym ułamkiem FPS, wszystkie ścieżki osadzone, rankingi z uzasadnieniami, zaakceptowanych i odrzuconych kandydatów PL, statystyki oraz błędy struktury SRT. Dla synchronizacji zapisuje wyłącznie hipotezę modelu wraz z liczbą kotwic, rozrzutem, pokryciem i pewnością. Pole `sufficientAnchors=false` oznacza, że wyniku nie wolno traktować jako gotowej synchronizacji.
+
+Nowe GUI korzysta z `POST /api/tasks` z polami `mediaPath` i `mode`. Odczyt oraz pobieranie są dostępne przez `/api/tasks/{job_id}` i `/api/tasks/{job_id}/download`. Dotychczasowe `/api/workpacks` pozostaje tymczasowo zgodne dla starszych klientów.
 
 ## Uruchomienie
 

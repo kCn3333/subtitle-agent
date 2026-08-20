@@ -1,3 +1,4 @@
+import json
 import time
 import zipfile
 
@@ -5,7 +6,7 @@ import zipfile
 def _wait(client, job_id: str) -> dict:
     for _ in range(300):
         body = client.get(f"/api/workpacks/{job_id}").json()
-        if body["status"] in {"WORKPACK_READY", "WORKPACK_INCOMPLETE", "FAILED"}:
+        if body["status"] in {"WORKPACK_READY", "WORKPACK_INCOMPLETE", "NEEDS_OCR", "FAILED"}:
             return body
         time.sleep(.01)
     raise AssertionError("pipeline did not finish")
@@ -82,6 +83,19 @@ def test_sync_is_ready_with_english_and_matched_polish(client, media_file, monke
     assert {"englishSegments", "polishSegments", "hypothesis", "offsetMs", "spreadMs",
             "analysisCoverage", "confidence", "verification", "sufficientAnchors"} <= hypothesis.keys()
     assert hypothesis["sufficientAnchors"] is False
+    with zipfile.ZipFile(body["report"]["workpack"]["path"]) as archive:
+        names = set(archive.namelist())
+        assert names == {"manifest.json", "REQUEST.md", "reference/selected/selected.eng.srt",
+                         "polish/candidate-001.pl.srt", "analysis/inspection-report.json",
+                         "analysis/media-summary.json", "analysis/subtitle-streams.json",
+                         "analysis/timing-comparison.json", "checksums.sha256"}
+        manifest = json.loads(archive.read("manifest.json"))
+        assert manifest["schema_version"] == "subtitle-workpack-v2"
+        timing = json.loads(archive.read("analysis/timing-comparison.json"))
+        assert timing["readySynchronization"] is False
+        inspection = json.loads(archive.read("analysis/inspection-report.json"))
+        assert {"mediaIdentity", "media", "embeddedSubtitleTracks", "englishRanking",
+                "polishCandidates", "rejectedPolishCandidates", "synchronizationHypotheses"} <= inspection.keys()
 
 
 def test_translation_requires_text_english_but_not_polish(client, media_file, monkeypatch):
@@ -91,11 +105,34 @@ def test_translation_requires_text_english_but_not_polish(client, media_file, mo
     assert body["status"] == "WORKPACK_READY"
     assert body["report"]["pipeline"] == "PREPARE_TRANSLATION"
     assert body["report"]["polishCandidates"] == [] and body["report"]["incompleteReasons"] == []
+    with zipfile.ZipFile(body["report"]["workpack"]["path"]) as archive:
+        assert set(archive.namelist()) == {"manifest.json", "REQUEST.md",
+            "reference/selected/selected.eng.srt", "analysis/media-summary.json",
+            "analysis/subtitle-streams.json", "checksums.sha256"}
 
 
 def test_translation_rejects_graphic_english_reference(client, media_file, monkeypatch):
     _configure_probe(monkeypatch, "graphic")
     response = client.post("/api/workpacks", json={"mediaPath": str(media_file), "taskType": "PREPARE_TRANSLATION"})
     body = _wait(client, response.json()["jobId"])
-    assert body["status"] == "WORKPACK_INCOMPLETE"
+    assert body["status"] == "NEEDS_OCR"
     assert "Brak wymaganej tekstowej referencji angielskiej" in body["report"]["incompleteReasons"]
+    assert body["report"]["workpack"] is None
+
+
+def test_unified_tasks_api_accepts_mode_and_legacy_endpoint_remains(client, media_file):
+    created = client.post("/api/tasks", json={"mediaPath": str(media_file), "mode": "INSPECT"})
+    assert created.status_code == 202 and created.json()["mode"] == "INSPECT"
+    body = _wait(client, created.json()["jobId"])
+    assert body["report"]["pipeline"] == "INSPECT"
+    assert client.get(f"/api/tasks/{created.json()['jobId']}").status_code == 200
+    legacy = client.post("/api/workpacks", json={"mediaPath": str(media_file), "taskType": "INSPECT"})
+    assert legacy.status_code == 202
+
+
+def test_gui_exposes_only_three_polish_modes_and_config_is_v2(client):
+    html = client.get("/").text
+    assert all(label in html for label in ("Sprawdź napisy", "Przygotuj do synchronizacji",
+                                           "Przygotuj do tłumaczenia"))
+    assert "SYNC_AND_LANGUAGE_REVIEW" not in html and "INSPECT_SUBTITLES" not in html
+    assert client.get("/api/workpacks/config").json()["schemaVersion"] == "subtitle-workpack-v2"

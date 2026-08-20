@@ -9,7 +9,7 @@ from app.models.job import WorkpackTaskType
 from app.services.alignment import StructuralAnchorProvider, fit_models, parse_cues, public_model, quality, select_model
 from app.services.process_runner import run_process
 
-SCHEMA_VERSION = "subtitle-workpack-v1"
+SCHEMA_VERSION = "subtitle-workpack-v2"
 SAFE_NAME = re.compile(r"[^\w .()\[\]-]+", re.UNICODE)
 TEXT_CODECS = {"subrip": "srt", "ass": "ass", "ssa": "ssa", "webvtt": "vtt", "mov_text": "txt"}
 
@@ -72,6 +72,40 @@ def media_summary(media: dict) -> dict:
 def subtitle_streams(media: dict) -> list[dict]:
     keys = ("streamIndex", "subtitleOrder", "codec", "language", "title", "default", "forced", "hearingImpaired", "type")
     return [{key: stream.get(key) for key in keys} for stream in media.get("embeddedSubtitles", [])]
+
+
+def inspection_report(media: dict, english_ranking: list[dict], polish_ranking: list[dict],
+                      rejected: list[dict], hypotheses: list[dict]) -> dict:
+    duration = media.get("durationSeconds") or 0
+    polish = []
+    for item in polish_ranking:
+        analysis = item.get("analysis") or {}
+        language = (item.get("languageHint") or analysis.get("detected_language") or "").casefold()
+        if item.get("sourceType") != "external" or language not in {"pl", "pol", "polish"}:
+            continue
+        polish.append({
+            "name": item.get("name"), "score": item.get("score"), "rankingReasons": item.get("reasons", []),
+            "matchConfidence": item.get("matchConfidence"), "matchReasons": item.get("matchReasons", []),
+            "matchAutomatic": item.get("matchAutomatic"), "segments": analysis.get("segment_count"),
+            "firstTimestamp": analysis.get("first_time"), "lastTimestamp": analysis.get("last_time"),
+            "movieCoverage": ((analysis.get("last_time") or 0) / duration if duration else None),
+            "structuralErrors": {
+                "malformedSegments": analysis.get("malformed_segments", 0),
+                "reversedIntervals": analysis.get("reversed_intervals", 0),
+                "overlappingSegments": analysis.get("overlapping_segments", 0),
+                "monotonic": analysis.get("monotonic"), "warnings": analysis.get("warnings", []),
+            },
+        })
+    english_keys = ("streamIndex", "codec", "language", "title", "type", "score", "reasons",
+                    "default", "forced", "hearingImpaired")
+    rejected_polish = [item for item in rejected if item.get("languageHint") in {"pl", "pol", "polish"}]
+    return {
+        "reportVersion": 2, "mediaIdentity": media.get("identity"), "media": media_summary(media),
+        "embeddedSubtitleTracks": subtitle_streams(media),
+        "englishRanking": [{key: item.get(key) for key in english_keys} for item in english_ranking],
+        "polishCandidates": polish, "rejectedPolishCandidates": rejected_polish,
+        "synchronizationHypotheses": hypotheses,
+    }
 
 
 async def extract_embedded(reference: dict, media_path: Path, target: Path, timeout: float) -> list[Path]:
@@ -145,10 +179,11 @@ def diagnostic_hypotheses(reference_path: Path | None, polish: list[dict], job_d
     english = parse_cues(reference_path, "reference")
     results = []
     for item in polish:
-        candidate = job_dir / item["archiveName"]
+        candidate = job_dir / item["archiveName"] if item.get("archiveName") else Path(item["path"])
         if candidate.suffix.lower() != ".srt":
             continue
-        cues = parse_cues(candidate, item["archiveName"])
+        candidate_name = item.get("archiveName") or item.get("name") or candidate.name
+        cues = parse_cues(candidate, candidate_name)
         anchors = StructuralAnchorProvider().provide(english, cues, duration_ms, {})
         models = fit_models(anchors)
         selected = select_model(models)
@@ -156,7 +191,7 @@ def diagnostic_hypotheses(reference_path: Path | None, polish: list[dict], job_d
         model_names = {"IDENTITY": "zgodne osie czasu", "GLOBAL_OFFSET": "stałe przesunięcie",
                        "AFFINE_DRIFT": "dryf liniowy", "PIECEWISE_LINEAR": "model odcinkowy"}
         results.append({
-            "candidate": item["archiveName"], "originalName": item.get("originalName"),
+            "candidate": candidate_name, "originalName": item.get("originalName") or item.get("name"),
             "matchConfidence": item.get("matchConfidence"), "matchReasons": item.get("matchReasons", []),
             "englishSegments": len(english), "polishSegments": len(cues), "anchorCount": len(anchors),
             "hypothesis": model_names.get((selected or {}).get("strategy"), "brak wiarygodnej hipotezy"),
@@ -202,14 +237,16 @@ def request_text(task: WorkpackTaskType, manifest: dict) -> str:
             f"{polish}\n\n## Ostrzeżenia\n{warnings}\n")
 
 
-def build_zip(job_dir: Path, media_stem: str, maximum_bytes: int, maximum_files: int) -> tuple[Path, int, str, list[str]]:
+def build_zip(job_dir: Path, media_stem: str, maximum_bytes: int, maximum_files: int,
+              include_paths: set[str] | None = None) -> tuple[Path, int, str, list[str]]:
     version = 1
     while (job_dir / f"{safe_filename(media_stem)}.subtitle-workpack-v{version:03d}.zip").exists():
         version += 1
     archive = job_dir / f"{safe_filename(media_stem)}.subtitle-workpack-v{version:03d}.zip"
     excluded = {archive.name, "checksums.sha256"}
     files = sorted((path for path in job_dir.rglob("*") if path.is_file() and not path.is_symlink()
-                    and path.name not in excluded and path.suffix.lower() != ".zip"),
+                    and path.name not in excluded and path.suffix.lower() != ".zip"
+                    and (include_paths is None or path.relative_to(job_dir).as_posix() in include_paths)),
                    key=lambda path: path.relative_to(job_dir).as_posix())
     omitted: list[str] = []
     priority = lambda path: (0 if path.name == "manifest.json" else

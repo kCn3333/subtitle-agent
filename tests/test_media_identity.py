@@ -109,5 +109,7 @@ def test_lost_directory_report_and_zip_never_mix_neighboring_episodes(client, se
         assert packed_originals == included_names
         assert all(item["matchConfidence"] == 1 and item["matchReasons"] and item["matchAutomatic"]
                    for item in manifest["polish_candidates"])
-        payload = b"".join(archive.read(name) for name in archive.namelist())
-    assert all(marker not in payload for marker in (b"E21", b"E22", b"E24", b"Odcinek 21", b"Odcinek 22", b"Odcinek 24"))
+        polish_entries = [name for name in archive.namelist() if name.startswith("polish/")]
+        payload = b"".join(archive.read(name) for name in polish_entries)
+        assert all("E21" not in name and "E22" not in name and "E24" not in name for name in polish_entries)
+    assert all(marker not in payload for marker in (b"Odcinek 21", b"Odcinek 22", b"Odcinek 24"))

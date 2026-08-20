@@ -90,6 +90,18 @@ class WorkpackTaskType(StrEnum):
     INSPECT_SUBTITLES = "INSPECT_SUBTITLES"
 
 
+class WorkpackMode(StrEnum):
+    INSPECT = "INSPECT"
+    PREPARE_SYNC = "PREPARE_SYNC"
+    PREPARE_TRANSLATION = "PREPARE_TRANSLATION"
+
+
+class CreateTaskRequest(BaseModel):
+    model_config = API_MODEL_CONFIG
+    media_path: str = Field(min_length=1)
+    mode: WorkpackMode
+
+
 class PrepareWorkpackRequest(BaseModel):
     model_config = API_MODEL_CONFIG
     media_path: str = Field(min_length=1)

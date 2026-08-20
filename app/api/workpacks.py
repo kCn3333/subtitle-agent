@@ -3,11 +3,12 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import FileResponse
 
-from app.models.job import PrepareWorkpackRequest, RebuildWorkpackRequest
+from app.models.job import CreateTaskRequest, PrepareWorkpackRequest, RebuildWorkpackRequest, WorkpackTaskType
 from app.services.media_analysis import UserInputError
 from app.services.workpack import sha256_file
 
 router = APIRouter(prefix="/api/workpacks", tags=["workpacks"])
+tasks_router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
 
 def missing() -> HTTPException:
@@ -17,7 +18,7 @@ def missing() -> HTTPException:
 @router.get("/config")
 async def config(request: Request) -> dict:
     settings = request.app.state.settings
-    return {"appMode": settings.subtitle_agent_app_mode, "schemaVersion": "subtitle-workpack-v1",
+    return {"appMode": settings.subtitle_agent_app_mode, "schemaVersion": "subtitle-workpack-v2",
             "referenceScoreMargin": settings.workpack_reference_score_margin,
             "maxReferenceAlternatives": settings.workpack_max_reference_alternatives,
             "maxPolishCandidates": settings.workpack_max_polish_candidates,
@@ -30,6 +31,13 @@ async def create_workpack(payload: PrepareWorkpackRequest, request: Request) -> 
     return {"jobId": job["id"], "status": job["status"], "jobType": "PREPARE_WORKPACK", "taskType": payload.task_type}
 
 
+@tasks_router.post("", status_code=status.HTTP_202_ACCEPTED)
+async def create_task(payload: CreateTaskRequest, request: Request) -> dict:
+    task_type = WorkpackTaskType(payload.mode.value)
+    job = await request.app.state.jobs.create_workpack(payload.media_path, task_type)
+    return {"jobId": job["id"], "status": job["status"], "jobType": "PREPARE_WORKPACK", "mode": payload.mode}
+
+
 @router.get("/{job_id}")
 async def report(job_id: str, request: Request) -> dict:
     job = request.app.state.jobs.get(job_id)
@@ -37,6 +45,11 @@ async def report(job_id: str, request: Request) -> dict:
     return {"jobId": job["id"], "status": job["status"], "progress": job["progress"],
             "taskType": job.get("task_type"), "createdAt": job["created_at"], "finishedAt": job["finished_at"],
             "report": job.get("report"), "errorMessage": job.get("error_message")}
+
+
+@tasks_router.get("/{job_id}")
+async def task_report(job_id: str, request: Request) -> dict:
+    return await report(job_id, request)
 
 
 @router.post("/{job_id}/reference", status_code=status.HTTP_202_ACCEPTED)
@@ -62,3 +75,8 @@ async def download(job_id: str, request: Request) -> FileResponse:
         status_code=409, detail={"code": "WORKPACK_HASH_MISMATCH", "message": "Suma kontrolna workpacka jest niezgodna"})
     return FileResponse(archive, media_type="application/zip", filename=workpack["filename"],
                         headers={"X-Workpack-SHA256": digest})
+
+
+@tasks_router.get("/{job_id}/download")
+async def task_download(job_id: str, request: Request) -> FileResponse:
+    return await download(job_id, request)
