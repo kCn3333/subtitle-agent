@@ -554,7 +554,9 @@ class JobManager:
         ranking_safe = [{key: item.get(key) for key in ("streamIndex", "codec", "language", "title", "type", "score", "reasons", "default", "forced", "hearingImpaired")}
                         for item in english_ranking]
         write_json(analysis / "source-ranking.json", {"english": ranking_safe,
-                   "polish": [{"name": item.get("name"), "score": item.get("score"), "reasons": item.get("reasons")} for item in polish_ranking]})
+                   "polish": [{"name": item.get("name"), "score": item.get("score"), "reasons": item.get("reasons"),
+                               "matchConfidence": item.get("matchConfidence"), "matchReasons": item.get("matchReasons"),
+                               "matchAutomatic": item.get("matchAutomatic")} for item in polish_ranking]})
         if reference_timeline: write_json(analysis / "reference-timeline.json", reference_timeline)
         if pgs_timeline: write_json(analysis / "reference-pgs-timeline.json", pgs_timeline)
         write_json(analysis / "polish-timelines.json", polish_timelines)
@@ -573,7 +575,7 @@ class JobManager:
         manifest = {"schema_version": SCHEMA_VERSION, "job_id": job_id, "task_type": task_type.value,
                     "media": media_summary(media), "reference": reference_entry,
                     "reference_alternatives": ranking_safe[1:1 + len(alternatives)],
-                    "polish_candidates": [{key: item.get(key) for key in ("archiveName", "originalName", "languageHint", "encoding", "sizeBytes", "cueCount", "firstMs", "lastMs", "coverage", "parserWarnings", "score", "sha256", "generatedResult")} for item in polish],
+                    "polish_candidates": [{key: item.get(key) for key in ("archiveName", "originalName", "languageHint", "encoding", "sizeBytes", "cueCount", "firstMs", "lastMs", "coverage", "parserWarnings", "score", "sha256", "generatedResult", "matchConfidence", "matchReasons", "matchAutomatic")} for item in polish],
                     "omitted_polish_candidates": [{"originalName": item.get("name"), "reason": item.get("omissionReason")} for item in omitted_polish],
                     "timing_analysis": {"hypothesisCount": len(hypotheses)},
                     "expected_output": {"filename": expected, "encoding": "UTF-8", "format": "SRT",

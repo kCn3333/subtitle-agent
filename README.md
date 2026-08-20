@@ -27,6 +27,10 @@ SubRip, ASS, SSA, WebVTT i mov_text otrzymują kopię SRT; zachowywany jest też
 
 Ranking preferuje angielski, pełne dialogi, format tekstowy i tytuł `Full Dialogue`. Mocno obniża ocenę commentary, forced, SDH/CC, hearing impaired, signs/songs/foreign parts oraz `Japanese Parts Only`. Gdy dwie najlepsze ścieżki dzieli mniej niż skonfigurowany margines, GUI oznacza wybór jako niejednoznaczny i pozwala przebudować paczkę z innym wykrytym strumieniem bez ponownego ffprobe.
 
+### Tożsamość filmu i odcinka
+
+Każdy plik otrzymuje ustrukturyzowaną tożsamość `MOVIE`, `EPISODE` albo `UNKNOWN`. Parser rozpoznaje `S01E24`, `s1e24`, `1x24`, `S01E23E24` i `S01E23-E24`. Dwa jawne identyfikatory odcinka muszą mieć dokładnie zgodny sezon, początek i koniec zakresu; wspólny tytuł serialu nigdy nie znosi konfliktu. Napisy bez identyfikatora odcinka mogą pojawić się w raporcie jako niejednoznaczne, ale nie są automatycznie dodawane do ZIP. Dla filmów porównywany jest znormalizowany tytuł oraz rok, gdy występuje po obu stronach. Raport zapisuje `matchConfidence`, `matchReasons` i informację, czy dopasowanie może być użyte automatycznie.
+
 ## Uruchomienie
 
 Wymagania: Python 3.12, ffmpeg/ffprobe oraz opcjonalnie Docker.
