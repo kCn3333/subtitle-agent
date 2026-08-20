@@ -4,12 +4,23 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>{{ app_name }}</title><link rel="stylesheet" href="/static/styles.css">
 </head>
-<body><main>
-  <header><div><p class="eyebrow">ETAP 2 · ANALIZA</p><h1>{{ app_name }}</h1><p>Bezpieczna analiza techniczna mediów i napisów — bez zmian w bibliotece.</p></div><span class="health">● ONLINE</span></header>
-  <section class="card"><form id="job-form"><label for="media-path">Pełna ścieżka do filmu lub odcinka</label><div class="row"><input id="media-path" required placeholder="/media/movies/example.mkv"><button>Analizuj</button></div></form></section>
-  <section class="status card"><div><span>Status zadania</span><strong id="status">BRAK ZADANIA</strong></div><div><span>Postęp</span><strong id="progress">0%</strong></div><div class="current"><span>Aktualnie</span><strong id="current-activity">Oczekiwanie na zadanie</strong></div></section>
-  <section class="console-card"><div class="console-head"><span>Konsola postępu</span><button id="clear" type="button">Wyczyść widok konsoli</button></div><div id="console" class="console" aria-live="polite"></div></section>
-  <section id="results" class="card results" hidden><h2>Wyniki analizy</h2><div id="result-content"></div><p class="safe-note">Na tym etapie żaden plik w katalogu mediów nie został zmieniony.</p></section>
-  <section id="alignment" class="card results" hidden><h2>Synchronizacja napisów</h2><p id="semantic-status">OpenAI: sprawdzanie konfiguracji…</p><div id="semantic-summary"></div><div class="source-grid"><label>Źródło angielskie<select id="english-source"></select></label><label>Źródło polskie<select id="polish-source"></select></label><label>Tryb<select id="alignment-mode"><option>SEMANTIC_PREFERRED</option><option>STRUCTURAL_ONLY</option><option>SEMANTIC_REQUIRED</option></select></label></div><button id="align" type="button">Przeanalizuj synchronizację</button><div id="alignment-content"></div><p class="safe-note">Podgląd znajduje się wyłącznie w katalogu roboczym. Nie został opublikowany do Jellyfina ani zapisany obok filmu.</p></section>
-  <section id="publication" class="card results" hidden><h2>Publikowanie napisów</h2><p id="publication-config">Sprawdzanie konfiguracji…</p><div id="publication-content"></div><button id="publish" type="button" hidden>Opublikuj do Jellyfina</button><p class="safe-note">Aplikacja tworzy wyłącznie nowy, wersjonowany plik. Nie wywołuje Jellyfin API.</p></section>
+<body data-app-mode="{{ app_mode }}"><main>
+  <header><div><p class="eyebrow">WORKPACK · PACZKA DO CHATGPT</p><h1>{{ app_name }}</h1>
+    <p>Bezpiecznie zbierz referencję, polskie napisy i analizę techniczną w jednym ZIP.</p></div><span class="health">● ONLINE</span></header>
+  <section class="card"><form id="job-form">
+    <label for="media-path">Pełna ścieżka do filmu lub odcinka</label>
+    <div class="row"><input id="media-path" required placeholder="/media/shows/Example/Season 1/example.mkv">
+      <select id="task-type" aria-label="Typ zadania"><option>SYNC_AND_LANGUAGE_REVIEW</option><option>SYNC_ONLY</option>
+        <option>LANGUAGE_REVIEW</option><option>TRANSLATE_TO_POLISH</option><option>INSPECT_SUBTITLES</option></select>
+      <button>Przygotuj pakiet</button></div></form></section>
+  <section class="status card"><div><span>Status zadania</span><strong id="status">BRAK ZADANIA</strong></div>
+    <div><span>Postęp</span><strong id="progress">0%</strong></div><div class="current"><span>Aktualnie</span><strong id="current-activity">Oczekiwanie</strong></div></section>
+  <section class="console-card"><div class="console-head"><span>Konsola postępu</span><button id="clear" type="button">Wyczyść widok konsoli</button></div>
+    <div id="console" class="console" aria-live="polite"></div></section>
+  <section id="results" class="card results" hidden><h2>Gotowy workpack</h2><div id="result-content"></div>
+    <div id="reference-choice" hidden><label>Wybierz wykrytą referencję<select id="reference-source"></select></label>
+      <button id="rebuild" type="button">Zbuduj ponownie z tą referencją</button></div>
+    <a id="download" class="button" hidden>Pobierz pakiet ZIP</a>
+    <p class="safe-note">Film i biblioteka mediów pozostają tylko do odczytu. Paczka powstaje wyłącznie w /data.</p></section>
+  {% if app_mode == "ADVANCED" %}<section class="card"><h2>Tryb ADVANCED</h2><p>Historyczne endpointy analizy, semantyki i publikacji są aktywne. Podstawowy ekran nadal tworzy workpack.</p></section>{% endif %}
 </main><script src="/static/app.js"></script></body></html>

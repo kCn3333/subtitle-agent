@@ -13,7 +13,8 @@ from app.services.system_probe import ToolInfo
 def settings(tmp_path: Path) -> Settings:
     media_root = tmp_path / "media"
     media_root.mkdir()
-    return Settings(data_root=tmp_path / "data", media_roots=[media_root], ffprobe_timeout_seconds=1, ffmpeg_timeout_seconds=1)
+    return Settings(data_root=tmp_path / "data", media_roots=[media_root], ffprobe_timeout_seconds=1,
+                    ffmpeg_timeout_seconds=1, subtitle_agent_app_mode="ADVANCED")
 
 
 @pytest.fixture

@@ -17,7 +17,7 @@ RUN mkdir -p /data && chown subtitle-agent:subtitle-agent /data
 
 FROM base AS test
 USER root
-COPY requirements-dev.txt pytest.ini ./
+COPY requirements-dev.txt pytest.ini compose.example.yml ./
 COPY tests tests
 RUN pip install --no-cache-dir -r requirements-dev.txt
 RUN pytest -q
