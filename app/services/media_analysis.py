@@ -1,7 +1,9 @@
 import json
 import re
+import unicodedata
 from pathlib import Path
 
+from app.models.media import MediaIdentity, MediaKind, MediaMatch
 from app.services.process_runner import run_process
 from app.services.srt_parser import parse_srt
 
@@ -11,6 +13,13 @@ TEXT_SUBTITLES = {"subrip", "ass", "ssa", "webvtt", "mov_text"}
 GRAPHIC_SUBTITLES = {"hdmv_pgs_subtitle", "dvd_subtitle", "dvb_subtitle"}
 RELEASE_MARKER = re.compile(
     r"(?i)(?:[. _\-\[(]+)(?:19\d{2}|20\d{2}|2160p|1080p|720p|bluray|blu-ray|web[-_. ]?dl|webrip|hdtv|x26[45]|h[. ]?26[45]).*$"
+)
+EPISODE_SXE = re.compile(r"(?i)(?<![a-z0-9])s(\d{1,2})e(\d{1,3})(?:\s*[-._ ]?\s*e(\d{1,3}))?(?!\d)")
+EPISODE_X = re.compile(r"(?i)(?<![a-z0-9])(\d{1,2})x(\d{1,3})(?!\d)")
+YEAR = re.compile(r"(?<!\d)((?:18|19|20|21)\d{2})(?!\d)")
+TRAILING_MARKERS = re.compile(
+    r"(?i)\b(?:pl|pol|polish|en|eng|english|sdh|cc|forced|ai[ ._-]?sync|720p|1080p|2160p|"
+    r"bluray|blu[ ._-]?ray|web[ ._-]?dl|webrip|hdtv|x26[45]|h[ ._-]?26[45])\b.*$"
 )
 
 
@@ -80,6 +89,7 @@ def parse_ffprobe(payload: dict, media_path: Path) -> dict:
             subtitle_order += 1
     return {
         "path": str(media_path), "name": media_path.name, "sizeBytes": media_path.stat().st_size,
+        "identity": parse_media_identity(media_path.name).model_dump(mode="json"),
         "container": format_data.get("format_name"), "durationSeconds": _number(format_data.get("duration")),
         "bitrate": _integer(format_data.get("bit_rate")), "width": video.get("width"), "height": video.get("height"),
         "rFrameRate": video.get("r_frame_rate"), "avgFrameRate": video.get("avg_frame_rate"),
@@ -101,11 +111,63 @@ def _release_stem(stem: str) -> str:
     return RELEASE_MARKER.sub("", stem).rstrip(". _-") or stem
 
 
-def _name_matches(media_stem: str, subtitle_stem: str) -> bool:
-    media_full = media_stem.casefold()
-    media_clean = _release_stem(media_stem).casefold()
-    candidate = subtitle_stem.casefold()
-    return candidate.startswith(media_full) or candidate.startswith(media_clean)
+def _normalize_title(value: str) -> str:
+    value = unicodedata.normalize("NFKC", value)
+    value = TRAILING_MARKERS.sub("", value)
+    value = re.sub(r"[\[\](){}]", " ", value)
+    value = re.sub(r"[^\w]+", " ", value.casefold(), flags=re.UNICODE)
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def parse_media_identity(filename: str) -> MediaIdentity:
+    stem = Path(filename).stem
+    episode_match = EPISODE_SXE.search(stem) or EPISODE_X.search(stem)
+    if episode_match:
+        season, episode = int(episode_match.group(1)), int(episode_match.group(2))
+        episode_end = int(episode_match.group(3)) if len(episode_match.groups()) >= 3 and episode_match.group(3) else None
+        series_title = _normalize_title(stem[:episode_match.start()]) or None
+        return MediaIdentity(kind=MediaKind.EPISODE, series_title=series_title, season=season, episode=episode,
+                             episode_end=episode_end, normalized_title=series_title or "")
+    year_match = YEAR.search(stem)
+    year = int(year_match.group(1)) if year_match else None
+    title_part = stem[:year_match.start()] if year_match else _release_stem(stem)
+    normalized = _normalize_title(title_part)
+    return MediaIdentity(kind=MediaKind.MOVIE if normalized else MediaKind.UNKNOWN,
+                         year=year, normalized_title=normalized)
+
+
+def match_media_identity(media: MediaIdentity, candidate: MediaIdentity) -> MediaMatch:
+    if media.kind == MediaKind.EPISODE and candidate.kind == MediaKind.EPISODE:
+        if media.season != candidate.season:
+            return MediaMatch(accepted=False, automatic=False, confidence=0,
+                              reasons=[f"sprzeczny sezon: S{candidate.season:02d} zamiast S{media.season:02d}"])
+        if media.episode != candidate.episode or media.episode_end != candidate.episode_end:
+            media_id = f"E{media.episode:02d}" + (f"-E{media.episode_end:02d}" if media.episode_end is not None else "")
+            candidate_id = f"E{candidate.episode:02d}" + (f"-E{candidate.episode_end:02d}" if candidate.episode_end is not None else "")
+            return MediaMatch(accepted=False, automatic=False, confidence=0,
+                              reasons=[f"sprzeczny odcinek: {candidate_id} zamiast {media_id}"])
+        reasons = [f"zgodny identyfikator S{media.season:02d}E{media.episode:02d}"]
+        if media.normalized_title and candidate.normalized_title == media.normalized_title:
+            reasons.append("zgodny znormalizowany tytuł serialu")
+        return MediaMatch(accepted=True, automatic=True, confidence=1, reasons=reasons)
+    if media.kind == MediaKind.EPISODE or candidate.kind == MediaKind.EPISODE:
+        if not media.normalized_title or media.normalized_title != candidate.normalized_title:
+            return MediaMatch(accepted=False, automatic=False, confidence=0,
+                              reasons=["brak zgodnego znormalizowanego tytułu przy niepełnym identyfikatorze odcinka"])
+        return MediaMatch(accepted=True, automatic=False, confidence=.4,
+                          reasons=["brak identyfikatora odcinka po jednej stronie; dopasowanie niejednoznaczne"])
+    if not media.normalized_title or media.normalized_title != candidate.normalized_title:
+        return MediaMatch(accepted=False, automatic=False, confidence=0,
+                          reasons=["niezgodny znormalizowany tytuł filmu"])
+    if media.year is not None and candidate.year is not None and media.year != candidate.year:
+        return MediaMatch(accepted=False, automatic=False, confidence=0,
+                          reasons=[f"sprzeczny rok: {candidate.year} zamiast {media.year}"])
+    reasons = ["zgodny znormalizowany tytuł filmu"]
+    if media.year is not None and candidate.year is not None:
+        reasons.append("zgodny rok filmu")
+        return MediaMatch(accepted=True, automatic=True, confidence=1, reasons=reasons)
+    reasons.append("rok nie występuje po obu stronach")
+    return MediaMatch(accepted=True, automatic=True, confidence=.85, reasons=reasons)
 
 
 def _flags(name: str) -> dict:
@@ -121,6 +183,7 @@ def _flags(name: str) -> dict:
 def discover_external_subtitles(media_path: Path) -> list[dict]:
     results: list[dict] = []
     media_directory = media_path.parent.resolve(strict=True)
+    media_identity = parse_media_identity(media_path.name)
     for entry in media_path.parent.iterdir():
         if not entry.is_file() or entry.suffix.lower() not in SUPPORTED_EXTERNAL:
             continue
@@ -130,9 +193,14 @@ def discover_external_subtitles(media_path: Path) -> list[dict]:
             continue
         if not resolved_entry.is_relative_to(media_directory):
             continue
-        if not _name_matches(media_path.stem, entry.stem):
+        candidate_identity = parse_media_identity(entry.name)
+        match = match_media_identity(media_identity, candidate_identity)
+        if not match.accepted:
             continue
-        item = {"path": str(resolved_entry), "name": entry.name, "format": entry.suffix.lower().lstrip("."), **_flags(entry.name)}
+        item = {"path": str(resolved_entry), "name": entry.name, "format": entry.suffix.lower().lstrip("."),
+                "mediaIdentity": candidate_identity.model_dump(mode="json"),
+                "matchConfidence": match.confidence, "matchReasons": match.reasons,
+                "matchAutomatic": match.automatic, **_flags(entry.name)}
         if entry.suffix.lower() == ".srt":
             try:
                 item["analysis"] = parse_srt(resolved_entry).to_dict()
@@ -186,7 +254,10 @@ def rank_polish(media: dict, external: list[dict], embedded: list[dict]) -> list
         if structural: score -= min(40, structural * 4); reasons.append(f"-{min(40, structural * 4)} błędy struktury")
         if 0 < analysis.get("segment_count", 999) < 50: score -= 25; reasons.append("-25 bardzo mało segmentów")
         if duration and analysis.get("last_time") and analysis["last_time"] > duration * 1.15: score -= 25; reasons.append("-25 napisy znacznie dłuższe od filmu")
-        ranked.append({**item, "score": score, "reasons": reasons, "eligibleByDefault": not item.get("aiSync", False)})
+        if item.get("sourceType") == "external" and item.get("matchAutomatic") is False:
+            score -= 80; reasons.append("-80 niejednoznaczna tożsamość medium")
+        ranked.append({**item, "score": score, "reasons": reasons,
+                       "eligibleByDefault": not item.get("aiSync", False) and item.get("matchAutomatic", True)})
     return sorted(ranked, key=lambda item: (-item["score"], str(item.get("name") or item.get("streamIndex"))))
 
 

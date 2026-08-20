@@ -63,6 +63,7 @@ def media_summary(media: dict) -> dict:
         "fps": {"fraction": rate, "decimal": decimal},
         "width": media.get("width"), "height": media.get("height"),
         "video_codec": media.get("videoCodec"),
+        "identity": media.get("identity"),
         "audio_tracks": [{key: item.get(key) for key in ("streamIndex", "codec", "language", "title", "channels", "channelLayout")}
                          for item in media.get("audioTracks", [])],
     }
@@ -117,7 +118,7 @@ async def graphic_timeline(media_path: Path, stream_index: int, timeout: float) 
 
 def copy_polish_candidates(ranking: list[dict], target: Path, maximum: int) -> tuple[list[dict], list[dict]]:
     target.mkdir(parents=True, exist_ok=True)
-    candidates = [item for item in ranking if item.get("sourceType") == "external" and
+    candidates = [item for item in ranking if item.get("sourceType") == "external" and item.get("eligibleByDefault", True) and
                   (item.get("languageHint") == "pl" or
                    item.get("analysis", {}).get("detected_language") == "pl")]
     selected = candidates[:maximum]
