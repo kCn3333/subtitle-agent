@@ -180,8 +180,9 @@ def _flags(name: str) -> dict:
     }
 
 
-def discover_external_subtitles(media_path: Path) -> list[dict]:
+def discover_external_subtitles_with_rejections(media_path: Path) -> tuple[list[dict], list[dict]]:
     results: list[dict] = []
+    rejected: list[dict] = []
     media_directory = media_path.parent.resolve(strict=True)
     media_identity = parse_media_identity(media_path.name)
     for entry in media_path.parent.iterdir():
@@ -196,6 +197,10 @@ def discover_external_subtitles(media_path: Path) -> list[dict]:
         candidate_identity = parse_media_identity(entry.name)
         match = match_media_identity(media_identity, candidate_identity)
         if not match.accepted:
+            rejected.append({"name": entry.name, "format": entry.suffix.lower().lstrip("."),
+                             "mediaIdentity": candidate_identity.model_dump(mode="json"),
+                             "matchConfidence": match.confidence, "matchReasons": match.reasons,
+                             "matchAutomatic": False, **_flags(entry.name)})
             continue
         item = {"path": str(resolved_entry), "name": entry.name, "format": entry.suffix.lower().lstrip("."),
                 "mediaIdentity": candidate_identity.model_dump(mode="json"),
@@ -207,7 +212,13 @@ def discover_external_subtitles(media_path: Path) -> list[dict]:
             except OSError as exc:
                 item["analysis"] = {"warnings": [f"Nie można odczytać pliku: {type(exc).__name__}"]}
         results.append(item)
-    return sorted(results, key=lambda item: item["name"].casefold())
+    return (sorted(results, key=lambda item: item["name"].casefold()),
+            sorted(rejected, key=lambda item: item["name"].casefold()))
+
+
+def discover_external_subtitles(media_path: Path) -> list[dict]:
+    accepted, _ = discover_external_subtitles_with_rejections(media_path)
+    return accepted
 
 
 def _penalty_text(item: dict) -> str:

@@ -31,6 +31,12 @@ Ranking preferuje angielski, pełne dialogi, format tekstowy i tytuł `Full Dial
 
 Każdy plik otrzymuje ustrukturyzowaną tożsamość `MOVIE`, `EPISODE` albo `UNKNOWN`. Parser rozpoznaje `S01E24`, `s1e24`, `1x24`, `S01E23E24` i `S01E23-E24`. Dwa jawne identyfikatory odcinka muszą mieć dokładnie zgodny sezon, początek i koniec zakresu; wspólny tytuł serialu nigdy nie znosi konfliktu. Napisy bez identyfikatora odcinka mogą pojawić się w raporcie jako niejednoznaczne, ale nie są automatycznie dodawane do ZIP. Dla filmów porównywany jest znormalizowany tytuł oraz rok, gdy występuje po obu stronach. Raport zapisuje `matchConfidence`, `matchReasons` i informację, czy dopasowanie może być użyte automatycznie.
 
+### Pipeline'y workpacków i raport inspekcji v2
+
+Przygotowanie materiałów ma trzy niezależne profile. `INSPECT` tworzy raport techniczny bez kopiowania referencji i kandydatów do archiwum. `PREPARE_SYNC` wymaga angielskiej referencji oraz co najmniej jednego jednoznacznie dopasowanego kandydata PL. `PREPARE_TRANSLATION` wymaga tekstowej referencji EN i nie wymaga napisów PL. Status `WORKPACK_INCOMPLETE` wynika wyłącznie z niespełnionych wymagań wybranego profilu; ostrzeżenia diagnostyczne pozostają informacyjne.
+
+Raport v2 zawiera tożsamość medium, parametry techniczne z dokładnym ułamkiem FPS, wszystkie ścieżki osadzone, rankingi z uzasadnieniami, zaakceptowanych i odrzuconych kandydatów PL, statystyki oraz błędy struktury SRT. Dla synchronizacji zapisuje wyłącznie hipotezę modelu wraz z liczbą kotwic, rozrzutem, pokryciem i pewnością. Pole `sufficientAnchors=false` oznacza, że wyniku nie wolno traktować jako gotowej synchronizacji.
+
 ## Uruchomienie
 
 Wymagania: Python 3.12, ffmpeg/ffprobe oraz opcjonalnie Docker.
