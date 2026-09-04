@@ -5,6 +5,7 @@ from pathlib import Path
 
 from app.models.media import MediaIdentity, MediaKind, MediaMatch
 from app.services.process_runner import run_process
+from app.services.subtitle_extraction import extract_subtitle
 from app.services.srt_parser import parse_srt
 
 SUPPORTED_MEDIA = {".mkv", ".mp4", ".m4v", ".avi", ".mov", ".ts", ".m2ts"}
@@ -281,19 +282,6 @@ async def extract_reference(reference: dict | None, media_path: Path, work_dir: 
     if not reference or reference.get("sourceType") != "embedded":
         return None
     stream_index = int(reference["streamIndex"])
-    subtitle_type, codec = reference.get("type"), reference.get("codec")
-    if subtitle_type == "text":
-        output = work_dir / f"reference-stream-{stream_index}.srt"
-        args = ["ffmpeg", "-v", "error", "-i", str(media_path), "-map", f"0:{stream_index}", "-c:s", "srt", "-y", str(output)]
-    elif codec == "hdmv_pgs_subtitle":
-        output = work_dir / f"reference-stream-{stream_index}.sup"
-        args = ["ffmpeg", "-v", "error", "-i", str(media_path), "-map", f"0:{stream_index}", "-c", "copy", "-y", str(output)]
-    elif codec in {"dvd_subtitle", "dvb_subtitle"}:
-        output = work_dir / f"reference-stream-{stream_index}.mkv"
-        args = ["ffmpeg", "-v", "error", "-i", str(media_path), "-map", f"0:{stream_index}", "-c", "copy", "-y", str(output)]
-    else:
-        return None
-    await run_process(args, timeout)
-    if not output.is_file() or output.stat().st_size == 0:
-        raise RuntimeError("Wyodrębniony plik referencyjny jest pusty")
-    return str(output)
+    result = await extract_subtitle(reference, media_path, work_dir, timeout,
+                                    basename=f"reference-stream-{stream_index}", keep_text_original=False)
+    return str(result.files[0]) if result.files else None

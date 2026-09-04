@@ -21,7 +21,8 @@ def settings(tmp_path: Path) -> Settings:
 def client(settings: Settings, monkeypatch):
     # TestClient starts lifespan in a helper thread; keep process probing in its
     # dedicated test to avoid platform-specific subprocess behavior in threads.
-    monkeypatch.setattr("app.main.probe_tools", lambda: ToolInfo("ffmpeg version test", "ffprobe version test"))
+    monkeypatch.setattr("app.main.probe_tools", lambda: ToolInfo("ffmpeg version test", "ffprobe version test",
+                                                                 "mkvextract version test"))
     async def fake_probe(path, timeout):
         return {"path": str(path), "name": path.name, "sizeBytes": path.stat().st_size, "container": "matroska",
                 "durationSeconds": 100.0, "bitrate": 1000, "width": 1920, "height": 1080,

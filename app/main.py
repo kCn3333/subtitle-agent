@@ -24,7 +24,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         logging.getLogger().setLevel(config.log_level.upper())
         prepare_data_root(config.data_root)
         tools = probe_tools()
-        logger.info("Narzędzia systemowe: %s; %s", tools.ffmpeg, tools.ffprobe)
+        logger.info("Narzędzia systemowe: %s; %s; %s", tools.ffmpeg, tools.ffprobe, tools.mkvextract)
         app.state.tools = tools
         app.state.jobs = JobManager(config.data_root / "subtitle-agent.db", config)
         await app.state.jobs.start()
@@ -50,7 +50,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/health")
     async def health(request: Request):
-        return {"status": "ok", "ffmpeg": bool(request.app.state.tools.ffmpeg), "ffprobe": bool(request.app.state.tools.ffprobe)}
+        return {"status": "ok", "ffmpeg": bool(request.app.state.tools.ffmpeg),
+                "ffprobe": bool(request.app.state.tools.ffprobe),
+                "mkvextract": bool(request.app.state.tools.mkvextract)}
 
     app.include_router(jobs_router)
     app.include_router(workpacks_router)

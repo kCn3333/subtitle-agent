@@ -8,18 +8,20 @@ from pathlib import Path
 class ToolInfo:
     ffmpeg: str
     ffprobe: str
+    mkvextract: str
 
 
-def _version(binary: str) -> str:
+def _version(binary: str, argument: str = "-version") -> str:
     path = shutil.which(binary)
     if not path:
         raise RuntimeError(f"Wymagane narzędzie {binary} nie jest dostępne w PATH")
-    result = subprocess.run([path, "-version"], capture_output=True, text=True, timeout=10, check=True)
+    result = subprocess.run([path, argument], capture_output=True, text=True, timeout=10, check=True)
     return result.stdout.splitlines()[0]
 
 
 def probe_tools() -> ToolInfo:
-    return ToolInfo(ffmpeg=_version("ffmpeg"), ffprobe=_version("ffprobe"))
+    return ToolInfo(ffmpeg=_version("ffmpeg"), ffprobe=_version("ffprobe"),
+                    mkvextract=_version("mkvextract", "--version"))
 
 
 def prepare_data_root(data_root: Path) -> Path:

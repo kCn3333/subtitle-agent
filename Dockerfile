@@ -7,7 +7,9 @@ LABEL org.opencontainers.image.source="https://github.com/kCn3333/subtitle-agent
       org.opencontainers.image.revision="$VCS_REF" \
       org.opencontainers.image.version="$VERSION"
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/* \
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg mkvtoolnix \
+    && ffmpeg -version >/dev/null && mkvextract --version >/dev/null \
+    && rm -rf /var/lib/apt/lists/* \
     && groupadd --system --gid 10001 subtitle-agent && useradd --system --uid 10001 --gid subtitle-agent --home-dir /app subtitle-agent
 WORKDIR /app
 COPY requirements.txt .

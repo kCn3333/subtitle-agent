@@ -69,6 +69,7 @@ jobs:
           done
           docker exec subtitle-agent-test ffmpeg -version
           docker exec subtitle-agent-test ffprobe -version
+          docker exec subtitle-agent-test mkvextract --version
       - if: github.event_name != 'pull_request'
         id: publish
         uses: docker/build-push-action@v6

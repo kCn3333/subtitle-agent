@@ -90,7 +90,7 @@ async def test_reference_extraction_uses_safe_stream_index_name(tmp_path, monkey
     async def fake_run(arguments, timeout):
         captured.extend(arguments)
         Path(arguments[-1]).write_bytes(b"subtitle")
-    monkeypatch.setattr("app.services.media_analysis.run_process", fake_run)
+    monkeypatch.setattr("app.services.subtitle_extraction.run_process", fake_run)
     output = await extract_reference(
         {"sourceType": "embedded", "streamIndex": 7, "type": "text", "codec": "ass", "title": "../../unsafe"},
         movie, work, 1,
