@@ -252,6 +252,22 @@ def request_text(task: WorkpackTaskType, manifest: dict) -> str:
         return (f"# Zadanie: {task.value}\n\n{REQUESTS[task]}\n\nNie generuj ani nie synchronizuj napisów. "
                 "Opisz ustalenia na podstawie plików analysis/ i manifest.json.\n\n"
                 f"## Ostrzeżenia\n{warnings}\n")
+    reference = manifest.get("reference") or {}
+    if task == WorkpackTaskType.PREPARE_TRANSLATION and reference.get("requiresOcr"):
+        codec = reference.get("codec")
+        if codec == "dvd_subtitle":
+            source_note = ("Angielska referencja jest zapisana jako graficzne napisy VobSub.\n"
+                           "Pliki selected.eng.idx i selected.eng.sub tworzą jedną nierozłączną parę.\n\n")
+        else:
+            source_note = ("Angielska referencja jest zapisana jako graficzne napisy PGS.\n"
+                           "Plik selected.eng.sup zawiera obrazy napisów w kolejności ich występowania.\n\n")
+        return (f"# Zadanie: {task.value}\n\n{source_note}"
+                "Wykonaj OCR angielskich napisów w kolejności ich występowania, zweryfikuj błędy "
+                "rozpoznawania, a następnie przygotuj kompletne polskie tłumaczenie w formacie SRT.\n\n"
+                "Zachowaj synchronizację wynikającą z referencji graficznej. Nie tłumacz na podstawie "
+                "innych wersji serialu i nie używaj polskich napisów z remake'u HBO.\n\n"
+                f"Zapisz wynik jako `{manifest['expected_output']['filename']}`.\n\n"
+                f"## Ostrzeżenia\n{warnings}\n")
     return (f"# Zadanie: {task.value}\n\n{REQUESTS[task]}\n\nZwróć kompletny, poprawny plik UTF-8 SRT o nazwie "
             f"`{manifest['expected_output']['filename']}`. "
             + ("Zachowaj tekst i skoryguj timing. " if task == WorkpackTaskType.PREPARE_SYNC

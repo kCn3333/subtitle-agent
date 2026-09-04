@@ -1,6 +1,8 @@
 import json
+import hashlib
 import time
 import zipfile
+from pathlib import Path
 
 from app.services.subtitle_extraction import SubtitleExtractionResult
 from app.services.process_runner import ProcessExecutionError
@@ -194,20 +196,143 @@ def test_translation_requires_text_english_but_not_polish(client, media_file, mo
     body = _wait(client, response.json()["jobId"])
     assert body["status"] == "WORKPACK_READY"
     assert body["report"]["pipeline"] == "PREPARE_TRANSLATION"
+    assert body["report"]["requiresOcr"] is False
     assert body["report"]["polishCandidates"] == [] and body["report"]["incompleteReasons"] == []
     with zipfile.ZipFile(body["report"]["workpack"]["path"]) as archive:
         assert set(archive.namelist()) == {"manifest.json", "REQUEST.md",
-            "reference/selected/selected.eng.srt", "analysis/media-summary.json",
-            "analysis/subtitle-streams.json", "checksums.sha256"}
+            "reference/selected/selected.eng.srt", "analysis/media-summary.json", "analysis/reference-timeline.json",
+            "analysis/source-ranking.json", "analysis/subtitle-streams.json", "checksums.sha256"}
+        manifest = json.loads(archive.read("manifest.json"))
+        assert manifest["reference"]["requiresOcr"] is False
+        assert manifest["nextAction"] == "TRANSLATE"
+        assert "AI-Translated" in manifest["expected_output"]["filename"]
+        assert manifest["expected_output"]["preserve_timing"] is True
+        assert manifest["expected_output"]["preserve_text"] is False
 
 
-def test_translation_rejects_graphic_english_reference(client, media_file, monkeypatch):
+def test_translation_vobsub_builds_downloadable_ocr_pack(client, media_file, settings, monkeypatch):
     _configure_probe(monkeypatch, "graphic")
+    calls = []
+
+    async def fake_process(arguments, timeout, accepted_returncodes=(0,)):
+        calls.append(arguments[0])
+        output = Path(arguments[-1].split(":", 1)[-1])
+        if arguments[0] == "ffmpeg":
+            output.write_bytes(b"temporary-matroska")
+        else:
+            timestamps = [round(46_463 + index * (3_057_388 - 46_463) / 759) for index in range(760)]
+            output.write_text(
+                "# VobSub index file, v7\nid: en, index: 0\n" + "\n".join(
+                    f"timestamp: {value // 3_600_000:02d}:{value // 60_000 % 60:02d}:"
+                    f"{value // 1_000 % 60:02d}:{value % 1_000:03d}, filepos: {number:09X}"
+                    for number, value in enumerate(timestamps)
+                ) + "\n",
+                encoding="utf-8",
+            )
+            output.with_suffix(".sub").write_bytes(b"vobsub-payload")
+        return type("Result", (), {"returncode": 0, "stderr": "", "stdout": ""})()
+
+    monkeypatch.setattr("app.services.subtitle_extraction.run_process", fake_process)
+    original_probe = __import__("app.services.job_manager", fromlist=["probe_media"]).probe_media
+
+    async def dvd_probe(path, timeout):
+        data = await original_probe(path, timeout)
+        data["embeddedSubtitles"][0]["codec"] = "dvd_subtitle"
+        data["durationSeconds"] = 3130.388
+        return data
+
+    monkeypatch.setattr("app.services.job_manager.probe_media", dvd_probe)
     response = client.post("/api/workpacks", json={"mediaPath": str(media_file), "taskType": "PREPARE_TRANSLATION"})
     body = _wait(client, response.json()["jobId"])
     assert body["status"] == "NEEDS_OCR"
-    assert "Brak wymaganej tekstowej referencji angielskiej" in body["report"]["incompleteReasons"]
-    assert body["report"]["workpack"] is None
+    assert body["progress"] == 100
+    assert body["report"]["requiresOcr"] is True
+    assert body["report"]["nextAction"] == "OCR_AND_TRANSLATE"
+    assert body["report"]["incompleteReasons"] == []
+    assert body["report"]["workpack"] is not None
+    assert calls == ["ffmpeg", "mkvextract"]
+    downloaded = client.get(f"/api/tasks/{body['jobId']}/download")
+    assert downloaded.status_code == 200
+    with zipfile.ZipFile(__import__("io").BytesIO(downloaded.content)) as archive:
+        names = set(archive.namelist())
+        assert {"reference/selected/selected.eng.idx", "reference/selected/selected.eng.sub",
+                "analysis/reference-graphic-timeline.json", "analysis/source-ranking.json"} <= names
+        assert not any(name.startswith("polish/") for name in names)
+        timeline = json.loads(archive.read("analysis/reference-graphic-timeline.json"))
+        assert timeline == {"cueCount": 760, "durationCoverage": 3057388 / 3130388,
+                            "firstMs": 46463, "lastMs": 3057388}
+        manifest = json.loads(archive.read("manifest.json"))
+        assert manifest["reference"]["requiresOcr"] is True
+        assert manifest["nextAction"] == "OCR_AND_TRANSLATE"
+        assert "AI-Translated" in manifest["expected_output"]["filename"]
+        checksum_lines = archive.read("checksums.sha256").decode().splitlines()
+        for line in checksum_lines:
+            digest, name = line.split("  ", 1)
+            assert hashlib.sha256(archive.read(name)).hexdigest() == digest
+    job_dir = settings.data_root / "work" / "jobs" / body["jobId"]
+    assert not any(path.name.endswith(".mks") for path in job_dir.rglob("*"))
+
+
+def test_translation_pgs_builds_ocr_pack_with_sup(client, media_file, monkeypatch):
+    _configure_probe(monkeypatch, "graphic")
+
+    async def extract(reference, media_path, target, timeout):
+        target.mkdir(parents=True, exist_ok=True)
+        output = target / "selected.eng.sup"
+        output.write_bytes(b"pgs")
+        return SubtitleExtractionResult([output], [])
+
+    async def graphic(*args, **kwargs):
+        return {"event_count": 2, "events": [{"start_ms": 1000}, {"start_ms": 99000}]}
+
+    monkeypatch.setattr("app.services.job_manager.extract_embedded", extract)
+    monkeypatch.setattr("app.services.job_manager.graphic_timeline", graphic)
+    response = client.post("/api/workpacks", json={"mediaPath": str(media_file), "taskType": "PREPARE_TRANSLATION"})
+    body = _wait(client, response.json()["jobId"])
+    assert body["status"] == "NEEDS_OCR" and body["report"]["workpack"]
+    with zipfile.ZipFile(body["report"]["workpack"]["path"]) as archive:
+        assert "reference/selected/selected.eng.sup" in archive.namelist()
+        assert "analysis/reference-graphic-timeline.json" in archive.namelist()
+
+
+def test_translation_without_english_reference_is_incomplete(client, media_file):
+    response = client.post("/api/workpacks", json={"mediaPath": str(media_file), "taskType": "PREPARE_TRANSLATION"})
+    body = _wait(client, response.json()["jobId"])
+    assert body["status"] == "WORKPACK_INCOMPLETE"
+    assert body["report"]["workpack"] is not None
+    assert body["report"]["incompleteReasons"] == ["Brak wymaganej angielskiej referencji"]
+
+
+def test_translation_incomplete_vobsub_pair_fails_without_zip(client, media_file, settings, monkeypatch):
+    _configure_probe(monkeypatch, "graphic")
+
+    async def fake_process(arguments, timeout, accepted_returncodes=(0,)):
+        output = Path(arguments[-1].split(":", 1)[-1])
+        if arguments[0] == "ffmpeg":
+            output.write_bytes(b"temporary-matroska")
+        else:
+            output.write_text(
+                "# VobSub index file, v7\nid: en, index: 0\n"
+                "timestamp: 00:00:01:000, filepos: 000000000\n", encoding="utf-8"
+            )
+        return type("Result", (), {"returncode": 0, "stderr": "", "stdout": ""})()
+
+    monkeypatch.setattr("app.services.subtitle_extraction.run_process", fake_process)
+    original_probe = __import__("app.services.job_manager", fromlist=["probe_media"]).probe_media
+
+    async def dvd_probe(path, timeout):
+        data = await original_probe(path, timeout)
+        data["embeddedSubtitles"][0]["codec"] = "dvd_subtitle"
+        return data
+
+    monkeypatch.setattr("app.services.job_manager.probe_media", dvd_probe)
+    response = client.post("/api/workpacks", json={"mediaPath": str(media_file), "taskType": "PREPARE_TRANSLATION"})
+    body = _wait(client, response.json()["jobId"])
+    assert body["status"] == "FAILED"
+    assert "DVD/VobSub" in body["errorMessage"]
+    job_dir = settings.data_root / "work" / "jobs" / body["jobId"]
+    assert not list(job_dir.glob("*.zip"))
+    assert not any(path.name.endswith(".mks") for path in job_dir.rglob("*"))
 
 
 def test_graphic_inspection_uses_timeline_without_export_and_leaves_no_directory(client, media_file, settings, monkeypatch):
@@ -240,3 +365,5 @@ def test_gui_exposes_only_three_polish_modes_and_config_is_v2(client):
                                            "Przygotuj do tłumaczenia"))
     assert "SYNC_AND_LANGUAGE_REVIEW" not in html and "INSPECT_SUBTITLES" not in html
     assert client.get("/api/workpacks/config").json()["schemaVersion"] == "subtitle-workpack-v2"
+    javascript = client.get("/static/app.js").text
+    assert "Pobierz pakiet do OCR i tłumaczenia" in javascript

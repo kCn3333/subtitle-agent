@@ -566,15 +566,10 @@ class JobManager:
             selected = next((item for item in english_ranking
                              if f"{item.get('sourceType')}:{item.get('streamIndex')}" == requested_reference), None)
         else:
-            eligible_english = [item for item in english_ranking
-                                if not requirements.require_text_english or item.get("type") == "text"]
+            eligible_english = [item for item in english_ranking if
+                                item.get("type") == "text" or requirements.accept_graphic_reference]
             if eligible_english and eligible_english[0].get("score", 0) > 0:
                 selected = eligible_english[0]
-            elif (requirements.require_text_english and english_ranking and
-                  english_ranking[0].get("score", 0) > 0):
-                # Keep the best graphic source visible in the report, but never
-                # pretend that it is a translation-ready text reference.
-                selected = english_ranking[0]
         margin = self.settings.workpack_reference_score_margin
         ambiguous = bool(selected and not requested_reference and len(english_ranking) > 1 and
                          selected.get("score", 0) - english_ranking[1].get("score", 0) < margin)
@@ -591,7 +586,7 @@ class JobManager:
             await self._emit(job_id, "WARNING", JobStatus.NO_ENGLISH_REFERENCE, warnings[-1], 40)
         reference_files: list[Path] = []
         if (selected and requirements.extract_reference and
-                (not requirements.require_text_english or selected.get("type") == "text") and
+                (selected.get("type") == "text" or requirements.accept_graphic_reference) and
                 not (requirements.name == "INSPECT" and selected.get("type") == "graphic")):
             await self._emit(job_id, "INFO", JobStatus.EXTRACTING_REFERENCE,
                              f"Ekstrakcja strumienia {selected.get('streamIndex')} ({selected.get('codec')})", 43)
@@ -641,7 +636,7 @@ class JobManager:
         graphic_reference_timeline = None
         legacy_pgs_timeline = None
         graphic_reference_timestamps: list[int] = []
-        if selected and selected.get("type") == "graphic" and not requirements.require_text_english:
+        if selected and selected.get("type") == "graphic" and reference_files:
             if selected.get("codec") == "dvd_subtitle" and selected_idx:
                 graphic_reference_timestamps = vobsub_timestamps(selected_idx)
                 graphic_reference_timeline = parse_vobsub_idx(
@@ -703,6 +698,13 @@ class JobManager:
                 "notice": "Hipotezy wymagają weryfikacji; nie są gotową synchronizacją.",
             })
         await self._emit(job_id, "INFO", JobStatus.BUILDING_MANIFEST, "Tworzenie manifestu bez ścieżek hosta", 78)
+        needs_ocr = bool(requirements.graphic_reference_requires_ocr and selected
+                         and selected.get("type") == "graphic" and reference_files)
+        if needs_ocr:
+            warnings.append(
+                "Angielska referencja jest graficzna. Pakiet jest kompletny, "
+                "ale przed tłumaczeniem wymaga OCR."
+            )
         reference_entry = None
         if selected:
             reference_entry = {key: selected.get(key) for key in ("streamIndex", "codec", "type", "language", "title", "default", "forced", "hearingImpaired", "score", "reasons")}
@@ -714,7 +716,10 @@ class JobManager:
                                                 (graphic_reference_timeline or {}).get("firstMs")),
                                     "lastMs": ((reference_timeline or {}).get("last_ms") if reference_timeline else
                                                (graphic_reference_timeline or {}).get("lastMs"))})
-        expected_kind = "AI-Synced" if requirements.name == "PREPARE_SYNC" else "AI-Reviewed"
+            if requirements.name == "PREPARE_TRANSLATION":
+                reference_entry["requiresOcr"] = needs_ocr
+        expected_kind = ("AI-Synced" if requirements.name == "PREPARE_SYNC" else
+                         "AI-Translated" if requirements.name == "PREPARE_TRANSLATION" else "AI-Reviewed")
         expected = f"{safe_filename(media_path.stem)}.{expected_kind}-v001.pl.srt"
         incompatible_polish = [item for item in polish_ranking
                                if item.get("sourceType") == "external"
@@ -731,14 +736,20 @@ class JobManager:
                                         "preserve_text": requirements.name == "PREPARE_SYNC",
                                         "modify_media": False},
                     "warnings": warnings, "files": []}
+        if requirements.name == "PREPARE_TRANSLATION":
+            manifest["nextAction"] = "OCR_AND_TRANSLATE" if needs_ocr else "TRANSLATE"
         (job_dir / "REQUEST.md").write_text(request_text(task_type, manifest), encoding="utf-8")
         common_files = {"manifest.json", "REQUEST.md", "analysis/media-summary.json",
                         "analysis/subtitle-streams.json"}
         if requirements.name == "INSPECT":
             package_files = common_files | {"analysis/inspection-report.json"}
         elif requirements.name == "PREPARE_TRANSLATION":
-            package_files = common_files | {path.relative_to(job_dir).as_posix() for path in reference_files
-                                           if path.name == "selected.eng.srt"}
+            package_files = common_files | {"analysis/source-ranking.json"}
+            package_files |= {path.relative_to(job_dir).as_posix() for path in reference_files}
+            if reference_timeline:
+                package_files.add("analysis/reference-timeline.json")
+            if graphic_reference_timeline:
+                package_files.add("analysis/reference-graphic-timeline.json")
         else:
             package_files = common_files | {"analysis/inspection-report.json", "analysis/timing-comparison.json"}
             package_files |= {path.relative_to(job_dir).as_posix() for path in reference_files
@@ -746,12 +757,11 @@ class JobManager:
             package_files |= {item["archiveName"] for item in polish}
         manifest["files"] = sorted(package_files | {"checksums.sha256"})
         write_json(job_dir / "manifest.json", manifest)
-        needs_ocr = bool(requirements.require_text_english and selected and selected.get("type") == "graphic")
         archive = None
         archive_hash = None
         version = 0
         omitted_files: list[str] = []
-        if not needs_ocr and requirements.name != "INSPECT":
+        if requirements.name != "INSPECT":
             await asyncio.to_thread(remove_previous_archives, self.settings.data_root / "work" / "jobs", job_dir)
             await self._emit(job_id, "INFO", JobStatus.BUILDING_WORKPACK, "Pakowanie ZIP i obliczanie SHA-256", 90)
             archive, version, archive_hash, omitted_files = await asyncio.to_thread(
@@ -764,10 +774,10 @@ class JobManager:
                      "files": manifest["files"], "warnings": warnings, "omittedFiles": omitted_files,
                      "referenceAmbiguous": ambiguous} if archive else None)
         blocking_requirements: list[str] = []
-        if requirements.require_english and not requirements.require_text_english and not selected:
+        if requirements.require_english and (
+            not selected or (requirements.name == "PREPARE_TRANSLATION" and not reference_files)
+        ):
             blocking_requirements.append("Brak wymaganej angielskiej referencji")
-        if requirements.require_text_english and (not selected or selected.get("type") != "text" or not selected_srt):
-            blocking_requirements.append("Brak wymaganej tekstowej referencji angielskiej")
         if requirements.require_polish and not polish:
             blocking_requirements.append(
                 "Znaleziony polski plik prawdopodobnie pochodzi z innej wersji lub produkcji. "
@@ -790,6 +800,8 @@ class JobManager:
                   "synchronizationHypotheses": hypotheses,
                   "workpack": workpack, "warnings": warnings, "incompleteReasons": blocking_requirements,
                   "mediaDirectoryModified": False}
+        if requirements.name == "PREPARE_TRANSLATION":
+            report.update({"requiresOcr": needs_ocr, "nextAction": manifest["nextAction"]})
         self._save_report(job_id, report, str(media_path))
         if requirements.name == "INSPECT":
             await asyncio.to_thread(remove_job_directory, self.settings.data_root / "work" / "jobs", job_dir)
@@ -798,7 +810,7 @@ class JobManager:
                     JobStatus.WORKPACK_INCOMPLETE if blocking_requirements else JobStatus.WORKPACK_READY)
         message = ("Inspekcja zakończona; raport zapisano bez artefaktów plikowych"
                    if terminal == JobStatus.INSPECTION_READY else
-                   "Translacja wymaga OCR angielskiej ścieżki graficznej" if needs_ocr else
+                   "Pakiet do OCR i tłumaczenia jest gotowy." if needs_ocr else
                    blocking_requirements[0] if blocking_requirements else
                    f"Workpack gotowy: {archive.name} ({archive.stat().st_size} B)")
         await self._emit(job_id, "WARNING" if terminal != JobStatus.WORKPACK_READY else "SUCCESS", terminal, message, 100)

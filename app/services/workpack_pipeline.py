@@ -11,7 +11,8 @@ class PipelineRequirements:
     extract_reference: bool
     copy_polish: bool
     require_english: bool
-    require_text_english: bool
+    accept_graphic_reference: bool
+    graphic_reference_requires_ocr: bool
     require_polish: bool
     build_hypotheses: bool
 
