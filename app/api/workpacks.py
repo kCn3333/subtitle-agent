@@ -23,7 +23,8 @@ async def config(request: Request) -> dict:
             "referenceScoreMargin": settings.workpack_reference_score_margin,
             "maxReferenceAlternatives": settings.workpack_max_reference_alternatives,
             "maxPolishCandidates": settings.workpack_max_polish_candidates,
-            "maxArchiveBytes": settings.workpack_max_archive_bytes, "maxFiles": settings.workpack_max_files}
+            "maxArchiveBytes": settings.workpack_max_archive_bytes, "maxFiles": settings.workpack_max_files,
+            "ocrWorkerEnabled": settings.ocr_worker_url is not None}
 
 
 @router.post("", status_code=status.HTTP_202_ACCEPTED)

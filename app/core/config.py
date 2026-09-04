@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     workpack_cleanup_interval_hours: int = 6
     ffprobe_timeout_seconds: float = 30
     ffmpeg_timeout_seconds: float = 600
+    ocr_worker_url: str | None = None
+    ocr_timeout_seconds: float = 900
+    ocr_max_output_bytes: int = 20 * 1024 * 1024
     alignment_min_scale: float = 0.94
     alignment_max_scale: float = 1.06
     alignment_max_segments: int = 3
@@ -70,12 +73,22 @@ class Settings(BaseSettings):
             return [Path(item.strip()) for item in value.split(separator) if item.strip()]
         return value
 
-    @field_validator("ffprobe_timeout_seconds", "ffmpeg_timeout_seconds")
+    @field_validator("ffprobe_timeout_seconds", "ffmpeg_timeout_seconds", "ocr_timeout_seconds")
     @classmethod
     def positive_timeout(cls, value: float) -> float:
         if value <= 0:
             raise ValueError("Timeout must be greater than zero")
         return value
+
+    @field_validator("ocr_worker_url")
+    @classmethod
+    def internal_ocr_url(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        normalized = value.rstrip("/")
+        if not normalized.startswith("http://"):
+            raise ValueError("OCR_WORKER_URL must use internal plain HTTP")
+        return normalized
 
     @field_validator("max_concurrent_jobs")
     @classmethod
@@ -94,7 +107,7 @@ class Settings(BaseSettings):
 
     @field_validator("workpack_reference_score_margin", "workpack_max_reference_alternatives",
                      "workpack_max_polish_candidates", "workpack_max_archive_bytes", "workpack_max_files",
-                     "workpack_retention_hours", "workpack_cleanup_interval_hours")
+                     "workpack_retention_hours", "workpack_cleanup_interval_hours", "ocr_max_output_bytes")
     @classmethod
     def positive_workpack_limit(cls, value: int) -> int:
         if value < 1:

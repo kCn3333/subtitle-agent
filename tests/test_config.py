@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from app.core.config import Settings
 
 
@@ -30,6 +32,15 @@ def test_prefixed_media_roots_accept_colon_separator(monkeypatch):
 def test_default_ffmpeg_timeout_is_ten_minutes(monkeypatch):
     monkeypatch.delenv("FFMPEG_TIMEOUT_SECONDS", raising=False)
     assert Settings().ffmpeg_timeout_seconds == 600
+
+
+def test_ocr_worker_is_optional_and_requires_internal_http():
+    assert Settings(_env_file=None).ocr_worker_url is None
+    assert Settings(_env_file=None, ocr_worker_url="http://subtitle-ocr-worker:8090/").ocr_worker_url == (
+        "http://subtitle-ocr-worker:8090"
+    )
+    with pytest.raises(ValueError):
+        Settings(_env_file=None, ocr_worker_url="https://external.example")
 
 
 def test_missing_openai_key_does_not_break_settings(monkeypatch):

@@ -22,7 +22,7 @@ polish/                       wyłącznie kandydaci paczki synchronizacyjnej
 analysis/                     raport v2 i pliki techniczne wymagane przez dany tryb
 ```
 
-SubRip, ASS, SSA, WebVTT i mov_text otrzymują tekstową kopię SRT. PGS jest eksportowany jako `.sup` wraz z timeline pakietów, a DVD/VobSub jako kompletna para `.idx` + `.sub`. Nie jest wykonywany OCR. Translacja mająca wyłącznie graficzną referencję kończy się `NEEDS_OCR` i nie publikuje pozornie gotowej paczki tekstowej. Hipotezy synchronizacji są tylko diagnostyczne i słaby wynik nie jest przedstawiany jako gotowa synchronizacja.
+SubRip, ASS, SSA, WebVTT i mov_text otrzymują tekstową kopię SRT. PGS jest eksportowany jako `.sup` wraz z timeline pakietów, a DVD/VobSub jako kompletna para `.idx` + `.sub`. Jeżeli skonfigurowano worker CPU, graficzna referencja jest dodatkowo rozpoznawana do `selected.eng.ocr.srt`. Bez workera lub po błędzie OCR translacja kończy się `NEEDS_OCR` i zachowuje oryginalne pliki graficzne w paczce. Hipotezy synchronizacji są tylko diagnostyczne i słaby wynik nie jest przedstawiany jako gotowa synchronizacja.
 
 Ranking preferuje angielski, pełne dialogi, format tekstowy i tytuł `Full Dialogue`. Mocno obniża ocenę commentary, forced, SDH/CC, hearing impaired, signs/songs/foreign parts oraz `Japanese Parts Only`. Gdy dwie najlepsze ścieżki dzieli mniej niż skonfigurowany margines, GUI oznacza wybór jako niejednoznaczny i pozwala przebudować paczkę z innym wykrytym strumieniem bez ponownego ffprobe.
 
@@ -32,7 +32,7 @@ Każdy plik otrzymuje ustrukturyzowaną tożsamość `MOVIE`, `EPISODE` albo `UN
 
 ### Pipeline'y workpacków i raport inspekcji v2
 
-Przygotowanie materiałów ma trzy niezależne profile. `INSPECT` tworzy raport techniczny bez ZIP-a i kończy się `INSPECTION_READY`; jego tymczasowy katalog roboczy jest usuwany po zapisaniu raportu w SQLite. `PREPARE_SYNC` wymaga angielskiej referencji oraz co najmniej jednego jednoznacznie dopasowanego kandydata PL. `PREPARE_TRANSLATION` wymaga tekstowej referencji EN i nie wymaga napisów PL. Status `WORKPACK_INCOMPLETE` wynika wyłącznie z niespełnionych wymagań wybranego profilu; ostrzeżenia diagnostyczne pozostają informacyjne.
+Przygotowanie materiałów ma trzy niezależne profile. `INSPECT` tworzy raport techniczny bez ZIP-a i kończy się `INSPECTION_READY`; jego tymczasowy katalog roboczy jest usuwany po zapisaniu raportu w SQLite. `PREPARE_SYNC` wymaga angielskiej referencji oraz co najmniej jednego jednoznacznie dopasowanego kandydata PL. `PREPARE_TRANSLATION` nie wymaga napisów PL. Referencję tekstową pakuje bezpośrednio, a graficzną VobSub/PGS może rozpoznać opcjonalny worker CPU. Bez workera lub po kontrolowanym błędzie nadal powstaje pakiet `NEEDS_OCR` z oryginalną referencją. Status `WORKPACK_INCOMPLETE` wynika wyłącznie z niespełnionych wymagań wybranego profilu; ostrzeżenia diagnostyczne pozostają informacyjne.
 
 Raport v2 zawiera tożsamość medium, parametry techniczne z dokładnym ułamkiem FPS, wszystkie ścieżki osadzone, rankingi z uzasadnieniami, zaakceptowanych i odrzuconych kandydatów PL, statystyki oraz błędy struktury SRT. Dla synchronizacji zapisuje wyłącznie hipotezę modelu wraz z liczbą kotwic, rozrzutem, pokryciem i pewnością. Pole `sufficientAnchors=false` oznacza, że wyniku nie wolno traktować jako gotowej synchronizacji.
 
@@ -40,7 +40,7 @@ Nowe GUI korzysta z `POST /api/tasks` z polami `mediaPath` i `mode`. Odczyt oraz
 
 ## Uruchomienie
 
-Wymagania: Python 3.12, ffmpeg/ffprobe, MKVToolNix (`mkvextract`) oraz opcjonalnie Docker.
+Wymagania deweloperskie: Python 3.12, ffmpeg/ffprobe, MKVToolNix (`mkvextract`) oraz Docker lub Podman do zbudowania opcjonalnego workera OCR.
 
 ```bash
 python3.12 -m venv .venv
@@ -49,13 +49,14 @@ pip install -r requirements-dev.txt
 DATA_ROOT=./data SUBTITLE_AGENT_APP_MODE=WORKPACK uvicorn app.main:app --host 0.0.0.0 --port 8080
 pytest -q
 docker build --platform linux/amd64 -t subtitle-agent:local .
+docker build --platform linux/amd64 -f Dockerfile.ocr -t subtitle-agent-ocr:local .
 ```
 
-Obraz produkcyjny: `ghcr.io/kcn3333/subtitle-agent:latest`. Kontener działa jako `10001:10001`.
+Obrazy produkcyjne: `ghcr.io/kcn3333/subtitle-agent:latest` oraz opcjonalny CPU-only `ghcr.io/kcn3333/subtitle-agent-ocr:latest`. Kontenery działają odpowiednio jako `10001:10001` i `10002:10002`.
 
 ### Portainer
 
-Wybierz **Stacks → Add stack → Web editor**, wklej `compose.example.yml`, zmień tylko hostowe ścieżki `/media/movies` i `/media/shows`, a następnie wdroż. Oba mounty muszą pozostać `:ro`; `/data` jest jedynym zapisywalnym wolumenem. Domyślny stack nie zawiera `/publish`, sekretu OpenAI, mountu RW ani rozszerzonych capabilities.
+Wybierz **Stacks → Add stack → Web editor**, wklej `compose.example.yml`, zmień tylko hostowe ścieżki `/media/movies` i `/media/shows`, a następnie wdroż. Oba mounty muszą pozostać `:ro`; `/data` jest jedynym zapisywalnym wolumenem. Worker OCR nie ma mountu do mediów ani portu hostowego, komunikuje się tylko w prywatnej sieci Compose i w spoczynku nie uruchamia Tesseracta. Domyślny stack nie zawiera `/publish`, sekretu OpenAI, mountu RW ani rozszerzonych capabilities.
 
 ## Konfiguracja WORKPACK
 
@@ -67,6 +68,9 @@ Wybierz **Stacks → Add stack → Web editor**, wklej `compose.example.yml`, zm
 | `MAX_CONCURRENT_JOBS` | `1` | Równoległe zadania |
 | `FFPROBE_TIMEOUT_SECONDS` | `30` | Limit ffprobe |
 | `FFMPEG_TIMEOUT_SECONDS` | `600` | Limit ekstrakcji |
+| `OCR_WORKER_URL` | brak | Wewnętrzny URL workera, np. `http://subtitle-ocr-worker:8090` |
+| `OCR_TIMEOUT_SECONDS` | `900` | Limit jednego zadania OCR CPU |
+| `OCR_MAX_OUTPUT_BYTES` | `20971520` | Maksymalny rozmiar wyniku SRT |
 | `WORKPACK_REFERENCE_SCORE_MARGIN` | `10` | Margines niejednoznaczności |
 | `WORKPACK_MAX_REFERENCE_ALTERNATIVES` | `2` | Maksymalna liczba alternatyw |
 | `WORKPACK_INCLUDE_REFERENCE_ALTERNATIVES` | `true` | Dołączanie alternatyw przy remisie |
@@ -92,10 +96,10 @@ W `WORKPACK` endpointy semantyczne, synchronizujące i publikujące etapów 1–
 
 ## Prywatność i bezpieczeństwo
 
-Archiwum nie zawiera filmu, audio, sekretów, pełnych ścieżek hosta ani surowego raportu ffprobe. Nazwy wpisów są względne i sanityzowane; symlinki, urządzenia i traversal `../` nie są pakowane. Pliki PL zachowują bajty i kodowanie źródła. Wszystkie artefakty powstają wyłącznie w katalogu UUID pod `/data`; `/media` nie jest modyfikowane. Tryb WORKPACK nie wykonuje żadnego requestu OpenAI i nie generuje kosztów API.
+Archiwum nie zawiera filmu, audio, sekretów, pełnych ścieżek hosta ani surowego raportu ffprobe. Nazwy wpisów są względne i sanityzowane; symlinki, urządzenia i traversal `../` nie są pakowane. Pliki PL zachowują bajty i kodowanie źródła. Wszystkie artefakty powstają wyłącznie w katalogu UUID pod `/data`; `/media` nie jest modyfikowane. Tryb WORKPACK nie wykonuje żadnego requestu OpenAI i nie generuje kosztów API. Worker przyjmuje wyłącznie ZIP z nazwami `selected.eng.idx`, `selected.eng.sub` albo `selected.eng.sup`; działa bez dostępu do mediów, jako użytkownik nieuprzywilejowany i zapisuje pliki tylko w tymczasowym `tmpfs`.
 
 ## Ograniczenia
 
-Brak OCR oznacza, że treść PGS/VobSub nie jest dostępna jako tekst. Jakość hipotez deterministycznych zależy od liczby i zgodności segmentów. Limity archiwum mogą skutkować statusem `WORKPACK_INCOMPLETE` z jawną listą ostrzeżeń.
+OCR opiera się na przypiętym tagu `seconv v5.2.0-rc2` (commit `b236dc5bb369e92b2b5b996dc246ac6d4c632f2c`, zweryfikowany SHA-256 artefaktu) i Tesseract 5 z angielskimi danymi językowymi. Jest przeznaczony do pracy na CPU; nietypowe fonty i słabe bitmapy nadal mogą wymagać korekty w ChatGPT. Każdy udany wynik otrzymuje ocenę `GOOD`, `WARNING` albo `POOR` oraz `analysis/ocr-quality-report.json`; niepoprawny strukturalnie SRT powoduje bezpieczny powrót do `NEEDS_OCR`. Jakość hipotez deterministycznych zależy od liczby i zgodności segmentów. Limity archiwum mogą skutkować statusem `WORKPACK_INCOMPLETE` z jawną listą ostrzeżeń.
 
 GitHub Actions buduje i testuje obraz `linux/amd64`. Publiczne repozytorium nie gwarantuje publicznego GHCR; po pierwszej publikacji właściciel może jednorazowo ustawić pakiet jako **Public** w GitHub Packages.

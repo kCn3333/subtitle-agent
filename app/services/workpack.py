@@ -253,6 +253,14 @@ def request_text(task: WorkpackTaskType, manifest: dict) -> str:
                 "Opisz ustalenia na podstawie plików analysis/ i manifest.json.\n\n"
                 f"## Ostrzeżenia\n{warnings}\n")
     reference = manifest.get("reference") or {}
+    if task == WorkpackTaskType.PREPARE_TRANSLATION and reference.get("ocr"):
+        return (f"# Zadanie: {task.value}\n\n"
+                "Angielska referencja graficzna została rozpoznana lokalnie przez OCR i zapisana jako "
+                "`reference/selected/selected.eng.ocr.srt`. Sprawdź oraz popraw błędy OCR, a następnie "
+                "wykonaj kompletne profesjonalne tłumaczenie na język polski. Zachowaj timestampy "
+                "rozpoznanej referencji.\n\n"
+                f"Zapisz wynik jako `{manifest['expected_output']['filename']}`.\n\n"
+                f"## Ostrzeżenia\n{warnings}\n")
     if task == WorkpackTaskType.PREPARE_TRANSLATION and reference.get("requiresOcr"):
         codec = reference.get("codec")
         if codec == "dvd_subtitle":

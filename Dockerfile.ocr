@@ -1,0 +1,38 @@
+FROM python:3.12-slim-bookworm
+
+ARG SECONV_VERSION=v5.2.0-rc2
+ARG SECONV_COMMIT=b236dc5bb369e92b2b5b996dc246ac6d4c632f2c
+ARG SECONV_SHA256=fc528c07a4f347d688921e59cab69a66c2ccf48c892657d59f56ec935c081ced
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    HOME=/tmp \
+    XDG_CACHE_HOME=/tmp/.cache
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl libfontconfig1 libfreetype6 tesseract-ocr tesseract-ocr-eng \
+    && curl -fsSL -o /tmp/seconv.tar.gz \
+        "https://github.com/SubtitleEdit/subtitleedit/releases/download/${SECONV_VERSION}/SeConv-Linux-x64.tar.gz" \
+    && echo "${SECONV_SHA256}  /tmp/seconv.tar.gz" | sha256sum -c - \
+    && mkdir -p /opt/seconv && tar -xzf /tmp/seconv.tar.gz -C /opt/seconv \
+    && mkdir -p /opt/seconv/llama.cpp/models \
+    && chmod +x /opt/seconv/seconv \
+    && test "$(/opt/seconv/seconv --version)" = "5.2.0-rc2" \
+    && tesseract --version >/dev/null \
+    && rm -rf /tmp/seconv.tar.gz /var/lib/apt/lists/* \
+    && groupadd --system --gid 10002 ocr-worker \
+    && useradd --system --uid 10002 --gid ocr-worker --home-dir /app ocr-worker
+
+LABEL org.opencontainers.image.source="https://github.com/SubtitleEdit/subtitleedit" \
+      org.opencontainers.image.version="${SECONV_VERSION}" \
+      org.opencontainers.image.revision="${SECONV_COMMIT}"
+
+WORKDIR /app
+COPY requirements-ocr.txt .
+RUN pip install --no-cache-dir -r requirements-ocr.txt
+COPY ocr_worker ocr_worker
+
+USER 10002:10002
+EXPOSE 8090
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD ["python", "-c", "import json,urllib.request; d=json.load(urllib.request.urlopen('http://127.0.0.1:8090/health', timeout=3)); assert d['status']=='ok'"]
+CMD ["uvicorn", "ocr_worker.main:app", "--host", "0.0.0.0", "--port", "8090"]

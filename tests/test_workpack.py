@@ -345,3 +345,5 @@ def test_compose_has_no_openai_publish_or_rw_mount():
     compose=Path('compose.example.yml').read_text()
     assert 'SUBTITLE_AGENT_APP_MODE: WORKPACK' in compose
     assert 'OPENAI_API_KEY' not in compose and '/publish' not in compose and ':rw' not in compose
+    assert 'subtitle-ocr-worker:' in compose and 'OCR_WORKER_URL: http://subtitle-ocr-worker:8090' in compose
+    assert 'cpus: 2.0' in compose and 'mem_limit: 1g' in compose

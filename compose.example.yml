@@ -16,6 +16,9 @@ services:
       MAX_CONCURRENT_JOBS: 1
       FFPROBE_TIMEOUT_SECONDS: 30
       FFMPEG_TIMEOUT_SECONDS: 600
+      OCR_WORKER_URL: http://subtitle-ocr-worker:8090
+      OCR_TIMEOUT_SECONDS: 900
+      OCR_MAX_OUTPUT_BYTES: 20971520
       WORKPACK_REFERENCE_SCORE_MARGIN: 10
       WORKPACK_MAX_REFERENCE_ALTERNATIVES: 2
       WORKPACK_INCLUDE_REFERENCE_ALTERNATIVES: "true"
@@ -33,5 +36,34 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    depends_on:
+      subtitle-ocr-worker:
+        condition: service_healthy
+  subtitle-ocr-worker:
+    image: ghcr.io/kcn3333/subtitle-agent-ocr:latest
+    container_name: subtitle-ocr-worker
+    restart: unless-stopped
+    expose:
+      - "8090"
+    environment:
+      OCR_TIMEOUT_SECONDS: 900
+      OCR_MAX_INPUT_BYTES: 104857600
+      OCR_MAX_OUTPUT_BYTES: 20971520
+      TZ: Europe/Warsaw
+    read_only: true
+    tmpfs:
+      - /tmp:size=512m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cpus: 2.0
+    mem_limit: 1g
+    healthcheck:
+      test: ["CMD", "python", "-c", "import json,urllib.request; d=json.load(urllib.request.urlopen('http://127.0.0.1:8090/health', timeout=3)); assert d['status']=='ok'"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
 volumes:
   subtitle_agent_data:
