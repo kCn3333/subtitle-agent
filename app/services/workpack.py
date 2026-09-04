@@ -6,12 +6,13 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 from app.models.job import WorkpackTaskType
-from app.services.alignment import StructuralAnchorProvider, fit_models, parse_cues, public_model, quality, select_model
+from app.services.alignment import Cue, StructuralAnchorProvider, fit_models, parse_cues, public_model, quality, select_model
 from app.services.process_runner import run_process
 from app.services.subtitle_extraction import SubtitleExtractionResult, extract_subtitle
 
 SCHEMA_VERSION = "subtitle-workpack-v2"
 SAFE_NAME = re.compile(r"[^\w .()\[\]-]+", re.UNICODE)
+VOBSUB_TIMESTAMP = re.compile(r"^timestamp:\s*(\d{2}):(\d{2}):(\d{2}):(\d{3}),\s*filepos:", re.MULTILINE)
 
 
 def sha256_file(path: Path) -> str:
@@ -44,6 +45,26 @@ def timeline(path: Path, source: str) -> dict:
     } for cue in cues]
     return {"cue_count": len(entries), "first_ms": entries[0]["start_ms"] if entries else None,
             "last_ms": entries[-1]["end_ms"] if entries else None, "cues": entries, "warnings": []}
+
+
+def vobsub_timestamps(path: Path) -> list[int]:
+    content = path.read_text(encoding="utf-8", errors="replace")
+    return [((int(hours) * 60 + int(minutes)) * 60 + int(seconds)) * 1000 + int(milliseconds)
+            for hours, minutes, seconds, milliseconds in VOBSUB_TIMESTAMP.findall(content)]
+
+
+def parse_vobsub_idx(path: Path, media_duration_ms: int | None = None) -> dict:
+    timestamps = vobsub_timestamps(path)
+    first = timestamps[0] if timestamps else None
+    last = timestamps[-1] if timestamps else None
+    return {"cueCount": len(timestamps), "firstMs": first, "lastMs": last,
+            "durationCoverage": last / media_duration_ms if last is not None and media_duration_ms else None}
+
+
+def _graphic_cues(timestamps: list[int], source: str) -> list[Cue]:
+    return [Cue(f"{source}:{number}", number, start, timestamps[number] if number < len(timestamps) else start + 1,
+                max(1, (timestamps[number] if number < len(timestamps) else start + 1) - start), "", "", source)
+            for number, start in enumerate(timestamps, 1)]
 
 
 def media_summary(media: dict) -> dict:
@@ -79,15 +100,19 @@ def inspection_report(media: dict, english_ranking: list[dict], polish_ranking: 
                       rejected: list[dict], hypotheses: list[dict], ignored_files: int = 0) -> dict:
     duration = media.get("durationSeconds") or 0
     polish = []
+    incompatible = []
     for item in polish_ranking:
         analysis = item.get("analysis") or {}
         language = (item.get("languageHint") or analysis.get("detected_language") or "").casefold()
         if item.get("sourceType") != "external" or language not in {"pl", "pol", "polish"}:
             continue
-        polish.append({
+        details = {
             "name": item.get("name"), "score": item.get("score"), "rankingReasons": item.get("reasons", []),
-            "matchConfidence": item.get("matchConfidence"), "matchReasons": item.get("matchReasons", []),
-            "matchAutomatic": item.get("matchAutomatic"), "segments": analysis.get("segment_count"),
+            "identityMatch": item.get("identityMatch"),
+            "timingCompatibility": item.get("timingCompatibility"),
+            "eligibleByDefault": item.get("eligibleByDefault", False),
+            "compatibilityWarnings": item.get("compatibilityWarnings", []),
+            "reasonCode": item.get("reasonCode"), "segments": analysis.get("segment_count"),
             "firstTimestamp": analysis.get("first_time"), "lastTimestamp": analysis.get("last_time"),
             "movieCoverage": ((analysis.get("last_time") or 0) / duration if duration else None),
             "endOverrunSeconds": max(0, (analysis.get("last_time") or 0) - duration) if duration else None,
@@ -97,7 +122,8 @@ def inspection_report(media: dict, english_ranking: list[dict], polish_ranking: 
                 "overlappingSegments": analysis.get("overlapping_segments", 0),
                 "monotonic": analysis.get("monotonic"), "warnings": analysis.get("warnings", []),
             },
-        })
+        }
+        (incompatible if item.get("timingCompatibility") == "INCOMPATIBLE" else polish).append(details)
     english_keys = ("streamIndex", "codec", "language", "title", "type", "score", "reasons",
                     "default", "forced", "hearingImpaired")
     rejected_polish = [item for item in rejected if item.get("languageHint") in {"pl", "pol", "polish"}]
@@ -105,7 +131,8 @@ def inspection_report(media: dict, english_ranking: list[dict], polish_ranking: 
         "reportVersion": 2, "mediaIdentity": media.get("identity"), "media": media_summary(media),
         "embeddedSubtitleTracks": subtitle_streams(media),
         "englishRanking": [{key: item.get(key) for key in english_keys} for item in english_ranking],
-        "polishCandidates": polish, "rejectedPolishCandidates": rejected_polish,
+        "polishCandidates": polish, "incompatiblePolishCandidates": incompatible,
+        "rejectedPolishCandidates": rejected_polish,
         "ignoredUnrelatedSubtitleFiles": ignored_files, "synchronizationHypotheses": hypotheses,
     }
 
@@ -152,10 +179,16 @@ def copy_polish_candidates(ranking: list[dict], target: Path, maximum: int) -> t
     return included, omitted
 
 
-def diagnostic_hypotheses(reference_path: Path | None, polish: list[dict], job_dir: Path, duration_ms: int) -> list[dict]:
-    if not reference_path or not reference_path.suffix.lower() == ".srt":
+def diagnostic_hypotheses(reference_path: Path | None, polish: list[dict], job_dir: Path, duration_ms: int,
+                          graphic_timestamps: list[int] | None = None) -> list[dict]:
+    if reference_path and reference_path.suffix.lower() == ".srt":
+        english = parse_cues(reference_path, "reference")
+        structural_only = False
+    elif graphic_timestamps:
+        english = _graphic_cues(graphic_timestamps, "graphic-reference")
+        structural_only = True
+    else:
         return []
-    english = parse_cues(reference_path, "reference")
     results = []
     for item in polish:
         candidate = job_dir / item["archiveName"] if item.get("archiveName") else Path(item["path"])
@@ -166,21 +199,30 @@ def diagnostic_hypotheses(reference_path: Path | None, polish: list[dict], job_d
         anchors = StructuralAnchorProvider().provide(english, cues, duration_ms, {})
         models = fit_models(anchors)
         selected = select_model(models)
-        grade = quality(selected)
+        measured_grade = quality(selected)
+        grade = "LOW" if structural_only and measured_grade in {"HIGH", "MEDIUM"} else measured_grade
         model_names = {"IDENTITY": "zgodne osie czasu", "GLOBAL_OFFSET": "stałe przesunięcie",
                        "AFFINE_DRIFT": "dryf liniowy", "PIECEWISE_LINEAR": "model odcinkowy"}
         results.append({
             "candidate": candidate_name, "originalName": item.get("originalName") or item.get("name"),
-            "matchConfidence": item.get("matchConfidence"), "matchReasons": item.get("matchReasons", []),
+            "identityMatch": item.get("identityMatch"),
+            "timingCompatibility": item.get("timingCompatibility"),
+            "eligibleByDefault": item.get("eligibleByDefault"),
+            "compatibilityWarnings": item.get("compatibilityWarnings", []),
+            "reasonCode": item.get("reasonCode"),
             "englishSegments": len(english), "polishSegments": len(cues), "anchorCount": len(anchors),
             "hypothesis": model_names.get((selected or {}).get("strategy"), "brak wiarygodnej hipotezy"),
             "offsetMs": (selected or {}).get("offsetMs"), "spreadMs": (selected or {}).get("p95ResidualMs"),
             "analysisCoverage": (selected or {}).get("coverage", 0), "confidence": grade,
-            "sufficientAnchors": grade in {"HIGH", "MEDIUM"},
+            "sufficientAnchors": not structural_only and grade in {"HIGH", "MEDIUM"},
+            "structuralOnly": structural_only,
             "verification": "Porównaj segmenty z początku, środka i końca",
-            "models": [{**public_model(model), "quality": quality(model),
-                        "rejection_reasons": [] if quality(model) in {"HIGH", "MEDIUM"} else
-                        ["Za mało wiarygodnych kotwic do uznania hipotezy za synchronizację"]}
+            "models": [{**public_model(model),
+                        "quality": ("LOW" if structural_only and quality(model) in {"HIGH", "MEDIUM"}
+                                    else quality(model)),
+                        "rejection_reasons": (["Analiza wyłącznie strukturalna wymaga weryfikacji semantycznej"]
+                                              if structural_only else [] if quality(model) in {"HIGH", "MEDIUM"} else
+                                              ["Za mało wiarygodnych kotwic do uznania hipotezy za synchronizację"])}
                        for model in models],
         })
     return results
@@ -211,8 +253,10 @@ def request_text(task: WorkpackTaskType, manifest: dict) -> str:
                 "Opisz ustalenia na podstawie plików analysis/ i manifest.json.\n\n"
                 f"## Ostrzeżenia\n{warnings}\n")
     return (f"# Zadanie: {task.value}\n\n{REQUESTS[task]}\n\nZwróć kompletny, poprawny plik UTF-8 SRT o nazwie "
-            f"`{manifest['expected_output']['filename']}`. Zachowaj prawidłową numerację i timing. "
-            "Manifest `manifest.json` jest źródłem danych technicznych.\n\n## Polskie materiały\n"
+            f"`{manifest['expected_output']['filename']}`. "
+            + ("Zachowaj tekst i skoryguj timing. " if task == WorkpackTaskType.PREPARE_SYNC
+               else "Zachowaj prawidłową numerację i timing. ")
+            + "Manifest `manifest.json` jest źródłem danych technicznych.\n\n## Polskie materiały\n"
             f"{polish}\n\n## Ostrzeżenia\n{warnings}\n")
 
 

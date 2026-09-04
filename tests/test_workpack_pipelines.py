@@ -94,11 +94,74 @@ def test_sync_is_ready_with_english_and_matched_polish(client, media_file, monke
                          "analysis/timing-comparison.json", "checksums.sha256"}
         manifest = json.loads(archive.read("manifest.json"))
         assert manifest["schema_version"] == "subtitle-workpack-v2"
+        assert manifest["expected_output"]["preserve_timing"] is False
+        assert manifest["expected_output"]["preserve_text"] is True
+        assert "AI-Synced" in manifest["expected_output"]["filename"]
         timing = json.loads(archive.read("analysis/timing-comparison.json"))
         assert timing["readySynchronization"] is False
         inspection = json.loads(archive.read("analysis/inspection-report.json"))
         assert {"mediaIdentity", "media", "embeddedSubtitleTracks", "englishRanking",
                 "polishCandidates", "rejectedPolishCandidates", "synchronizationHypotheses"} <= inspection.keys()
+
+
+def test_same_episode_title_from_different_production_is_blocked(client, settings, monkeypatch):
+    media = settings.media_roots[0] / "Scenes From A Marriage - S01E01 - Innocence and Panic Bluray-1080p.mkv"
+    media.write_bytes(b"media")
+    subtitle = media.with_name("Scenes From A Marriage - S01E01 - Innocence and Panic Bluray-1080p.pol.srt")
+    cue_starts = [round(16_040 + index * (3_351_289 - 16_040) / 622) for index in range(623)]
+    subtitle.write_text("\n".join(
+        f"{number}\n{start // 3_600_000:02d}:{start // 60_000 % 60:02d}:{start // 1_000 % 60:02d},{start % 1_000:03d} --> "
+        f"{(start + 1_000) // 3_600_000:02d}:{(start + 1_000) // 60_000 % 60:02d}:"
+        f"{(start + 1_000) // 1_000 % 60:02d},{(start + 1_000) % 1_000:03d}\nTekst {number}\n"
+        for number, start in enumerate(cue_starts, 1)
+    ), encoding="utf-8")
+
+    async def probe(path, timeout):
+        reference = _embedded("graphic")
+        reference["codec"] = "dvd_subtitle"
+        return {"path": str(path), "name": path.name, "sizeBytes": path.stat().st_size,
+                "container": "matroska", "durationSeconds": 3130.388, "width": 1440, "height": 1080,
+                "avgFrameRate": "24000/1001", "rFrameRate": "24000/1001", "videoCodec": "hevc",
+                "audioTracks": [{"language": "swe"}], "embeddedSubtitles": [reference]}
+
+    async def extract(reference, media_path, target, timeout):
+        target.mkdir(parents=True, exist_ok=True)
+        index_path = target / "selected.eng.idx"
+        timestamps = [round(46_463 + index * (3_057_388 - 46_463) / 759) for index in range(760)]
+        index_path.write_text("# VobSub index file, v7\nid: en, index: 0\n" + "\n".join(
+            f"timestamp: {value // 3_600_000:02d}:{value // 60_000 % 60:02d}:"
+            f"{value // 1_000 % 60:02d}:{value % 1_000:03d}, filepos: {number:09X}"
+            for number, value in enumerate(timestamps)
+        ), encoding="utf-8")
+        sub_path = target / "selected.eng.sub"
+        sub_path.write_bytes(b"vobsub")
+        return SubtitleExtractionResult([index_path, sub_path], [])
+
+    monkeypatch.setattr("app.services.job_manager.probe_media", probe)
+    monkeypatch.setattr("app.services.job_manager.extract_embedded", extract)
+    response = client.post("/api/workpacks", json={"mediaPath": str(media), "taskType": "PREPARE_SYNC"})
+    body = _wait(client, response.json()["jobId"])
+    assert body["status"] == "WORKPACK_INCOMPLETE"
+    assert body["report"]["polishCandidates"] == []
+    suspect = body["report"]["incompatiblePolishCandidates"][0]
+    assert suspect["timingCompatibility"] == "INCOMPATIBLE"
+    assert suspect["reasonCode"] == "LIKELY_DIFFERENT_EDITION"
+    assert suspect["eligibleByDefault"] is False
+    assert body["report"]["incompleteReasons"] == [
+        "Znaleziony polski plik prawdopodobnie pochodzi z innej wersji lub produkcji. "
+        "Automatyczna synchronizacja została zablokowana."
+    ]
+    assert body["report"]["synchronizationHypotheses"][0]["structuralOnly"] is True
+    with zipfile.ZipFile(body["report"]["workpack"]["path"]) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+        assert manifest["reference"]["cueCount"] == 760
+        assert manifest["reference"]["firstMs"] == 46_463
+        assert manifest["reference"]["lastMs"] == 3_057_388
+        assert manifest["polish_candidates"] == []
+        assert manifest["expected_output"]["preserve_timing"] is False
+        assert manifest["expected_output"]["preserve_text"] is True
+        assert "AI-Synced" in manifest["expected_output"]["filename"]
+        assert not any(name.startswith("polish/") for name in archive.namelist())
 
 
 def test_workpack_process_error_is_visible_in_failed_event(client, media_file, monkeypatch):
