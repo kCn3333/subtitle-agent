@@ -103,7 +103,7 @@ jobs:
             -p 8090:8090 subtitle-agent-ocr:test
           trap 'docker logs subtitle-agent-ocr-test; docker rm -f subtitle-agent-ocr-test' EXIT
           for attempt in {1..30}; do
-            if python -c "import json,urllib.request; d=json.load(urllib.request.urlopen('http://127.0.0.1:8090/health')); assert d['status']=='ok' and d['cpuOnly'] is True and d['tesseractReady'] is True and 'eng' in d['languages'] and d['seconvVersion']=='5.2.0-rc2'"; then break; fi
+            if python -c "import json,urllib.request; d=json.load(urllib.request.urlopen('http://127.0.0.1:8090/health')); assert d['status']=='ok' and d['cpuOnly'] is True and d['tesseractReady'] is True and 'eng' in d['languages'] and d['seconvVersion']=='5.2.0-rc2'" 2>/dev/null; then break; fi
             if [ "$attempt" = 30 ]; then exit 1; fi
             sleep 1
           done
@@ -111,7 +111,7 @@ jobs:
           docker exec subtitle-agent-ocr-test tesseract --version
           test "$(docker inspect subtitle-agent-ocr-test --format '{{.HostConfig.Memory}}')" = "1073741824"
           test "$(docker inspect subtitle-agent-ocr-test --format '{{.HostConfig.NanoCpus}}')" = "2000000000"
-          mkdir -p /tmp/ocr-fixture
+          install -d -m 0777 /tmp/ocr-fixture
           base64 -d tests/fixtures/vobsub-reference.mkv.b64 > /tmp/ocr-fixture/reference.mkv
           docker run --rm -v /tmp/ocr-fixture:/fixture subtitle-agent:test \
             mkvextract /fixture/reference.mkv tracks 0:/fixture/selected.eng.idx
