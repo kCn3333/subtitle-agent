@@ -5,6 +5,7 @@ import zipfile
 from pathlib import Path
 
 from app.services.subtitle_extraction import SubtitleExtractionResult
+from app.services.ocr_client import OcrResult, OcrWorkerError
 from app.services.process_runner import ProcessExecutionError
 
 
@@ -212,6 +213,7 @@ def test_translation_requires_text_english_but_not_polish(client, media_file, mo
 
 def test_translation_vobsub_builds_downloadable_ocr_pack(client, media_file, settings, monkeypatch):
     _configure_probe(monkeypatch, "graphic")
+    settings.ocr_worker_url = "http://subtitle-ocr-worker:8090"
     calls = []
 
     async def fake_process(arguments, timeout, accepted_returncodes=(0,)):
@@ -233,6 +235,21 @@ def test_translation_vobsub_builds_downloadable_ocr_pack(client, media_file, set
         return type("Result", (), {"returncode": 0, "stderr": "", "stdout": ""})()
 
     monkeypatch.setattr("app.services.subtitle_extraction.run_process", fake_process)
+    def stamp(milliseconds):
+        return (f"{milliseconds // 3_600_000:02d}:{milliseconds // 60_000 % 60:02d}:"
+                f"{milliseconds // 1_000 % 60:02d},{milliseconds % 1_000:03d}")
+
+    ocr_cues = "\n".join(
+        f"{number}\n{stamp(46_463 + number * 3_000)} --> {stamp(47_463 + number * 3_000)}\nEnglish {number}\n"
+        for number in range(760)
+    ).encode()
+
+    async def recognize(paths, worker_url, timeout, maximum_output_bytes):
+        assert {path.name for path in paths} == {"selected.eng.idx", "selected.eng.sub"}
+        assert worker_url == settings.ocr_worker_url
+        return OcrResult(ocr_cues, "seconv+tesseract", 760, 0, 46_463, 3_057_388, 3_058_388, [])
+
+    monkeypatch.setattr("app.services.job_manager.recognize_reference", recognize)
     original_probe = __import__("app.services.job_manager", fromlist=["probe_media"]).probe_media
 
     async def dvd_probe(path, timeout):
@@ -244,10 +261,11 @@ def test_translation_vobsub_builds_downloadable_ocr_pack(client, media_file, set
     monkeypatch.setattr("app.services.job_manager.probe_media", dvd_probe)
     response = client.post("/api/workpacks", json={"mediaPath": str(media_file), "taskType": "PREPARE_TRANSLATION"})
     body = _wait(client, response.json()["jobId"])
-    assert body["status"] == "NEEDS_OCR"
+    assert body["status"] == "WORKPACK_READY"
     assert body["progress"] == 100
-    assert body["report"]["requiresOcr"] is True
-    assert body["report"]["nextAction"] == "OCR_AND_TRANSLATE"
+    assert body["report"]["requiresOcr"] is False
+    assert body["report"]["nextAction"] == "TRANSLATE_AND_REVIEW_OCR"
+    assert body["report"]["ocr"]["engine"] == "seconv+tesseract"
     assert body["report"]["incompleteReasons"] == []
     assert body["report"]["workpack"] is not None
     assert calls == ["ffmpeg", "mkvextract"]
@@ -256,14 +274,17 @@ def test_translation_vobsub_builds_downloadable_ocr_pack(client, media_file, set
     with zipfile.ZipFile(__import__("io").BytesIO(downloaded.content)) as archive:
         names = set(archive.namelist())
         assert {"reference/selected/selected.eng.idx", "reference/selected/selected.eng.sub",
-                "analysis/reference-graphic-timeline.json", "analysis/source-ranking.json"} <= names
+                "reference/selected/selected.eng.ocr.srt", "analysis/reference-graphic-timeline.json",
+                "analysis/reference-timeline.json", "analysis/source-ranking.json"} <= names
         assert not any(name.startswith("polish/") for name in names)
         timeline = json.loads(archive.read("analysis/reference-graphic-timeline.json"))
         assert timeline == {"cueCount": 760, "durationCoverage": 3057388 / 3130388,
                             "firstMs": 46463, "lastMs": 3057388}
         manifest = json.loads(archive.read("manifest.json"))
-        assert manifest["reference"]["requiresOcr"] is True
-        assert manifest["nextAction"] == "OCR_AND_TRANSLATE"
+        assert manifest["reference"]["requiresOcr"] is False
+        assert manifest["reference"]["ocr"]["cueCount"] == 760
+        assert manifest["nextAction"] == "TRANSLATE_AND_REVIEW_OCR"
+        assert "analysis/ocr-quality-report.json" in names
         assert "AI-Translated" in manifest["expected_output"]["filename"]
         checksum_lines = archive.read("checksums.sha256").decode().splitlines()
         for line in checksum_lines:
@@ -293,6 +314,62 @@ def test_translation_pgs_builds_ocr_pack_with_sup(client, media_file, monkeypatc
     with zipfile.ZipFile(body["report"]["workpack"]["path"]) as archive:
         assert "reference/selected/selected.eng.sup" in archive.namelist()
         assert "analysis/reference-graphic-timeline.json" in archive.namelist()
+
+
+def test_translation_keeps_needs_ocr_pack_when_worker_fails(client, media_file, settings, monkeypatch):
+    _configure_probe(monkeypatch, "graphic")
+    settings.ocr_worker_url = "http://subtitle-ocr-worker:8090"
+
+    async def extract(reference, media_path, target, timeout):
+        target.mkdir(parents=True, exist_ok=True)
+        output = target / "selected.eng.sup"
+        output.write_bytes(b"pgs")
+        return SubtitleExtractionResult([output], [])
+
+    async def graphic(*args, **kwargs):
+        return {"event_count": 2, "events": [{"start_ms": 1000}, {"start_ms": 99000}]}
+
+    async def failed_ocr(*args, **kwargs):
+        raise OcrWorkerError("worker testowo niedostępny")
+
+    monkeypatch.setattr("app.services.job_manager.extract_embedded", extract)
+    monkeypatch.setattr("app.services.job_manager.graphic_timeline", graphic)
+    monkeypatch.setattr("app.services.job_manager.recognize_reference", failed_ocr)
+    response = client.post("/api/workpacks", json={"mediaPath": str(media_file), "taskType": "PREPARE_TRANSLATION"})
+    body = _wait(client, response.json()["jobId"])
+    assert body["status"] == "NEEDS_OCR"
+    assert any("worker testowo niedostępny" in warning for warning in body["report"]["warnings"])
+    with zipfile.ZipFile(body["report"]["workpack"]["path"]) as archive:
+        assert "reference/selected/selected.eng.sup" in archive.namelist()
+
+
+def test_translation_invalid_ocr_srt_falls_back_to_graphic_pack(client, media_file, settings, monkeypatch):
+    _configure_probe(monkeypatch, "graphic")
+    settings.ocr_worker_url = "http://subtitle-ocr-worker:8090"
+
+    async def extract(reference, media_path, target, timeout):
+        target.mkdir(parents=True, exist_ok=True)
+        output = target / "selected.eng.sup"
+        output.write_bytes(b"pgs")
+        return SubtitleExtractionResult([output], [])
+
+    async def graphic(*args, **kwargs):
+        return {"event_count": 1, "events": [{"start_ms": 1000}]}
+
+    async def invalid_ocr(*args, **kwargs):
+        return OcrResult(b"not an srt", "seconv+tesseract", 1, 0, None, None, None, [])
+
+    monkeypatch.setattr("app.services.job_manager.extract_embedded", extract)
+    monkeypatch.setattr("app.services.job_manager.graphic_timeline", graphic)
+    monkeypatch.setattr("app.services.job_manager.recognize_reference", invalid_ocr)
+    response = client.post("/api/workpacks", json={"mediaPath": str(media_file), "taskType": "PREPARE_TRANSLATION"})
+    body = _wait(client, response.json()["jobId"])
+    assert body["status"] == "NEEDS_OCR"
+    with zipfile.ZipFile(body["report"]["workpack"]["path"]) as archive:
+        names = archive.namelist()
+        assert "reference/selected/selected.eng.sup" in names
+        assert "reference/selected/selected.eng.ocr.srt" not in names
+        assert "analysis/ocr-quality-report.json" not in names
 
 
 def test_translation_without_english_reference_is_incomplete(client, media_file):
@@ -365,5 +442,6 @@ def test_gui_exposes_only_three_polish_modes_and_config_is_v2(client):
                                            "Przygotuj do tłumaczenia"))
     assert "SYNC_AND_LANGUAGE_REVIEW" not in html and "INSPECT_SUBTITLES" not in html
     assert client.get("/api/workpacks/config").json()["schemaVersion"] == "subtitle-workpack-v2"
+    assert client.get("/api/workpacks/config").json()["ocrWorkerEnabled"] is False
     javascript = client.get("/static/app.js").text
     assert "Pobierz pakiet do OCR i tłumaczenia" in javascript

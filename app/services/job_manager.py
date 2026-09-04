@@ -27,6 +27,8 @@ from app.services.semantic import (CompositeAnchorProvider, OpenAIAnchorProvider
                                    SemanticBudgetExceeded, SemanticUnavailable)
 from app.services.publisher import (PublishBlockedQuality, PublishConflict, PublishDisabled, PublishError,
                                     PublishSourceChanged, SubtitlePublisher, identity)
+from app.services.ocr_client import OcrWorkerError, recognize_reference
+from app.services.ocr_quality import InvalidOcrSrt, quality_report
 from app.services.workpack import (SCHEMA_VERSION, build_zip, copy_polish_candidates, diagnostic_hypotheses,
                                    extract_embedded, graphic_timeline, inspection_report, media_summary,
                                    parse_vobsub_idx, request_text, safe_filename, sha256_file, subtitle_streams,
@@ -636,6 +638,8 @@ class JobManager:
         graphic_reference_timeline = None
         legacy_pgs_timeline = None
         graphic_reference_timestamps: list[int] = []
+        ocr_result = None
+        ocr_quality = None
         if selected and selected.get("type") == "graphic" and reference_files:
             if selected.get("codec") == "dvd_subtitle" and selected_idx:
                 graphic_reference_timestamps = vobsub_timestamps(selected_idx)
@@ -654,6 +658,27 @@ class JobManager:
                     "durationCoverage": (graphic_reference_timestamps[-1] / round(media_duration * 1000)
                                          if graphic_reference_timestamps and media_duration else None),
                 }
+            if requirements.graphic_reference_requires_ocr and self.settings.ocr_worker_url:
+                await self._emit(job_id, "INFO", JobStatus.OCR_RUNNING,
+                                 "Rozpoznawanie angielskiej referencji przez CPU OCR", 72)
+                try:
+                    ocr_result = await recognize_reference(
+                        reference_files, self.settings.ocr_worker_url, self.settings.ocr_timeout_seconds,
+                        self.settings.ocr_max_output_bytes,
+                    )
+                    ocr_quality = quality_report(ocr_result.content, graphic_reference_timeline)
+                    selected_srt = job_dir / "reference" / "selected" / "selected.eng.ocr.srt"
+                    selected_srt.write_bytes(ocr_result.content)
+                    reference_files.append(selected_srt)
+                    reference_timeline = timeline(selected_srt, "ocr-reference")
+                    if ocr_quality["quality"] != "GOOD":
+                        warnings.append(f"Jakość automatycznego OCR: {ocr_quality['quality']}")
+                    warnings.extend(ocr_quality["warnings"])
+                    warnings.extend(ocr_result.warnings)
+                except (InvalidOcrSrt, OcrWorkerError) as exc:
+                    ocr_result = None
+                    ocr_quality = None
+                    warnings.append(f"Automatyczny OCR nie powiódł się: {exc}")
         polish_timelines = {item["archiveName"]: timeline(job_dir / item["archiveName"], item["archiveName"])
                             for item in polish if Path(item["archiveName"]).suffix.lower() == ".srt"}
         for item in polish:
@@ -678,6 +703,8 @@ class JobManager:
         if reference_timeline: write_json(analysis / "reference-timeline.json", reference_timeline)
         if graphic_reference_timeline:
             write_json(analysis / "reference-graphic-timeline.json", graphic_reference_timeline)
+        if ocr_quality:
+            write_json(analysis / "ocr-quality-report.json", ocr_quality)
         if legacy_pgs_timeline:
             write_json(analysis / "reference-pgs-timeline.json", legacy_pgs_timeline)
         write_json(analysis / "polish-timelines.json", polish_timelines)
@@ -699,7 +726,7 @@ class JobManager:
             })
         await self._emit(job_id, "INFO", JobStatus.BUILDING_MANIFEST, "Tworzenie manifestu bez ścieżek hosta", 78)
         needs_ocr = bool(requirements.graphic_reference_requires_ocr and selected
-                         and selected.get("type") == "graphic" and reference_files)
+                         and selected.get("type") == "graphic" and reference_files and not ocr_result)
         if needs_ocr:
             warnings.append(
                 "Angielska referencja jest graficzna. Pakiet jest kompletny, "
@@ -718,6 +745,9 @@ class JobManager:
                                                (graphic_reference_timeline or {}).get("lastMs"))})
             if requirements.name == "PREPARE_TRANSLATION":
                 reference_entry["requiresOcr"] = needs_ocr
+                reference_entry["ocr"] = ocr_result.manifest() if ocr_result else None
+                if reference_entry["ocr"]:
+                    reference_entry["ocr"]["quality"] = ocr_quality["quality"]
         expected_kind = ("AI-Synced" if requirements.name == "PREPARE_SYNC" else
                          "AI-Translated" if requirements.name == "PREPARE_TRANSLATION" else "AI-Reviewed")
         expected = f"{safe_filename(media_path.stem)}.{expected_kind}-v001.pl.srt"
@@ -737,7 +767,8 @@ class JobManager:
                                         "modify_media": False},
                     "warnings": warnings, "files": []}
         if requirements.name == "PREPARE_TRANSLATION":
-            manifest["nextAction"] = "OCR_AND_TRANSLATE" if needs_ocr else "TRANSLATE"
+            manifest["nextAction"] = ("OCR_AND_TRANSLATE" if needs_ocr else
+                                      "TRANSLATE_AND_REVIEW_OCR" if ocr_result else "TRANSLATE")
         (job_dir / "REQUEST.md").write_text(request_text(task_type, manifest), encoding="utf-8")
         common_files = {"manifest.json", "REQUEST.md", "analysis/media-summary.json",
                         "analysis/subtitle-streams.json"}
@@ -750,6 +781,8 @@ class JobManager:
                 package_files.add("analysis/reference-timeline.json")
             if graphic_reference_timeline:
                 package_files.add("analysis/reference-graphic-timeline.json")
+            if ocr_quality:
+                package_files.add("analysis/ocr-quality-report.json")
         else:
             package_files = common_files | {"analysis/inspection-report.json", "analysis/timing-comparison.json"}
             package_files |= {path.relative_to(job_dir).as_posix() for path in reference_files
@@ -801,7 +834,9 @@ class JobManager:
                   "workpack": workpack, "warnings": warnings, "incompleteReasons": blocking_requirements,
                   "mediaDirectoryModified": False}
         if requirements.name == "PREPARE_TRANSLATION":
-            report.update({"requiresOcr": needs_ocr, "nextAction": manifest["nextAction"]})
+            report.update({"requiresOcr": needs_ocr, "nextAction": manifest["nextAction"],
+                           "ocr": ({**ocr_result.manifest(), "quality": ocr_quality["quality"]}
+                                   if ocr_result else None)})
         self._save_report(job_id, report, str(media_path))
         if requirements.name == "INSPECT":
             await asyncio.to_thread(remove_job_directory, self.settings.data_root / "work" / "jobs", job_dir)

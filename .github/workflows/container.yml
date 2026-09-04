@@ -11,6 +11,7 @@ permissions:
   packages: write
 env:
   IMAGE_NAME: ghcr.io/kcn3333/subtitle-agent
+  OCR_IMAGE_NAME: ghcr.io/kcn3333/subtitle-agent-ocr
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -21,6 +22,17 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=sha-,format=short
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+          labels: |
+            org.opencontainers.image.source=https://github.com/kCn3333/subtitle-agent
+      - id: ocr-meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.OCR_IMAGE_NAME }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-,format=short
@@ -70,6 +82,40 @@ jobs:
           docker exec subtitle-agent-test ffmpeg -version
           docker exec subtitle-agent-test ffprobe -version
           docker exec subtitle-agent-test mkvextract --version
+      - name: Build OCR worker
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.ocr
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: subtitle-agent-ocr:test
+          labels: ${{ steps.ocr-meta.outputs.labels }}
+          cache-from: type=gha,scope=ocr
+          cache-to: type=gha,mode=max,scope=ocr
+      - name: Test OCR worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --name subtitle-agent-ocr-test --read-only --tmpfs /tmp:size=512m,mode=1777 \
+            --cap-drop ALL --security-opt no-new-privileges --memory 1g --cpus 2 \
+            -p 8090:8090 subtitle-agent-ocr:test
+          trap 'docker logs subtitle-agent-ocr-test; docker rm -f subtitle-agent-ocr-test' EXIT
+          for attempt in {1..30}; do
+            if python -c "import json,urllib.request; d=json.load(urllib.request.urlopen('http://127.0.0.1:8090/health')); assert d['status']=='ok' and d['cpuOnly'] is True and d['tesseractReady'] is True and 'eng' in d['languages'] and d['seconvVersion']=='5.2.0-rc2'"; then break; fi
+            if [ "$attempt" = 30 ]; then exit 1; fi
+            sleep 1
+          done
+          docker exec subtitle-agent-ocr-test /opt/seconv/seconv --version
+          docker exec subtitle-agent-ocr-test tesseract --version
+          test "$(docker inspect subtitle-agent-ocr-test --format '{{.HostConfig.Memory}}')" = "1073741824"
+          test "$(docker inspect subtitle-agent-ocr-test --format '{{.HostConfig.NanoCpus}}')" = "2000000000"
+          mkdir -p /tmp/ocr-fixture
+          base64 -d tests/fixtures/vobsub-reference.mkv.b64 > /tmp/ocr-fixture/reference.mkv
+          docker run --rm -v /tmp/ocr-fixture:/fixture subtitle-agent:test \
+            mkvextract /fixture/reference.mkv tracks 0:/fixture/selected.eng.idx
+          python tests/container_ocr_smoke.py /tmp/ocr-fixture
       - if: github.event_name != 'pull_request'
         id: publish
         uses: docker/build-push-action@v6
@@ -84,4 +130,17 @@ jobs:
             VERSION=${{ steps.meta.outputs.version }}
           cache-from: type=gha
       - if: github.event_name != 'pull_request'
-        run: echo "### Image digest `${{ steps.publish.outputs.digest }}`" >> "$GITHUB_STEP_SUMMARY"
+        id: publish-ocr
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.ocr
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.ocr-meta.outputs.tags }}
+          labels: ${{ steps.ocr-meta.outputs.labels }}
+          cache-from: type=gha,scope=ocr
+      - if: github.event_name != 'pull_request'
+        run: |
+          echo "### App image digest `${{ steps.publish.outputs.digest }}`" >> "$GITHUB_STEP_SUMMARY"
+          echo "### OCR image digest `${{ steps.publish-ocr.outputs.digest }}`" >> "$GITHUB_STEP_SUMMARY"
