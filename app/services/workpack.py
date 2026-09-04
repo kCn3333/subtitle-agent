@@ -8,10 +8,10 @@ from pathlib import Path, PurePosixPath
 from app.models.job import WorkpackTaskType
 from app.services.alignment import StructuralAnchorProvider, fit_models, parse_cues, public_model, quality, select_model
 from app.services.process_runner import run_process
+from app.services.subtitle_extraction import SubtitleExtractionResult, extract_subtitle
 
 SCHEMA_VERSION = "subtitle-workpack-v2"
 SAFE_NAME = re.compile(r"[^\w .()\[\]-]+", re.UNICODE)
-TEXT_CODECS = {"subrip": "srt", "ass": "ass", "ssa": "ssa", "webvtt": "vtt", "mov_text": "txt"}
 
 
 def sha256_file(path: Path) -> str:
@@ -90,6 +90,7 @@ def inspection_report(media: dict, english_ranking: list[dict], polish_ranking: 
             "matchAutomatic": item.get("matchAutomatic"), "segments": analysis.get("segment_count"),
             "firstTimestamp": analysis.get("first_time"), "lastTimestamp": analysis.get("last_time"),
             "movieCoverage": ((analysis.get("last_time") or 0) / duration if duration else None),
+            "endOverrunSeconds": max(0, (analysis.get("last_time") or 0) - duration) if duration else None,
             "structuralErrors": {
                 "malformedSegments": analysis.get("malformed_segments", 0),
                 "reversedIntervals": analysis.get("reversed_intervals", 0),
@@ -109,32 +110,9 @@ def inspection_report(media: dict, english_ranking: list[dict], polish_ranking: 
     }
 
 
-async def extract_embedded(reference: dict, media_path: Path, target: Path, timeout: float) -> list[Path]:
-    target.mkdir(parents=True, exist_ok=True)
-    index, codec = int(reference["streamIndex"]), reference.get("codec")
-    outputs: list[Path] = []
-    if reference.get("type") == "text":
-        extension = TEXT_CODECS.get(codec, "txt")
-        original = target / f"selected.original.{extension}"
-        await run_process(["ffmpeg", "-v", "error", "-i", str(media_path), "-map", f"0:{index}", "-c:s", "copy", "-y", str(original)], timeout)
-        converted = target / "selected.eng.srt"
-        await run_process(["ffmpeg", "-v", "error", "-i", str(media_path), "-map", f"0:{index}", "-c:s", "srt", "-y", str(converted)], timeout)
-        outputs = [original, converted] if original != converted else [converted]
-    elif codec == "hdmv_pgs_subtitle":
-        output = target / "selected.eng.sup"
-        await run_process(["ffmpeg", "-v", "error", "-i", str(media_path), "-map", f"0:{index}", "-c", "copy", "-y", str(output)], timeout)
-        outputs = [output]
-    elif codec == "dvd_subtitle":
-        base = target / "selected.eng.idx"
-        await run_process(["ffmpeg", "-v", "error", "-i", str(media_path), "-map", f"0:{index}", "-c", "copy", "-f", "vobsub", "-y", str(base)], timeout)
-        outputs = [target / "selected.eng.idx", target / "selected.eng.sub"]
-    else:
-        output = target / f"selected.eng.{safe_filename(codec or 'graphic')}"
-        await run_process(["ffmpeg", "-v", "error", "-i", str(media_path), "-map", f"0:{index}", "-c", "copy", "-y", str(output)], timeout)
-        outputs = [output]
-    if any(not item.is_file() or item.stat().st_size == 0 for item in outputs):
-        raise RuntimeError("Nie utworzono kompletnej referencji napisów")
-    return outputs
+async def extract_embedded(reference: dict, media_path: Path, target: Path,
+                           timeout: float) -> SubtitleExtractionResult:
+    return await extract_subtitle(reference, media_path, target, timeout)
 
 
 async def graphic_timeline(media_path: Path, stream_index: int, timeout: float) -> dict:

@@ -2,6 +2,9 @@ import json
 import time
 import zipfile
 
+from app.services.subtitle_extraction import SubtitleExtractionResult
+from app.services.process_runner import ProcessExecutionError
+
 
 def _wait(client, job_id: str) -> dict:
     for _ in range(300):
@@ -33,7 +36,7 @@ def _configure_extraction(monkeypatch) -> None:
         target.mkdir(parents=True, exist_ok=True)
         output = target / "selected.eng.srt"
         output.write_text("1\n00:00:01,000 --> 00:00:02,000\nHello\n")
-        return [output]
+        return SubtitleExtractionResult([output], [])
 
     monkeypatch.setattr("app.services.job_manager.extract_embedded", extract)
 
@@ -96,6 +99,30 @@ def test_sync_is_ready_with_english_and_matched_polish(client, media_file, monke
         inspection = json.loads(archive.read("analysis/inspection-report.json"))
         assert {"mediaIdentity", "media", "embeddedSubtitleTracks", "englishRanking",
                 "polishCandidates", "rejectedPolishCandidates", "synchronizationHypotheses"} <= inspection.keys()
+
+
+def test_workpack_process_error_is_visible_in_failed_event(client, media_file, monkeypatch):
+    _configure_probe(monkeypatch)
+
+    async def fail(*args, **kwargs):
+        raise ProcessExecutionError("Nie udało się wyeksportować ścieżki DVD/VobSub. kod 2: test")
+
+    monkeypatch.setattr("app.services.job_manager.extract_embedded", fail)
+    created = client.post("/api/tasks", json={"mediaPath": str(media_file), "mode": "PREPARE_SYNC"})
+    body = _wait(client, created.json()["jobId"])
+    assert body["status"] == "FAILED"
+    assert "DVD/VobSub" in body["errorMessage"]
+    assert "DVD/VobSub" in client.app.state.jobs.events(body["jobId"])[-1].message
+
+
+def test_polish_subtitle_overrun_is_reported(client, media_file):
+    media_file.with_name("Example Movie.pl.srt").write_text(
+        "1\n00:01:45,000 --> 00:01:46,000\nTekst\n", encoding="utf-8"
+    )
+    created = client.post("/api/tasks", json={"mediaPath": str(media_file), "mode": "INSPECT"})
+    body = _wait(client, created.json()["jobId"])
+    assert any("00:00:06.000 po zakończeniu materiału" in warning for warning in body["report"]["warnings"])
+    assert body["report"]["polishCandidateInspection"][0]["endOverrunSeconds"] == 6
 
 
 def test_translation_requires_text_english_but_not_polish(client, media_file, monkeypatch):

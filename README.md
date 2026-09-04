@@ -40,7 +40,7 @@ Nowe GUI korzysta z `POST /api/tasks` z polami `mediaPath` i `mode`. Odczyt oraz
 
 ## Uruchomienie
 
-Wymagania: Python 3.12, ffmpeg/ffprobe oraz opcjonalnie Docker.
+Wymagania: Python 3.12, ffmpeg/ffprobe, MKVToolNix (`mkvextract`) oraz opcjonalnie Docker.
 
 ```bash
 python3.12 -m venv .venv
@@ -86,7 +86,7 @@ Pozostałe standardowe zmienne to `APP_NAME`, `APP_HOST`, `APP_PORT` i `LOG_LEVE
 - `GET /api/workpacks/{job_id}/download` — bezpieczne pobieranie po UUID, z nagłówkiem `X-Workpack-SHA256`.
 - `GET /api/workpacks/config` — niesekretna diagnostyka limitów.
 - `GET /api/jobs/{job_id}/events` — historia i zdarzenia SSE z heartbeat co 15 sekund.
-- `GET /health` — stan ffmpeg i ffprobe.
+- `GET /health` — stan ffmpeg, ffprobe i mkvextract.
 
 W `WORKPACK` endpointy semantyczne, synchronizujące i publikujące etapów 1–5 zwracają `ADVANCED_MODE_DISABLED`. Tryb `ADVANCED` zachowuje ich kod jako opcjonalną funkcję historyczną, lecz wymaga świadomej konfiguracji; nie jest potrzebny do podstawowego zastosowania.
 

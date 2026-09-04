@@ -1,5 +1,7 @@
+import base64
 import hashlib
 import json
+import shutil
 import time
 import uuid
 import zipfile
@@ -14,6 +16,7 @@ from app.main import create_app
 from app.services.media_analysis import rank_english
 from app.services.artifact_retention import remove_job_directory
 from app.services.system_probe import ToolInfo
+from app.services.process_runner import ProcessExecutionError
 from app.services.workpack import (build_zip, copy_polish_candidates, extract_embedded, graphic_timeline,
                                    media_summary, safe_archive_name, safe_filename, sha256_file, timeline)
 
@@ -112,34 +115,102 @@ def test_timeline_contains_hash_not_text(tmp_path):
 @pytest.mark.anyio
 async def test_text_ass_is_kept_and_converted_to_srt(tmp_path, monkeypatch):
     media=tmp_path/'movie.mkv'; media.write_bytes(b'x')
-    async def fake(arguments, timeout):
+    async def fake(arguments, timeout, accepted_returncodes=(0,)):
         Path(arguments[-1]).write_bytes(b'converted')
-    monkeypatch.setattr('app.services.workpack.run_process', fake)
-    outputs=await extract_embedded({'streamIndex':3,'codec':'ass','type':'text'},media,tmp_path/'reference',1)
-    assert {path.name for path in outputs} == {'selected.original.ass','selected.eng.srt'}
+    monkeypatch.setattr('app.services.subtitle_extraction.run_process', fake)
+    result=await extract_embedded({'streamIndex':3,'codec':'ass','type':'text'},media,tmp_path/'reference',1)
+    assert {path.name for path in result.files} == {'selected.original.ass','selected.eng.srt'}
 
 
 @pytest.mark.anyio
 async def test_pgs_sup_and_timeline(tmp_path, monkeypatch):
     media=tmp_path/'movie.mkv'; media.write_bytes(b'x')
-    async def fake(arguments, timeout):
+    async def fake(arguments, timeout, accepted_returncodes=(0,)):
         if arguments[0] == 'ffmpeg': Path(arguments[-1]).write_bytes(b'pgs')
         return type('Result',(),{'stdout':json.dumps({'packets':[{'pts_time':'1.25','duration_time':'0.5','stream_index':4}]})})()
+    monkeypatch.setattr('app.services.subtitle_extraction.run_process', fake)
     monkeypatch.setattr('app.services.workpack.run_process', fake)
-    outputs=await extract_embedded({'streamIndex':4,'codec':'hdmv_pgs_subtitle','type':'graphic'},media,tmp_path/'reference',1)
+    result=await extract_embedded({'streamIndex':4,'codec':'hdmv_pgs_subtitle','type':'graphic'},media,tmp_path/'reference',1)
     events=await graphic_timeline(media,4,1)
-    assert outputs[0].name == 'selected.eng.sup'
+    assert result.files[0].name == 'selected.eng.sup'
     assert events['events'][0] == {'sequence':1,'start_ms':1250,'end_ms':1750,'duration_ms':500,'stream_index':4}
 
 
 @pytest.mark.anyio
 async def test_dvd_reference_requires_idx_and_sub(tmp_path, monkeypatch):
     media=tmp_path/'movie.mkv'; media.write_bytes(b'x')
-    async def fake(arguments, timeout):
-        output=Path(arguments[-1]); output.write_bytes(b'idx'); output.with_suffix('.sub').write_bytes(b'sub')
-    monkeypatch.setattr('app.services.workpack.run_process', fake)
-    outputs=await extract_embedded({'streamIndex':5,'codec':'dvd_subtitle','type':'graphic'},media,tmp_path/'reference',1)
-    assert {path.suffix for path in outputs} == {'.idx','.sub'}
+    async def fake(arguments, timeout, accepted_returncodes=(0,)):
+        output=Path(arguments[-1].split(':', 1)[-1])
+        if arguments[0] == 'ffmpeg':
+            output.write_bytes(b'mks')
+            return type('Result',(),{'returncode':0,'stderr':''})()
+        output.write_text('# VobSub index file, v7\nid: en, index: 0\ntimestamp: 00:00:01:000, filepos: 000000000\n')
+        output.with_suffix('.sub').write_bytes(b'sub')
+        return type('Result',(),{'returncode':0,'stderr':''})()
+    monkeypatch.setattr('app.services.subtitle_extraction.run_process', fake)
+    result=await extract_embedded({'streamIndex':5,'codec':'dvd_subtitle','type':'graphic'},media,tmp_path/'reference',1)
+    assert {path.suffix for path in result.files} == {'.idx','.sub'}
+    assert not (tmp_path/'reference'/'.selected.reference.tmp.mks').exists()
+
+
+@pytest.mark.anyio
+async def test_dvd_reference_accepts_valid_output_with_mkvextract_warning(tmp_path, monkeypatch):
+    media = tmp_path / "movie.mkv"; media.write_bytes(b"x")
+
+    async def fake(arguments, timeout, accepted_returncodes=(0,)):
+        output = Path(arguments[-1].split(":", 1)[-1])
+        if arguments[0] == "ffmpeg":
+            output.write_bytes(b"mks")
+            return type("Result", (), {"returncode": 0, "stderr": "", "stdout": ""})()
+        output.write_text(
+            "# VobSub index file, v7\nid: en, index: 0\n"
+            "timestamp: 00:00:01:000, filepos: 000000000\n"
+        )
+        output.with_suffix(".sub").write_bytes(b"sub")
+        return type("Result", (), {"returncode": 1, "stderr": "\x1b[33mWarning: test\x1b[0m", "stdout": ""})()
+
+    monkeypatch.setattr("app.services.subtitle_extraction.run_process", fake)
+    result = await extract_embedded(
+        {"streamIndex": 5, "codec": "dvd_subtitle", "type": "graphic"}, media, tmp_path / "reference", 1
+    )
+    assert result.warnings == ["mkvextract zakończył ekstrakcję z ostrzeżeniem: Warning: test"]
+
+
+@pytest.mark.anyio
+async def test_dvd_reference_removes_temporary_container_after_failure(tmp_path, monkeypatch):
+    media = tmp_path / "movie.mkv"; media.write_bytes(b"x")
+    target = tmp_path / "reference"
+
+    async def fake(arguments, timeout, accepted_returncodes=(0,)):
+        if arguments[0] == "ffmpeg":
+            Path(arguments[-1]).write_bytes(b"mks")
+            return type("Result", (), {"returncode": 0, "stderr": ""})()
+        raise ProcessExecutionError("Proces zakończył się kodem 2: synthetic failure")
+
+    monkeypatch.setattr("app.services.subtitle_extraction.run_process", fake)
+    with pytest.raises(ProcessExecutionError, match="DVD/VobSub.*synthetic failure"):
+        await extract_embedded(
+            {"streamIndex": 5, "codec": "dvd_subtitle", "type": "graphic"}, media, target, 1
+        )
+    assert not (target / ".selected.reference.tmp.mks").exists()
+
+
+@pytest.mark.anyio
+async def test_real_vobsub_extraction_with_container_tools(tmp_path):
+    if not all(shutil.which(tool) for tool in ("ffmpeg", "mkvextract")):
+        pytest.skip("ffmpeg and mkvextract are required")
+    fixture = Path(__file__).parent / "fixtures" / "vobsub-reference.mkv.b64"
+    media = tmp_path / "vobsub-reference.mkv"
+    media.write_bytes(base64.b64decode(fixture.read_text(encoding="ascii")))
+    target = tmp_path / "reference"
+    result = await extract_embedded(
+        {"streamIndex": 0, "codec": "dvd_subtitle", "type": "graphic"}, media, target, 10
+    )
+    index_path, sub_path = result.files
+    assert index_path.name == "selected.eng.idx" and index_path.stat().st_size > 0
+    assert sub_path.name == "selected.eng.sub" and sub_path.stat().st_size > 0
+    assert "id:" in index_path.read_text(encoding="utf-8")
+    assert not (target / ".selected.reference.tmp.mks").exists()
 
 
 def test_media_summary_drops_full_path_and_has_exact_fps():
@@ -175,7 +246,7 @@ def test_zip_file_limit_marks_omissions(tmp_path):
 
 def test_workpack_mode_blocks_advanced_endpoints(tmp_path, monkeypatch):
     media=tmp_path/"media"; media.mkdir(); settings=Settings(data_root=tmp_path/"data",media_roots=[media])
-    monkeypatch.setattr("app.main.probe_tools",lambda:ToolInfo("ffmpeg test","ffprobe test"))
+    monkeypatch.setattr("app.main.probe_tools",lambda:ToolInfo("ffmpeg test","ffprobe test","mkvextract test"))
     with TestClient(create_app(settings)) as client:
         assert client.get('/api/jobs/semantic/config').status_code == 404
         assert client.get('/api/jobs/publishing/config').status_code == 404

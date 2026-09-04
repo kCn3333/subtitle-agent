@@ -218,6 +218,10 @@ class JobManager:
             try:
                 task_type = WorkpackTaskType(job.get("task_type") or WorkpackTaskType.SYNC_AND_LANGUAGE_REVIEW)
                 await workpack_service(task_type).prepare(self, job_id, job["report"], reference_source_id)
+            except (ProcessExecutionError, ProcessTimeoutError) as exc:
+                message = str(exc)
+                with self._lock, self._connect() as db: db.execute("UPDATE jobs SET error_message=? WHERE id=?", (message, job_id))
+                await self._emit(job_id, "ERROR", JobStatus.FAILED, message, 100)
             except Exception as exc:
                 message = f"Ponowne budowanie workpacka nie powiodło się ({type(exc).__name__})"
                 with self._lock, self._connect() as db: db.execute("UPDATE jobs SET error_message=? WHERE id=?", (message, job_id))
@@ -587,14 +591,17 @@ class JobManager:
                 not (requirements.name == "INSPECT" and selected.get("type") == "graphic")):
             await self._emit(job_id, "INFO", JobStatus.EXTRACTING_REFERENCE,
                              f"Ekstrakcja strumienia {selected.get('streamIndex')} ({selected.get('codec')})", 43)
-            reference_files = await extract_embedded(selected, media_path, job_dir / "reference" / "selected",
-                                                     self.settings.ffmpeg_timeout_seconds)
+            extraction = await extract_embedded(selected, media_path, job_dir / "reference" / "selected",
+                                                self.settings.ffmpeg_timeout_seconds)
+            reference_files = extraction.files
+            warnings.extend(extraction.warnings)
         alternative_files: list[Path] = []
         for number, alternative in enumerate(alternatives if requirements.extract_reference else [], 1):
-            extracted = await extract_embedded(alternative, media_path,
-                                               job_dir / "reference" / "alternatives" / f"source-{number:03d}",
-                                               self.settings.ffmpeg_timeout_seconds)
-            for path in extracted:
+            extraction = await extract_embedded(alternative, media_path,
+                                                job_dir / "reference" / "alternatives" / f"source-{number:03d}",
+                                                self.settings.ffmpeg_timeout_seconds)
+            warnings.extend(extraction.warnings)
+            for path in extraction.files:
                 variant = path.name.removeprefix("selected")
                 destination = job_dir / "reference" / "alternatives" / f"alternative-{number:03d}{variant}"
                 destination.parent.mkdir(parents=True, exist_ok=True); path.replace(destination); alternative_files.append(destination)
@@ -609,6 +616,20 @@ class JobManager:
             await self._emit(job_id, "INFO", JobStatus.COLLECTING_POLISH_CANDIDATES,
                              f"Pipeline {requirements.name}: materiały PL pozostają wyłącznie w raporcie", 58)
         if omitted_polish: warnings.append(f"Pominięto {len(omitted_polish)} kandydatów z powodu limitu")
+        media_duration = media.get("durationSeconds") or 0
+        for candidate in polish_ranking:
+            analysis_data = candidate.get("analysis") or {}
+            overrun = (analysis_data.get("last_time") or 0) - media_duration
+            if candidate.get("sourceType") == "external" and candidate.get("eligibleByDefault", True) and overrun > 5:
+                milliseconds = round(overrun * 1000)
+                hours, remainder = divmod(milliseconds, 3_600_000)
+                minutes, remainder = divmod(remainder, 60_000)
+                seconds, millis = divmod(remainder, 1000)
+                delta = f"{hours:02d}:{minutes:02d}:{seconds:02d}.{millis:03d}"
+                warnings.append(
+                    f"Polskie napisy {candidate.get('name')} kończą się {delta} po zakończeniu materiału. "
+                    "Możliwa inna wersja odcinka lub dodatkowy materiał w napisach."
+                )
         await self._emit(job_id, "INFO", JobStatus.BUILDING_TIMELINES, "Budowanie technicznych timeline'ów", 68)
         selected_srt = next((path for path in reference_files if path.name == "selected.eng.srt"), None)
         reference_timeline = timeline(selected_srt, "reference") if selected_srt else None
@@ -821,6 +842,11 @@ class JobManager:
                 with self._lock, self._connect() as db:
                     db.execute("UPDATE jobs SET error_message=? WHERE id=?", (str(exc), job_id))
                 await self._emit(job_id, "ERROR", JobStatus.FAILED, str(exc), 100)
+            except (ProcessExecutionError, ProcessTimeoutError) as exc:
+                message = str(exc)
+                with self._lock, self._connect() as db:
+                    db.execute("UPDATE jobs SET error_message=? WHERE id=?", (message, job_id))
+                await self._emit(job_id, "ERROR", JobStatus.FAILED, message, 100)
             except Exception as exc:
                 safe_error = f"Analiza nie powiodła się ({type(exc).__name__})"
                 with self._lock, self._connect() as db:
