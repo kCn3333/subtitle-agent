@@ -38,8 +38,17 @@ def test_explicit_episode_conflict_is_rejected_even_for_same_series():
 def test_same_episode_is_automatic_with_reasons():
     match = match_media_identity(parse_media_identity("Lost.S01E23.mkv"),
                                  parse_media_identity("Lost.s1e23.pol.0.srt"))
-    assert match.accepted and match.automatic and match.confidence == 1
+    assert match.accepted and match.automatic and match.confidence == .9
     assert any("S01E23" in reason for reason in match.reasons)
+    assert any("rok produkcji" in reason for reason in match.reasons)
+
+
+def test_episode_year_can_come_from_name_or_parent_context_and_rejects_remake():
+    named = parse_media_identity("Scenes From A Marriage.1973.S01E01.mkv")
+    contextual = parse_media_identity("Scenes From A Marriage.S01E01.mkv", ["Shows 1973"])
+    remake = parse_media_identity("Scenes From A Marriage.2021.S01E01.pl.srt")
+    assert named.year == contextual.year == 1973
+    assert match_media_identity(named, remake).accepted is False
 
 
 def test_missing_subtitle_episode_is_ambiguous_not_automatic():
@@ -74,8 +83,11 @@ def test_discovery_exposes_confidence_reasons_and_omits_conflicts(tmp_path):
     assert {item["name"] for item in found} == {"Lost.S01E23.pl.srt", "Lost.pl.srt"}
     exact = next(item for item in found if "S01E23" in item["name"])
     ambiguous = next(item for item in found if item["name"] == "Lost.pl.srt")
-    assert exact["matchConfidence"] == 1 and exact["matchAutomatic"] is True and exact["matchReasons"]
-    assert ambiguous["matchConfidence"] < 1 and ambiguous["matchAutomatic"] is False
+    assert exact["identityMatch"]["confidence"] == .9
+    assert exact["identityMatch"]["automatic"] is True and exact["identityMatch"]["reasons"]
+    assert ambiguous["identityMatch"]["confidence"] < 1
+    assert ambiguous["identityMatch"]["automatic"] is False
+    assert "matchConfidence" not in exact
 
 
 def test_lost_directory_report_and_zip_never_mix_neighboring_episodes(client, settings):
@@ -107,7 +119,8 @@ def test_lost_directory_report_and_zip_never_mix_neighboring_episodes(client, se
         manifest = json.loads(archive.read("manifest.json"))
         packed_originals = {item["originalName"] for item in manifest["polish_candidates"]}
         assert packed_originals == included_names
-        assert all(item["matchConfidence"] == 1 and item["matchReasons"] and item["matchAutomatic"]
+        assert all(item["identityMatch"]["confidence"] == .9 and item["identityMatch"]["reasons"]
+                   and item["identityMatch"]["automatic"]
                    for item in manifest["polish_candidates"])
         polish_entries = [name for name in archive.namelist() if name.startswith("polish/")]
         payload = b"".join(archive.read(name) for name in polish_entries)

@@ -18,7 +18,8 @@ from app.services.artifact_retention import remove_job_directory
 from app.services.system_probe import ToolInfo
 from app.services.process_runner import ProcessExecutionError
 from app.services.workpack import (build_zip, copy_polish_candidates, extract_embedded, graphic_timeline,
-                                   media_summary, safe_archive_name, safe_filename, sha256_file, timeline)
+                                   media_summary, parse_vobsub_idx, safe_archive_name, safe_filename,
+                                   sha256_file, timeline)
 
 
 def srt(text="Zażółć gęślą jaźń") -> bytes:
@@ -219,6 +220,23 @@ def test_media_summary_drops_full_path_and_has_exact_fps():
     assert "path" not in summary and summary["duration_ms"] == 2500
     assert summary["fps"]["fraction"] == "24000/1001"
     assert summary["size_bytes"] == 123 and summary["bitrate"] == 456
+
+
+def test_vobsub_idx_parser_reports_reference_timeline(tmp_path):
+    first_ms, last_ms, cue_count = 46_463, 3_057_388, 760
+    timestamps = [round(first_ms + index * (last_ms - first_ms) / (cue_count - 1))
+                  for index in range(cue_count)]
+    index_path = tmp_path / "selected.eng.idx"
+    index_path.write_text("\n".join(
+        f"timestamp: {value // 3_600_000:02d}:{value // 60_000 % 60:02d}:"
+        f"{value // 1_000 % 60:02d}:{value % 1_000:03d}, filepos: {number:09X}"
+        for number, value in enumerate(timestamps)
+    ))
+    parsed = parse_vobsub_idx(index_path, 3_130_388)
+    assert parsed["cueCount"] == 760
+    assert parsed["firstMs"] == 46_463
+    assert parsed["lastMs"] == 3_057_388
+    assert parsed["durationCoverage"] == pytest.approx(3_057_388 / 3_130_388)
 
 
 def test_zip_checksums_order_security_and_no_media(tmp_path):

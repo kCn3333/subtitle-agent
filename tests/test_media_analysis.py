@@ -56,6 +56,18 @@ def test_polish_ranking_avoids_ai_sync():
     assert next(item for item in ranked if item["aiSync"])["eligibleByDefault"] is False
 
 
+def test_small_timing_overrun_is_not_classified_as_different_edition():
+    external = [{
+        "name": "movie.pl.srt", "format": "srt", "languageHint": "pl",
+        "identityMatch": {"status": "MATCH", "confidence": .9, "automatic": True, "reasons": []},
+        "analysis": {"segment_count": 100, "first_time": 1.0, "last_time": 102.5},
+    }]
+    candidate = rank_polish({"durationSeconds": 100.0}, external, [])[0]
+    assert candidate["timingCompatibility"] == "COMPATIBLE"
+    assert candidate["reasonCode"] is None
+    assert candidate["eligibleByDefault"] is True
+
+
 def test_external_discovery_is_non_recursive_and_matches_release_stem(tmp_path):
     movie = tmp_path / "Mishima.1985.1080p.mkv"; movie.write_bytes(b"x")
     (tmp_path / "Mishima.pl.srt").write_text("00:00:01,000 --> 00:00:02,000\nTest")
