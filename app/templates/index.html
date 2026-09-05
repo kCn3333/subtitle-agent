@@ -16,10 +16,12 @@
         </select></span>
       <button>Uruchom</button></div></form></section>
   <section class="status card" aria-labelledby="job-status-title">
-    <div class="status-head"><div><span id="job-status-title">Status zadania</span><strong id="status">BRAK ZADANIA</strong></div><strong id="progress">0%</strong></div>
-    <div class="progress-track" role="progressbar" aria-label="Postęp zadania" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="progress-bar"></span></div>
-    <div class="status-foot"><div class="current"><span>Aktualnie</span><strong id="current-activity">Oczekiwanie</strong></div>
-      <a id="download" class="button download-button" hidden>Pobierz pakiet ZIP</a></div>
+    <div class="status-content">
+      <div class="status-head"><div><span id="job-status-title">Status zadania</span><strong id="status">BRAK ZADANIA</strong></div><strong id="progress">0%</strong></div>
+      <div class="progress-track" role="progressbar" aria-label="Postęp zadania" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="progress-bar"></span></div>
+      <div class="current"><span>Aktualnie</span><strong id="current-activity">Oczekiwanie</strong></div>
+    </div>
+    <a id="download" class="button download-button" aria-disabled="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 5-5m-5 5-5-5M5 19h14"/></svg><span id="download-label">Pobierz pakiet ZIP</span></a>
   </section>
   <section class="console-card"><div class="console-head"><span>Konsola postępu</span><button id="clear" type="button">Wyczyść widok konsoli</button></div>
     <div id="console" class="console" aria-live="polite"></div></section>

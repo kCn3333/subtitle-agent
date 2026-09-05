@@ -53,6 +53,12 @@ def now() -> datetime:
     return datetime.now().astimezone()
 
 
+def display_size(size_bytes: int) -> str:
+    if size_bytes >= 1024 * 1024:
+        return f"{size_bytes / (1024 * 1024):.2f} MB"
+    return f"{size_bytes / 1024:.1f} KB"
+
+
 def candidate_label(candidate: dict | None) -> str:
     if not candidate:
         return "brak"
@@ -562,6 +568,20 @@ class JobManager:
                 MediaIdentity.model_validate(media["identity"]))
             english_ranking = rank_english(media["embeddedSubtitles"], external)
             polish_ranking = rank_polish(media, external, media["embeddedSubtitles"])
+        await self._emit(
+            job_id, "DEBUG", JobStatus.PROBING_MEDIA,
+            f"ffprobe: kontener={media.get('container') or 'nieznany'}, "
+            f"czas={float(media.get('durationSeconds') or 0):.3f}s, "
+            f"wideo={media.get('videoCodec') or 'brak'} {media.get('width') or '?'}x{media.get('height') or '?'}, "
+            f"audio={len(media.get('audioTracks') or [])}, napisy_osadzone={len(media.get('embeddedSubtitles') or [])}",
+            28,
+        )
+        await self._emit(
+            job_id, "DEBUG", JobStatus.DISCOVERING_SUBTITLES,
+            f"Źródła napisów: zewnętrzne={len(external)}, odrzucone={len(rejected_external)}, "
+            f"pominięte_inne_media={ignored_external}, kandydaci_EN={len(english_ranking)}, kandydaci_PL={len(polish_ranking)}",
+            30,
+        )
         await self._emit(job_id, "INFO", JobStatus.SELECTING_REFERENCE, "Ranking angielskich źródeł referencyjnych", 32)
         selected = None
         if requested_reference:
@@ -586,6 +606,14 @@ class JobManager:
         if not selected:
             warnings.append("Nie znaleziono wiarygodnej angielskiej referencji")
             await self._emit(job_id, "WARNING", JobStatus.NO_ENGLISH_REFERENCE, warnings[-1], 40)
+        else:
+            await self._emit(
+                job_id, "DEBUG", JobStatus.SELECTING_REFERENCE,
+                f"Wybrano referencję: źródło={selected.get('sourceType')}, strumień={selected.get('streamIndex')}, "
+                f"kodek={selected.get('codec')}, typ={selected.get('type')}, język={selected.get('language') or 'brak'}, "
+                f"wynik={selected.get('score')}, niejednoznaczna={'tak' if ambiguous else 'nie'}",
+                40,
+            )
         reference_files: list[Path] = []
         if (selected and requirements.extract_reference and
                 (selected.get("type") == "text" or requirements.accept_graphic_reference) and
@@ -596,6 +624,13 @@ class JobManager:
                                                 self.settings.ffmpeg_timeout_seconds)
             reference_files = extraction.files
             warnings.extend(extraction.warnings)
+            await self._emit(
+                job_id, "DEBUG", JobStatus.EXTRACTING_REFERENCE,
+                "Ekstrakcja zakończona: " + ", ".join(
+                    f"{path.name}={path.stat().st_size}B" for path in reference_files
+                ),
+                50,
+            )
         alternative_files: list[Path] = []
         for number, alternative in enumerate(alternatives if requirements.extract_reference else [], 1):
             extraction = await extract_embedded(alternative, media_path,
@@ -617,6 +652,13 @@ class JobManager:
             await self._emit(job_id, "INFO", JobStatus.COLLECTING_POLISH_CANDIDATES,
                              f"Pipeline {requirements.name}: materiały PL pozostają wyłącznie w raporcie", 58)
         if omitted_polish: warnings.append(f"Pominięto {len(omitted_polish)} kandydatów z powodu limitu")
+        await self._emit(
+            job_id, "DEBUG", JobStatus.COLLECTING_POLISH_CANDIDATES,
+            f"Kandydaci PL: ocenione={len(polish_ranking)}, dołączone={len(polish)}, "
+            f"niezgodne={sum(item.get('timingCompatibility') == 'INCOMPATIBLE' for item in polish_ranking)}, "
+            f"pominięte_limitem={len(omitted_polish)}",
+            62,
+        )
         media_duration = media.get("durationSeconds") or 0
         for candidate in polish_ranking:
             analysis_data = candidate.get("analysis") or {}
@@ -658,6 +700,13 @@ class JobManager:
                     "durationCoverage": (graphic_reference_timestamps[-1] / round(media_duration * 1000)
                                          if graphic_reference_timestamps and media_duration else None),
                 }
+            await self._emit(
+                job_id, "DEBUG", JobStatus.BUILDING_TIMELINES,
+                f"Timeline graficzny: segmenty={graphic_reference_timeline.get('cueCount')}, "
+                f"pierwszy={graphic_reference_timeline.get('firstMs')}ms, "
+                f"ostatni={graphic_reference_timeline.get('lastMs')}ms",
+                70,
+            )
             if requirements.graphic_reference_requires_ocr and self.settings.ocr_worker_url:
                 await self._emit(job_id, "INFO", JobStatus.OCR_RUNNING,
                                  "Rozpoznawanie angielskiej referencji przez CPU OCR", 72)
@@ -677,6 +726,13 @@ class JobManager:
                         warnings.append(f"Jakość tekstu OCR: {ocr_quality['textQuality']}")
                     warnings.extend(ocr_quality["warnings"])
                     warnings.extend(ocr_result.warnings)
+                    await self._emit(
+                        job_id, "DEBUG", JobStatus.OCR_RUNNING,
+                        f"OCR zakończony: silnik={ocr_result.engine}, segmenty={ocr_quality['cueCount']}, "
+                        f"puste={ocr_quality['emptyCueCount']}, struktura={ocr_quality['structuralQuality']}, "
+                        f"tekst={ocr_quality['textQuality']}, ostrzeżenia={len(ocr_quality['warnings']) + len(ocr_result.warnings)}",
+                        75,
+                    )
                 except (InvalidOcrSrt, OcrWorkerError) as exc:
                     ocr_result = None
                     ocr_quality = None
@@ -810,6 +866,12 @@ class JobManager:
             archive, version, archive_hash, omitted_files = await asyncio.to_thread(
                 build_zip, job_dir, media_path.stem, self.settings.workpack_max_archive_bytes,
                 self.settings.workpack_max_files, package_files)
+            await self._emit(
+                job_id, "DEBUG", JobStatus.BUILDING_WORKPACK,
+                f"Archiwum: pliki={len(package_files)}, rozmiar={archive.stat().st_size}B, "
+                f"sha256={archive_hash[:12]}…, wersja={version}",
+                97,
+            )
         if omitted_files:
             warnings.append(f"Pominięto {len(omitted_files)} plików z powodu limitu archiwum")
         workpack = ({"schemaVersion": SCHEMA_VERSION, "version": version, "path": str(archive),
@@ -859,7 +921,7 @@ class JobManager:
                    if terminal == JobStatus.INSPECTION_READY else
                    "Pakiet do OCR i tłumaczenia jest gotowy." if needs_ocr else
                    blocking_requirements[0] if blocking_requirements else
-                   f"Workpack gotowy: {archive.name} ({archive.stat().st_size} B)")
+                   f"Workpack gotowy: {archive.name} ({display_size(archive.stat().st_size)})")
         await self._emit(job_id, "WARNING" if terminal != JobStatus.WORKPACK_READY else "SUCCESS", terminal, message, 100)
 
     async def _worker(self) -> None:
