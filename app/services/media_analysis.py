@@ -284,6 +284,8 @@ def rank_polish(media: dict, external: list[dict], embedded: list[dict]) -> list
     for item in candidates:
         score, reasons, text = 0, [], _penalty_text(item)
         language = (item.get("language") or item.get("languageHint") or item.get("analysis", {}).get("detected_language") or "").casefold()
+        if language not in {"pol", "pl", "polish"}:
+            continue
         if language in {"pol", "pl", "polish"}: score += 60; reasons.append("+60 język polski")
         if item.get("sourceType") == "external" and item.get("format") == "srt": score += 25; reasons.append("+25 zewnętrzny SRT")
         if item.get("sourceType") == "external": score += 10; reasons.append("+10 nazwa zgodna z medium")

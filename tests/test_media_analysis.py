@@ -68,6 +68,11 @@ def test_small_timing_overrun_is_not_classified_as_different_edition():
     assert candidate["eligibleByDefault"] is True
 
 
+def test_polish_ranking_omits_non_polish_embedded_tracks():
+    embedded = [{"streamIndex": 2, "codec": "dvd_subtitle", "language": "eng", "type": "graphic"}]
+    assert rank_polish({"durationSeconds": 100.0}, [], embedded) == []
+
+
 def test_external_discovery_is_non_recursive_and_matches_release_stem(tmp_path):
     movie = tmp_path / "Mishima.1985.1080p.mkv"; movie.write_bytes(b"x")
     (tmp_path / "Mishima.pl.srt").write_text("00:00:01,000 --> 00:00:02,000\nTest")

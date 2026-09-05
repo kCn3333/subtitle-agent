@@ -48,11 +48,20 @@ def test_text_quality_detects_common_ocr_language_artifacts():
     assert report["structuralQuality"] == "GOOD"
     assert report["textQuality"] == "WARNING"
     assert report["pipeAsLetterCount"] == 1
-    assert report["internalWordSlashCount"] == 1
+    assert report["slashAsLetterCount"] == 1
     assert report["unusualCapitalizationCount"] == 1
     assert report["missingApostropheCount"] == 1
     assert report["unrecognizedProperNameCount"] == 1
     assert report["outOfDictionaryWordRatio"] > 0
+
+
+def test_text_quality_detects_slash_at_start_of_word():
+    content = b"1\n00:00:01,000 --> 00:00:02,000\nHe comes to see Johan in the /ab.\n"
+    report = quality_report(content, {"cueCount": 1, "firstMs": 1000, "lastMs": 1000},
+                            {"he", "comes", "to", "see", "johan", "in", "the", "lab"})
+    assert report["slashAsLetterCount"] == 1
+    assert "internalWordSlashCount" not in report
+    assert "Podejrzany ukośnik zamiast litery: 1" in report["textWarnings"]
 
 
 def test_text_quality_is_unknown_without_dictionary_or_enough_text():
