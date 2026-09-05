@@ -239,9 +239,11 @@ def test_translation_vobsub_builds_downloadable_ocr_pack(client, media_file, set
         return (f"{milliseconds // 3_600_000:02d}:{milliseconds // 60_000 % 60:02d}:"
                 f"{milliseconds // 1_000 % 60:02d},{milliseconds % 1_000:03d}")
 
+    starts = [46_463 + round(number * (3_057_388 - 46_463) / 759) for number in range(760)]
     ocr_cues = "\n".join(
-        f"{number}\n{stamp(46_463 + number * 3_000)} --> {stamp(47_463 + number * 3_000)}\nEnglish {number}\n"
-        for number in range(760)
+        f"{number + 1}\n{stamp(start)} --> {stamp(start + 1_000)}\n"
+        f"{'| dont' if number == 0 else 'English dialogue'} {number + 1}\n"
+        for number, start in enumerate(starts)
     ).encode()
 
     async def recognize(paths, worker_url, timeout, maximum_output_bytes):
@@ -266,6 +268,8 @@ def test_translation_vobsub_builds_downloadable_ocr_pack(client, media_file, set
     assert body["report"]["requiresOcr"] is False
     assert body["report"]["nextAction"] == "TRANSLATE_AND_REVIEW_OCR"
     assert body["report"]["ocr"]["engine"] == "seconv+tesseract"
+    assert body["report"]["ocr"]["structuralQuality"] == "GOOD"
+    assert body["report"]["ocr"]["textQuality"] == "WARNING"
     assert body["report"]["incompleteReasons"] == []
     assert body["report"]["workpack"] is not None
     assert calls == ["ffmpeg", "mkvextract"]
@@ -283,6 +287,12 @@ def test_translation_vobsub_builds_downloadable_ocr_pack(client, media_file, set
         manifest = json.loads(archive.read("manifest.json"))
         assert manifest["reference"]["requiresOcr"] is False
         assert manifest["reference"]["ocr"]["cueCount"] == 760
+        assert manifest["reference"]["ocr"]["structuralQuality"] == "GOOD"
+        assert manifest["reference"]["ocr"]["textQuality"] == "WARNING"
+        quality = json.loads(archive.read("analysis/ocr-quality-report.json"))
+        assert "quality" not in quality
+        assert quality["structuralQuality"] == "GOOD"
+        assert quality["textQuality"] == "WARNING"
         assert manifest["nextAction"] == "TRANSLATE_AND_REVIEW_OCR"
         assert "analysis/ocr-quality-report.json" in names
         assert "AI-Translated" in manifest["expected_output"]["filename"]
@@ -445,3 +455,4 @@ def test_gui_exposes_only_three_polish_modes_and_config_is_v2(client):
     assert client.get("/api/workpacks/config").json()["ocrWorkerEnabled"] is False
     javascript = client.get("/static/app.js").text
     assert "Pobierz pakiet do OCR i tłumaczenia" in javascript
+    assert "Struktura OCR poprawna — tekst wymaga korekty językowej" in javascript

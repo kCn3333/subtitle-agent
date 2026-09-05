@@ -17,8 +17,10 @@ def _srt(count: int, first_ms: int = 46_463, spacing_ms: int = 3_967) -> bytes:
 
 def test_quality_report_accepts_small_count_and_timing_differences():
     content = _srt(750)
-    report = quality_report(content, {"cueCount": 760, "firstMs": 46_463, "lastMs": 3_017_746})
-    assert report["quality"] in {"GOOD", "WARNING"}
+    dictionary = {"english", "subtitle", "sentence"}
+    report = quality_report(content, {"cueCount": 760, "firstMs": 46_463, "lastMs": 3_017_746}, dictionary)
+    assert report["structuralQuality"] == "GOOD"
+    assert report["textQuality"] == "GOOD"
     assert report["cueCountRatio"] == pytest.approx(750 / 760)
     assert report["timestampsMonotonic"] is True
     assert report["replacementCharacterCount"] == 0
@@ -28,11 +30,36 @@ def test_quality_report_records_suspicious_text_metrics():
     report = quality_report(
         b"1\n00:00:01,000 --> 00:00:02,000\nBad\xef\xbf\xbd\n\n"
         b"2\n00:00:03,000 --> 00:00:04,000\nX\n",
-        {"cueCount": 2, "firstMs": 1000, "lastMs": 3000},
+        {"cueCount": 2, "firstMs": 1000, "lastMs": 3000}, {"bad", "x"},
     )
-    assert report["quality"] == "POOR"
+    assert report["structuralQuality"] == "GOOD"
+    assert report["textQuality"] == "POOR"
     assert report["replacementCharacterCount"] == 1
     assert report["isolatedSingleGlyphCueCount"] == 1
+
+
+def test_text_quality_detects_common_ocr_language_artifacts():
+    content = (
+        b"1\n00:00:01,000 --> 00:00:02,000\nHello Zorblax | dont miXed wo/rd\n\n"
+        b"2\n00:00:03,000 --> 00:00:04,000\nThis is readable English dialogue text\n"
+    )
+    dictionary = {"hello", "this", "is", "readable", "english", "dialogue", "text", "word", "mixed"}
+    report = quality_report(content, {"cueCount": 2, "firstMs": 1000, "lastMs": 3000}, dictionary)
+    assert report["structuralQuality"] == "GOOD"
+    assert report["textQuality"] == "WARNING"
+    assert report["pipeAsLetterCount"] == 1
+    assert report["internalWordSlashCount"] == 1
+    assert report["unusualCapitalizationCount"] == 1
+    assert report["missingApostropheCount"] == 1
+    assert report["unrecognizedProperNameCount"] == 1
+    assert report["outOfDictionaryWordRatio"] > 0
+
+
+def test_text_quality_is_unknown_without_dictionary_or_enough_text():
+    report = quality_report(b"1\n00:00:01,000 --> 00:00:02,000\nHello there\n",
+                            {"cueCount": 1, "firstMs": 1000, "lastMs": 1000}, frozenset())
+    assert report["structuralQuality"] == "GOOD"
+    assert report["textQuality"] == "UNKNOWN"
 
 
 def test_quality_report_rejects_reversed_timestamps():
