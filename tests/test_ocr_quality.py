@@ -64,6 +64,17 @@ def test_text_quality_detects_slash_at_start_of_word():
     assert "Podejrzany ukośnik zamiast litery: 1" in report["textWarnings"]
 
 
+def test_text_quality_detects_slash_runs_but_ignores_word_separator():
+    content = (
+        b"1\n00:00:01,000 --> 00:00:02,000\n//l give you the credits.\n\n"
+        b"2\n00:00:03,000 --> 00:00:04,000\n/l or l/ and and/or.\n"
+    )
+    dictionary = {"i", "give", "you", "the", "credits", "or", "and"}
+    report = quality_report(content, {"cueCount": 2, "firstMs": 1000, "lastMs": 3000}, dictionary)
+    assert report["slashAsLetterCount"] == 3
+    assert "Podejrzany ukośnik zamiast litery: 3" in report["textWarnings"]
+
+
 def test_text_quality_is_unknown_without_dictionary_or_enough_text():
     report = quality_report(b"1\n00:00:01,000 --> 00:00:02,000\nHello there\n",
                             {"cueCount": 1, "firstMs": 1000, "lastMs": 1000}, frozenset())

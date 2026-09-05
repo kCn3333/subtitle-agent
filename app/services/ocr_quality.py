@@ -9,9 +9,7 @@ TIMING = re.compile(
     r"(?P<eh>\d{2}):(?P<em>\d{2}):(?P<es>\d{2}),(?P<ems>\d{3})$"
 )
 WORD = re.compile(r"[A-Za-z]+(?:['’][A-Za-z]+)?")
-SLASH_AS_LETTER = re.compile(
-    r"(?i)(?<!\w)/(?=[a-z]{2,})|(?<=[a-z]{2})/(?!\w)|(?<=[a-z])/(?=[a-z])"
-)
+SLASH_RUN = re.compile(r"/+")
 MISSING_APOSTROPHE = {
     "arent", "cant", "couldnt", "didnt", "doesnt", "dont", "hadnt", "hasnt", "havent",
     "hed", "hell", "hes", "id", "ill", "im", "isnt", "itll", "its", "ive", "shouldnt",
@@ -27,6 +25,21 @@ class InvalidOcrSrt(ValueError):
 def _milliseconds(match: re.Match[str], prefix: str) -> int:
     return ((int(match[f"{prefix}h"]) * 60 + int(match[f"{prefix}m"])) * 60
             + int(match[f"{prefix}s"])) * 1000 + int(match[f"{prefix}ms"])
+
+
+def _slash_as_letter_count(text: str, dictionary: frozenset[str] | set[str] | None) -> int:
+    suspicious = 0
+    for match in SLASH_RUN.finditer(text):
+        left_match = re.search(r"[A-Za-z]+$", text[:match.start()])
+        right_match = re.match(r"[A-Za-z]+", text[match.end():])
+        left = left_match.group(0).casefold() if left_match else ""
+        right = right_match.group(0).casefold() if right_match else ""
+        if not left and not right:
+            continue
+        if left and right and dictionary is not None and left in dictionary and right in dictionary:
+            continue
+        suspicious += 1
+    return suspicious
 
 
 @lru_cache(maxsize=1)
@@ -105,7 +118,7 @@ def quality_report(content: bytes, graphic_timeline: dict | None,
     out_of_dictionary_ratio = (len(unknown_words) / len(dictionary_words)
                                if effective_dictionary is not None and dictionary_words else None)
     pipe_as_i = len(re.findall(r"(?i)(?<!\w)\|(?!\w)|(?<=[a-z])\||\|(?=[a-z])", dialogue))
-    slash_as_letter = len(SLASH_AS_LETTER.findall(dialogue))
+    slash_as_letter = _slash_as_letter_count(dialogue, effective_dictionary)
     unusual_capitalization = sum(
         any(character.isupper() for character in word[1:]) and not word.isupper()
         for word in words
