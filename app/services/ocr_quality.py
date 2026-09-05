@@ -1,11 +1,21 @@
 import re
 import unicodedata
+from functools import lru_cache
+from pathlib import Path
 
 
 TIMING = re.compile(
     r"^(?P<sh>\d{2}):(?P<sm>\d{2}):(?P<ss>\d{2}),(?P<sms>\d{3})\s+-->\s+"
     r"(?P<eh>\d{2}):(?P<em>\d{2}):(?P<es>\d{2}),(?P<ems>\d{3})$"
 )
+WORD = re.compile(r"[A-Za-z]+(?:['’][A-Za-z]+)?")
+INTERNAL_SLASH = re.compile(r"(?i)\b[a-z]+/[a-z]+\b")
+MISSING_APOSTROPHE = {
+    "arent", "cant", "couldnt", "didnt", "doesnt", "dont", "hadnt", "hasnt", "havent",
+    "hed", "hell", "hes", "id", "ill", "im", "isnt", "itll", "its", "ive", "shouldnt",
+    "theyre", "theyve", "wasnt", "werent", "wont", "wouldnt", "youd", "youll", "youre", "youve",
+}
+DICTIONARY_PATHS = (Path("/usr/share/dict/american-english"), Path("/usr/share/dict/words"))
 
 
 class InvalidOcrSrt(ValueError):
@@ -17,7 +27,18 @@ def _milliseconds(match: re.Match[str], prefix: str) -> int:
             + int(match[f"{prefix}s"])) * 1000 + int(match[f"{prefix}ms"])
 
 
-def quality_report(content: bytes, graphic_timeline: dict | None) -> dict:
+@lru_cache(maxsize=1)
+def _english_dictionary() -> frozenset[str] | None:
+    source = next((path for path in DICTIONARY_PATHS if path.is_file()), None)
+    if source is None:
+        return None
+    words = {line.strip().casefold().replace("’", "'") for line in source.read_text(
+        encoding="utf-8", errors="ignore").splitlines() if line.strip()}
+    return frozenset(words) if words else None
+
+
+def quality_report(content: bytes, graphic_timeline: dict | None,
+                   dictionary: frozenset[str] | set[str] | None = None) -> dict:
     try:
         text = content.decode("utf-8-sig", errors="strict")
     except UnicodeDecodeError as exc:
@@ -63,26 +84,84 @@ def quality_report(content: bytes, graphic_timeline: dict | None) -> dict:
     isolated_ratio = isolated / len(cues)
     empty_ratio = empty / len(cues)
 
-    poor = (replacement_count > 0 or control_count > 0 or empty_ratio > .10 or letter_ratio < .35
-            or (count_ratio is not None and not .70 <= count_ratio <= 1.30)
-            or (first_delta is not None and abs(first_delta) > 10_000)
-            or (last_delta is not None and abs(last_delta) > 15_000))
-    warning = (empty > 0 or isolated_ratio > .05 or letter_ratio < .55
-               or (count_ratio is not None and not .90 <= count_ratio <= 1.10)
-               or (first_delta is not None and abs(first_delta) > 2_000)
-               or (last_delta is not None and abs(last_delta) > 5_000))
-    rating = "POOR" if poor else "WARNING" if warning else "GOOD"
-    messages: list[str] = []
+    structural_poor = (empty_ratio > .10
+                       or (count_ratio is not None and not .70 <= count_ratio <= 1.30)
+                       or (first_delta is not None and abs(first_delta) > 10_000)
+                       or (last_delta is not None and abs(last_delta) > 15_000))
+    structural_warning = (empty > 0
+                          or (count_ratio is not None and not .90 <= count_ratio <= 1.10)
+                          or (first_delta is not None and abs(first_delta) > 2_000)
+                          or (last_delta is not None and abs(last_delta) > 5_000))
+    structural_quality = "POOR" if structural_poor else "WARNING" if structural_warning else "GOOD"
+
+    effective_dictionary = dictionary if dictionary is not None else _english_dictionary()
+    words = [match.group(0) for match in WORD.finditer(dialogue)]
+    normalized_words = [word.casefold().replace("’", "'") for word in words]
+    dictionary_words = [word for word in normalized_words if len(word) > 1 or word in {"a", "i"}]
+    unknown_words = ([word for word in dictionary_words if word not in effective_dictionary]
+                     if effective_dictionary is not None else [])
+    out_of_dictionary_ratio = (len(unknown_words) / len(dictionary_words)
+                               if effective_dictionary is not None and dictionary_words else None)
+    pipe_as_i = len(re.findall(r"(?i)(?<!\w)\|(?!\w)|(?<=[a-z])\||\|(?=[a-z])", dialogue))
+    internal_slashes = len(INTERNAL_SLASH.findall(dialogue))
+    unusual_capitalization = sum(
+        any(character.isupper() for character in word[1:]) and not word.isupper()
+        for word in words
+    )
+    missing_apostrophes = sum(word in MISSING_APOSTROPHE for word in normalized_words)
+    unknown_proper_names: list[str] = []
+    if effective_dictionary is not None:
+        for cue in cues:
+            for line in cue[2].splitlines():
+                line_words = WORD.findall(line)
+                for word in line_words[1:]:
+                    normalized = word.casefold().replace("’", "'")
+                    if word[:1].isupper() and not word.isupper() and normalized not in effective_dictionary:
+                        unknown_proper_names.append(word)
+    suspicious_count = (replacement_count + control_count + pipe_as_i + internal_slashes
+                        + unusual_capitalization + missing_apostrophes + len(unknown_proper_names))
+    text_poor = (replacement_count > 0 or control_count > 0 or letter_ratio < .35
+                 or (out_of_dictionary_ratio is not None and len(dictionary_words) >= 20
+                     and out_of_dictionary_ratio > .65))
+    text_warning = (suspicious_count > 0 or isolated_ratio > .05 or letter_ratio < .55
+                    or (out_of_dictionary_ratio is not None and len(dictionary_words) >= 20
+                        and out_of_dictionary_ratio > .35))
+    if text_poor:
+        text_quality = "POOR"
+    elif text_warning:
+        text_quality = "WARNING"
+    elif effective_dictionary is None or len(dictionary_words) < 20:
+        text_quality = "UNKNOWN"
+    else:
+        text_quality = "GOOD"
+
+    structural_messages: list[str] = []
+    text_messages: list[str] = []
+    if structural_quality != "GOOD":
+        structural_messages.append("Timeline OCR różni się od technicznego timeline'u referencji")
     if replacement_count:
-        messages.append(f"Znaleziono znaki zastępcze U+FFFD: {replacement_count}")
+        text_messages.append(f"Znaleziono znaki zastępcze U+FFFD: {replacement_count}")
     if control_count:
-        messages.append(f"Znaleziono niedozwolone znaki sterujące: {control_count}")
+        text_messages.append(f"Znaleziono niedozwolone znaki sterujące: {control_count}")
     if isolated:
-        messages.append(f"Segmenty z izolowanym pojedynczym glifem: {isolated}")
+        text_messages.append(f"Segmenty z izolowanym pojedynczym glifem: {isolated}")
     if letter_ratio < .55:
-        messages.append(f"Niski udział liter w tekście: {letter_ratio:.1%}")
+        text_messages.append(f"Niski udział liter w tekście: {letter_ratio:.1%}")
+    if pipe_as_i:
+        text_messages.append(f"Podejrzany znak | zamiast I/l: {pipe_as_i}")
+    if internal_slashes:
+        text_messages.append(f"Ukośniki wewnątrz słów: {internal_slashes}")
+    if unusual_capitalization:
+        text_messages.append(f"Nietypowa kapitalizacja słów: {unusual_capitalization}")
+    if missing_apostrophes:
+        text_messages.append(f"Prawdopodobnie brakujące apostrofy: {missing_apostrophes}")
+    if unknown_proper_names:
+        text_messages.append(f"Nierozpoznane potencjalne nazwy własne: {len(unknown_proper_names)}")
+    if out_of_dictionary_ratio is not None and len(dictionary_words) >= 20 and out_of_dictionary_ratio > .35:
+        text_messages.append(f"Wysoki udział słów spoza słownika: {out_of_dictionary_ratio:.1%}")
     return {
-        "quality": rating,
+        "structuralQuality": structural_quality,
+        "textQuality": text_quality,
         "validSrt": True,
         "cueCount": len(cues),
         "graphicCueCount": expected_count or None,
@@ -101,8 +180,20 @@ def quality_report(content: bytes, graphic_timeline: dict | None) -> dict:
         "isolatedSingleGlyphCueCount": isolated,
         "isolatedSingleGlyphCueRatio": isolated_ratio,
         "letterRatio": letter_ratio,
+        "wordCount": len(dictionary_words),
+        "dictionaryAvailable": effective_dictionary is not None,
+        "outOfDictionaryWordCount": len(unknown_words) if effective_dictionary is not None else None,
+        "outOfDictionaryWordRatio": out_of_dictionary_ratio,
+        "pipeAsLetterCount": pipe_as_i,
+        "internalWordSlashCount": internal_slashes,
+        "unusualCapitalizationCount": unusual_capitalization,
+        "missingApostropheCount": missing_apostrophes,
+        "unrecognizedProperNameCount": len(unknown_proper_names) if effective_dictionary is not None else None,
+        "unrecognizedProperNamesSample": sorted(set(unknown_proper_names), key=str.casefold)[:20],
         "malformedCueCount": malformed,
         "reversedIntervalCount": reversed_count,
         "timestampsMonotonic": monotonic,
-        "warnings": messages,
+        "structuralWarnings": structural_messages,
+        "textWarnings": text_messages,
+        "warnings": structural_messages + text_messages,
     }

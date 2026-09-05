@@ -671,8 +671,10 @@ class JobManager:
                     selected_srt.write_bytes(ocr_result.content)
                     reference_files.append(selected_srt)
                     reference_timeline = timeline(selected_srt, "ocr-reference")
-                    if ocr_quality["quality"] != "GOOD":
-                        warnings.append(f"Jakość automatycznego OCR: {ocr_quality['quality']}")
+                    if ocr_quality["structuralQuality"] != "GOOD":
+                        warnings.append(f"Jakość struktury OCR: {ocr_quality['structuralQuality']}")
+                    if ocr_quality["textQuality"] != "GOOD":
+                        warnings.append(f"Jakość tekstu OCR: {ocr_quality['textQuality']}")
                     warnings.extend(ocr_quality["warnings"])
                     warnings.extend(ocr_result.warnings)
                 except (InvalidOcrSrt, OcrWorkerError) as exc:
@@ -747,7 +749,10 @@ class JobManager:
                 reference_entry["requiresOcr"] = needs_ocr
                 reference_entry["ocr"] = ocr_result.manifest() if ocr_result else None
                 if reference_entry["ocr"]:
-                    reference_entry["ocr"]["quality"] = ocr_quality["quality"]
+                    reference_entry["ocr"].update({
+                        "structuralQuality": ocr_quality["structuralQuality"],
+                        "textQuality": ocr_quality["textQuality"],
+                    })
         expected_kind = ("AI-Synced" if requirements.name == "PREPARE_SYNC" else
                          "AI-Translated" if requirements.name == "PREPARE_TRANSLATION" else "AI-Reviewed")
         expected = f"{safe_filename(media_path.stem)}.{expected_kind}-v001.pl.srt"
@@ -835,7 +840,9 @@ class JobManager:
                   "mediaDirectoryModified": False}
         if requirements.name == "PREPARE_TRANSLATION":
             report.update({"requiresOcr": needs_ocr, "nextAction": manifest["nextAction"],
-                           "ocr": ({**ocr_result.manifest(), "quality": ocr_quality["quality"]}
+                           "ocr": ({**ocr_result.manifest(),
+                                    "structuralQuality": ocr_quality["structuralQuality"],
+                                    "textQuality": ocr_quality["textQuality"]}
                                    if ocr_result else None)})
         self._save_report(job_id, report, str(media_path))
         if requirements.name == "INSPECT":
