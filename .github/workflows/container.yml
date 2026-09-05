@@ -52,8 +52,7 @@ jobs:
           context: .
           target: test
           platforms: linux/amd64
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=app
       - id: build
         uses: docker/build-push-action@v6
         with:
@@ -66,8 +65,8 @@ jobs:
           build-args: |
             VCS_REF=${{ github.sha }}
             VERSION=${{ steps.meta.outputs.version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=app
+          cache-to: type=gha,scope=app,mode=min,ignore-error=true
       - name: Test container
         shell: bash
         run: |
@@ -93,7 +92,7 @@ jobs:
           tags: subtitle-agent-ocr:test
           labels: ${{ steps.ocr-meta.outputs.labels }}
           cache-from: type=gha,scope=ocr
-          cache-to: type=gha,mode=max,scope=ocr
+          cache-to: type=gha,scope=ocr,mode=min,ignore-error=true
       - name: Test OCR worker
         shell: bash
         run: |
@@ -128,7 +127,7 @@ jobs:
           build-args: |
             VCS_REF=${{ github.sha }}
             VERSION=${{ steps.meta.outputs.version }}
-          cache-from: type=gha
+          cache-from: type=gha,scope=app
       - if: github.event_name != 'pull_request'
         id: publish-ocr
         uses: docker/build-push-action@v6
