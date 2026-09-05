@@ -5,25 +5,27 @@
   <title>{{ app_name }}</title><link rel="stylesheet" href="/static/styles.css">
 </head>
 <body data-app-mode="{{ app_mode }}"><main>
-  <header><div><p class="eyebrow">WORKPACK · PACZKA DO CHATGPT</p><h1>{{ app_name }}</h1>
-    <p>Bezpiecznie zbierz referencję, polskie napisy i analizę techniczną w jednym ZIP.</p></div><span class="health">● ONLINE</span></header>
+  <header><h1>{{ app_name }}</h1><span class="health">● ONLINE</span></header>
   <section class="card"><form id="job-form">
     <label for="media-path">Pełna ścieżka do filmu lub odcinka</label>
     <div class="row"><input id="media-path" required placeholder="/media/shows/Example/Season 1/example.mkv">
-      <select id="task-type" aria-label="Tryb zadania">
-        <option value="INSPECT">Sprawdź napisy</option>
-        <option value="PREPARE_SYNC">Przygotuj do synchronizacji</option>
-        <option value="PREPARE_TRANSLATION">Przygotuj do tłumaczenia</option>
-      </select>
+      <span class="select-wrap"><select id="task-type" aria-label="Tryb zadania">
+          <option value="INSPECT">Sprawdź napisy</option>
+          <option value="PREPARE_SYNC">Przygotuj do synchronizacji</option>
+          <option value="PREPARE_TRANSLATION">Przygotuj do tłumaczenia</option>
+        </select></span>
       <button>Uruchom</button></div></form></section>
-  <section class="status card"><div><span>Status zadania</span><strong id="status">BRAK ZADANIA</strong></div>
-    <div><span>Postęp</span><strong id="progress">0%</strong></div><div class="current"><span>Aktualnie</span><strong id="current-activity">Oczekiwanie</strong></div></section>
+  <section class="status card" aria-labelledby="job-status-title">
+    <div class="status-head"><div><span id="job-status-title">Status zadania</span><strong id="status">BRAK ZADANIA</strong></div><strong id="progress">0%</strong></div>
+    <div class="progress-track" role="progressbar" aria-label="Postęp zadania" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="progress-bar"></span></div>
+    <div class="status-foot"><div class="current"><span>Aktualnie</span><strong id="current-activity">Oczekiwanie</strong></div>
+      <a id="download" class="button download-button" hidden>Pobierz pakiet ZIP</a></div>
+  </section>
   <section class="console-card"><div class="console-head"><span>Konsola postępu</span><button id="clear" type="button">Wyczyść widok konsoli</button></div>
     <div id="console" class="console" aria-live="polite"></div></section>
   <section id="results" class="card results" hidden><h2>Wynik analizy</h2><div id="result-content"></div>
-    <div id="reference-choice" hidden><label>Wybierz wykrytą referencję<select id="reference-source"></select></label>
+    <div id="reference-choice" hidden><label>Wybierz wykrytą referencję<span class="select-wrap"><select id="reference-source"></select></span></label>
       <button id="rebuild" type="button">Zbuduj ponownie z tą referencją</button></div>
-    <a id="download" class="button" hidden>Pobierz pakiet ZIP</a>
     <p class="safe-note">Film i biblioteka mediów pozostają tylko do odczytu. Paczka powstaje wyłącznie w /data.</p></section>
   {% if app_mode == "ADVANCED" %}<section class="card"><h2>Tryb ADVANCED</h2><p>Historyczne endpointy analizy, semantyki i publikacji są aktywne. Podstawowy ekran nadal tworzy workpack.</p></section>{% endif %}
 </main><script src="/static/app.js"></script></body></html>
