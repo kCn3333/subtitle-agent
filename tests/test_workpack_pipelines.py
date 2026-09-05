@@ -289,6 +289,11 @@ def test_translation_vobsub_builds_downloadable_ocr_pack(client, media_file, set
         assert manifest["reference"]["ocr"]["cueCount"] == 760
         assert manifest["reference"]["ocr"]["structuralQuality"] == "GOOD"
         assert manifest["reference"]["ocr"]["textQuality"] == "WARNING"
+        assert manifest["reference"]["ocr"]["structuralWarnings"] == []
+        assert manifest["reference"]["ocr"]["textWarnings"]
+        assert "warnings" not in manifest["reference"]["ocr"]
+        ranking = json.loads(archive.read("analysis/source-ranking.json"))
+        assert ranking["polish"] == []
         quality = json.loads(archive.read("analysis/ocr-quality-report.json"))
         assert "quality" not in quality
         assert quality["structuralQuality"] == "GOOD"

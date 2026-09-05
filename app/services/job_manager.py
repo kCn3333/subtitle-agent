@@ -749,10 +749,15 @@ class JobManager:
                 reference_entry["requiresOcr"] = needs_ocr
                 reference_entry["ocr"] = ocr_result.manifest() if ocr_result else None
                 if reference_entry["ocr"]:
+                    reference_entry["ocr"].pop("warnings", None)
                     reference_entry["ocr"].update({
                         "structuralQuality": ocr_quality["structuralQuality"],
                         "textQuality": ocr_quality["textQuality"],
+                        "structuralWarnings": ocr_quality["structuralWarnings"],
+                        "textWarnings": ocr_quality["textWarnings"],
                     })
+                    if ocr_result.warnings:
+                        reference_entry["ocr"]["workerWarnings"] = ocr_result.warnings
         expected_kind = ("AI-Synced" if requirements.name == "PREPARE_SYNC" else
                          "AI-Translated" if requirements.name == "PREPARE_TRANSLATION" else "AI-Reviewed")
         expected = f"{safe_filename(media_path.stem)}.{expected_kind}-v001.pl.srt"

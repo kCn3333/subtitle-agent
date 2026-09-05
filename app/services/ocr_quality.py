@@ -9,7 +9,9 @@ TIMING = re.compile(
     r"(?P<eh>\d{2}):(?P<em>\d{2}):(?P<es>\d{2}),(?P<ems>\d{3})$"
 )
 WORD = re.compile(r"[A-Za-z]+(?:['’][A-Za-z]+)?")
-INTERNAL_SLASH = re.compile(r"(?i)\b[a-z]+/[a-z]+\b")
+SLASH_AS_LETTER = re.compile(
+    r"(?i)(?<!\w)/(?=[a-z]{2,})|(?<=[a-z]{2})/(?!\w)|(?<=[a-z])/(?=[a-z])"
+)
 MISSING_APOSTROPHE = {
     "arent", "cant", "couldnt", "didnt", "doesnt", "dont", "hadnt", "hasnt", "havent",
     "hed", "hell", "hes", "id", "ill", "im", "isnt", "itll", "its", "ive", "shouldnt",
@@ -103,7 +105,7 @@ def quality_report(content: bytes, graphic_timeline: dict | None,
     out_of_dictionary_ratio = (len(unknown_words) / len(dictionary_words)
                                if effective_dictionary is not None and dictionary_words else None)
     pipe_as_i = len(re.findall(r"(?i)(?<!\w)\|(?!\w)|(?<=[a-z])\||\|(?=[a-z])", dialogue))
-    internal_slashes = len(INTERNAL_SLASH.findall(dialogue))
+    slash_as_letter = len(SLASH_AS_LETTER.findall(dialogue))
     unusual_capitalization = sum(
         any(character.isupper() for character in word[1:]) and not word.isupper()
         for word in words
@@ -118,7 +120,7 @@ def quality_report(content: bytes, graphic_timeline: dict | None,
                     normalized = word.casefold().replace("’", "'")
                     if word[:1].isupper() and not word.isupper() and normalized not in effective_dictionary:
                         unknown_proper_names.append(word)
-    suspicious_count = (replacement_count + control_count + pipe_as_i + internal_slashes
+    suspicious_count = (replacement_count + control_count + pipe_as_i + slash_as_letter
                         + unusual_capitalization + missing_apostrophes + len(unknown_proper_names))
     text_poor = (replacement_count > 0 or control_count > 0 or letter_ratio < .35
                  or (out_of_dictionary_ratio is not None and len(dictionary_words) >= 20
@@ -149,8 +151,8 @@ def quality_report(content: bytes, graphic_timeline: dict | None,
         text_messages.append(f"Niski udział liter w tekście: {letter_ratio:.1%}")
     if pipe_as_i:
         text_messages.append(f"Podejrzany znak | zamiast I/l: {pipe_as_i}")
-    if internal_slashes:
-        text_messages.append(f"Ukośniki wewnątrz słów: {internal_slashes}")
+    if slash_as_letter:
+        text_messages.append(f"Podejrzany ukośnik zamiast litery: {slash_as_letter}")
     if unusual_capitalization:
         text_messages.append(f"Nietypowa kapitalizacja słów: {unusual_capitalization}")
     if missing_apostrophes:
@@ -185,7 +187,7 @@ def quality_report(content: bytes, graphic_timeline: dict | None,
         "outOfDictionaryWordCount": len(unknown_words) if effective_dictionary is not None else None,
         "outOfDictionaryWordRatio": out_of_dictionary_ratio,
         "pipeAsLetterCount": pipe_as_i,
-        "internalWordSlashCount": internal_slashes,
+        "slashAsLetterCount": slash_as_letter,
         "unusualCapitalizationCount": unusual_capitalization,
         "missingApostropheCount": missing_apostrophes,
         "unrecognizedProperNameCount": len(unknown_proper_names) if effective_dictionary is not None else None,
