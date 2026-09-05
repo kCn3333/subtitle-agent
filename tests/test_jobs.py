@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from app.models.job import AlignmentMode, JobStatus
-from app.services.job_manager import JobManager
+from app.services.job_manager import JobManager, display_size
 from app.services.process_runner import ProcessTimeoutError
 
 
@@ -273,3 +273,8 @@ def test_publish_diagnostic_is_safe_when_disabled(client):
     response = client.get("/api/jobs/publishing/config")
     assert response.status_code == 200
     assert response.json()["enabled"] is False
+
+
+def test_display_size_uses_readable_units():
+    assert display_size(512_000) == "500.0 KB"
+    assert display_size(2_523_247) == "2.41 MB"

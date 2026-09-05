@@ -273,6 +273,14 @@ def test_translation_vobsub_builds_downloadable_ocr_pack(client, media_file, set
     assert body["report"]["incompleteReasons"] == []
     assert body["report"]["workpack"] is not None
     assert calls == ["ffmpeg", "mkvextract"]
+    event_messages = [event.message for event in client.app.state.jobs.events(body["jobId"])]
+    assert any(message.startswith("ffprobe: kontener=") for message in event_messages)
+    assert any(message.startswith("Źródła napisów:") for message in event_messages)
+    assert any(message.startswith("Wybrano referencję:") for message in event_messages)
+    assert any(message.startswith("Ekstrakcja zakończona:") for message in event_messages)
+    assert any(message.startswith("Timeline graficzny:") for message in event_messages)
+    assert any(message.startswith("OCR zakończony:") for message in event_messages)
+    assert any(message.startswith("Archiwum:") for message in event_messages)
     downloaded = client.get(f"/api/tasks/{body['jobId']}/download")
     assert downloaded.status_code == 200
     with zipfile.ZipFile(__import__("io").BytesIO(downloaded.content)) as archive:
@@ -459,7 +467,9 @@ def test_gui_exposes_only_three_polish_modes_and_config_is_v2(client):
     assert client.get("/api/workpacks/config").json()["schemaVersion"] == "subtitle-workpack-v2"
     assert client.get("/api/workpacks/config").json()["ocrWorkerEnabled"] is False
     javascript = client.get("/static/app.js").text
-    assert "Pobierz pakiet do OCR i tłumaczenia" in javascript
+    assert "Pobierz pakiet do OCR i tłumaczenia" not in javascript
+    assert "function fileSize" in javascript
+    assert "fileSize(pack.sizeBytes)" in javascript
     assert "Struktura OCR poprawna — tekst wymaga korekty językowej" in javascript
     assert "requestAnimationFrame" in javascript
     assert "data.progress" in javascript
