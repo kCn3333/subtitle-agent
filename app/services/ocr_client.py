@@ -11,6 +11,19 @@ class OcrWorkerError(RuntimeError):
     pass
 
 
+async def worker_available(worker_url: str | None, timeout: float = 3.0) -> bool:
+    if not worker_url:
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(f"{worker_url.rstrip('/')}/health")
+        payload = response.json()
+        return bool(response.status_code == 200 and payload.get("status") == "ok"
+                    and payload.get("tesseractReady") is True)
+    except (httpx.HTTPError, ValueError, TypeError):
+        return False
+
+
 @dataclass(frozen=True)
 class OcrResult:
     content: bytes

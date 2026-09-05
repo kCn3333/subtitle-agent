@@ -6,6 +6,7 @@ from fastapi.responses import FileResponse
 
 from app.models.job import CreateTaskRequest, PrepareWorkpackRequest, RebuildWorkpackRequest, WorkpackTaskType
 from app.services.media_analysis import UserInputError
+from app.services.ocr_client import worker_available
 from app.services.workpack import sha256_file
 
 router = APIRouter(prefix="/api/workpacks", tags=["workpacks"])
@@ -25,6 +26,13 @@ async def config(request: Request) -> dict:
             "maxPolishCandidates": settings.workpack_max_polish_candidates,
             "maxArchiveBytes": settings.workpack_max_archive_bytes, "maxFiles": settings.workpack_max_files,
             "ocrWorkerEnabled": settings.ocr_worker_url is not None}
+
+
+@router.get("/ocr-health")
+async def ocr_health(request: Request) -> dict:
+    worker_url = request.app.state.settings.ocr_worker_url
+    return {"configured": worker_url is not None,
+            "available": await worker_available(worker_url)}
 
 
 @router.post("", status_code=status.HTTP_202_ACCEPTED)
