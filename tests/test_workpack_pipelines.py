@@ -456,3 +456,6 @@ def test_gui_exposes_only_three_polish_modes_and_config_is_v2(client):
     javascript = client.get("/static/app.js").text
     assert "Pobierz pakiet do OCR i tłumaczenia" in javascript
     assert "Struktura OCR poprawna — tekst wymaga korekty językowej" in javascript
+    assert "requestAnimationFrame" in javascript
+    assert "data.progress" in javascript
+    assert "Pobieranie pliku" in javascript
