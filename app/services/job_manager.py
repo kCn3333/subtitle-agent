@@ -13,7 +13,7 @@ from app.models.job import AlignmentMode, JobEvent, JobStatus, WorkpackTaskType
 from app.models.media import MediaIdentity
 from app.services.media_analysis import (
     UserInputError, discover_external_subtitles, discover_external_subtitles_with_rejections, extract_reference,
-    parse_media_identity, probe_media, rank_english, rank_polish, validate_media_path,
+    parse_media_identity, probe_media, rank_english, rank_polish, reference_source_id as subtitle_source_id, validate_media_path,
 )
 from app.services.inspection_service import InspectionService
 from app.services.artifact_retention import remove_job_directory, remove_previous_archives
@@ -217,13 +217,17 @@ class JobManager:
         self._conditions[job_id] = asyncio.Condition(); await self._queue.put(job_id)
         return self.get(job_id)
 
-    async def rebuild_workpack(self, job_id: str, reference_source_id: str) -> None:
+    async def rebuild_workpack(self, job_id: str, reference_source_id: str) -> int:
         job = self.get(job_id)
         if not job or job.get("job_type") != "PREPARE_WORKPACK" or not job.get("report"):
             raise UserInputError("Nie znaleziono danych workpacka")
+        if job["status"] not in TERMINAL:
+            raise UserInputError("Zadanie jest nadal przetwarzane")
         detected = job["report"].get("englishRanking") or []
-        if reference_source_id not in {f"{item.get('sourceType')}:{item.get('streamIndex')}" for item in detected}:
+        if reference_source_id not in {subtitle_source_id(item) for item in detected}:
             raise UserInputError("Wybrana referencja nie została wykryta w analizie")
+        after = max((event.sequence for event in self.events(job_id)), default=0)
+        await self._emit(job_id, "INFO", JobStatus.QUEUED, "Zatwierdzono referencję; przygotowanie paczki", 0)
         async def run() -> None:
             try:
                 task_type = WorkpackTaskType(job.get("task_type") or WorkpackTaskType.SYNC_AND_LANGUAGE_REVIEW)
@@ -237,6 +241,7 @@ class JobManager:
                 with self._lock, self._connect() as db: db.execute("UPDATE jobs SET error_message=? WHERE id=?", (message, job_id))
                 await self._emit(job_id, "ERROR", JobStatus.FAILED, message, 100)
         asyncio.create_task(run())
+        return after
 
     def get(self, job_id: str) -> dict | None:
         with self._lock, self._connect() as db:
@@ -586,25 +591,30 @@ class JobManager:
         selected = None
         if requested_reference:
             selected = next((item for item in english_ranking
-                             if f"{item.get('sourceType')}:{item.get('streamIndex')}" == requested_reference), None)
+                             if subtitle_source_id(item) == requested_reference), None)
         else:
             eligible_english = [item for item in english_ranking if
-                                item.get("type") == "text" or requirements.accept_graphic_reference]
+                                item.get("sourceType") == "embedded" and
+                                (item.get("type") == "text" or requirements.accept_graphic_reference)]
             if eligible_english and eligible_english[0].get("score", 0) > 0:
                 selected = eligible_english[0]
+        external_confirmation = bool(not selected and not requested_reference and any(
+            item.get("sourceType") == "external" for item in english_ranking))
         margin = self.settings.workpack_reference_score_margin
         ambiguous = bool(selected and not requested_reference and len(english_ranking) > 1 and
+                         english_ranking[1].get("sourceType") == "embedded" and
                          selected.get("score", 0) - english_ranking[1].get("score", 0) < margin)
         alternatives = []
         if ambiguous and self.settings.workpack_include_reference_alternatives:
-            alternatives = [item for item in english_ranking if item is not selected][
+            alternatives = [item for item in english_ranking if item is not selected and item.get("sourceType") == "embedded"][
                 :self.settings.workpack_max_reference_alternatives]
             await self._emit(job_id, "WARNING", JobStatus.REFERENCE_AMBIGUOUS,
                              f"Wybór niejednoznaczny: różnica jest mniejsza niż {margin} punktów", 36)
         warnings: list[str] = []
         if ambiguous: warnings.append("Wybór angielskiej referencji jest niejednoznaczny")
         if not selected:
-            warnings.append("Nie znaleziono wiarygodnej angielskiej referencji")
+            warnings.append("Wykryto zewnętrzne napisy EN. Czy użyć wybranego pliku jako wzorca? Wymagane potwierdzenie."
+                            if external_confirmation else "Nie znaleziono wiarygodnej angielskiej referencji")
             await self._emit(job_id, "WARNING", JobStatus.NO_ENGLISH_REFERENCE, warnings[-1], 40)
         else:
             await self._emit(
@@ -619,7 +629,7 @@ class JobManager:
                 (selected.get("type") == "text" or requirements.accept_graphic_reference) and
                 not (requirements.name == "INSPECT" and selected.get("type") == "graphic")):
             await self._emit(job_id, "INFO", JobStatus.EXTRACTING_REFERENCE,
-                             f"Ekstrakcja strumienia {selected.get('streamIndex')} ({selected.get('codec')})", 43)
+                             f"Przygotowanie referencji: {candidate_label(selected)}", 43)
             extraction = await extract_embedded(selected, media_path, job_dir / "reference" / "selected",
                                                 self.settings.ffmpeg_timeout_seconds)
             reference_files = extraction.files
@@ -792,7 +802,7 @@ class JobManager:
             )
         reference_entry = None
         if selected:
-            reference_entry = {key: selected.get(key) for key in ("streamIndex", "codec", "type", "language", "title", "default", "forced", "hearingImpaired", "score", "reasons")}
+            reference_entry = {key: selected.get(key) for key in ("sourceType", "name", "streamIndex", "codec", "type", "language", "title", "default", "forced", "hearingImpaired", "score", "reasons")}
             reference_entry.update({"confidence": "AMBIGUOUS" if ambiguous else "RECOMMENDED",
                                     "files": [{"name": path.relative_to(job_dir).as_posix(), "sha256": sha256_file(path)} for path in reference_files],
                                     "cueCount": ((reference_timeline or {}).get("cue_count") or
@@ -900,6 +910,7 @@ class JobManager:
                                                 if item.get("languageHint") in {"pl", "pol", "polish"}],
                   "ignoredUnrelatedSubtitleFiles": ignored_external,
                   "selectedEnglish": selected, "referenceAlternatives": alternatives,
+                  "externalReferenceConfirmationRequired": external_confirmation,
                   "polishCandidates": polish,
                   "incompatiblePolishCandidates": inspection["incompatiblePolishCandidates"],
                   "synchronizationHypotheses": hypotheses,
@@ -950,7 +961,7 @@ class JobManager:
                 )
 
                 await self._emit(job_id, "INFO", JobStatus.ANALYZING_CANDIDATES, "Klasyfikacja źródeł angielskich i polskich", 70)
-                english_ranking = rank_english(embedded, external)
+                english_ranking = rank_english(embedded, [])
                 polish_ranking = rank_polish(media, external, embedded)
                 selected_english = english_ranking[0] if english_ranking and english_ranking[0]["score"] > 0 else None
                 selected_polish = next((item for item in polish_ranking if item["eligibleByDefault"] and item["score"] > 0), None)

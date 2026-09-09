@@ -5,7 +5,7 @@ Subtitle Agent analizuje napisy filmu lub odcinka i przygotowuje ZIP do synchron
 ## Co potrafi
 
 - sprawdza parametry materiału i dostępne ścieżki napisów;
-- wybiera najlepszą angielską referencję;
+- wybiera wbudowaną angielską referencję; przy jej braku proponuje zewnętrzne napisy EN i wymaga potwierdzenia użytkownika (język SRT rozpoznaje także z treści, bez oznaczenia w nazwie);
 - wykrywa niezgodne polskie napisy i inne wersje materiału;
 - eksportuje napisy tekstowe, PGS oraz DVD/VobSub;
 - opcjonalnie wykonuje OCR napisów graficznych na CPU;

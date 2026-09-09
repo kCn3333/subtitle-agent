@@ -251,14 +251,17 @@ def _penalty_text(item: dict) -> str:
 
 
 def rank_english(embedded: list[dict], external: list[dict]) -> list[dict]:
-    # The reference source for synchronization is deliberately limited to
-    # embedded tracks; external files are evaluated as Polish candidates.
     candidates = []
     for item in embedded:
         language = (item.get("language") or "").casefold()
         label = _penalty_text(item)
         if language in {"eng", "en", "english"} or "english" in label:
             candidates.append({**item, "sourceType": "embedded"})
+    for item in external:
+        language = (item.get("languageHint") or (item.get("analysis") or {}).get("detected_language") or "").casefold()
+        if language in {"en", "eng", "english"} and not item.get("aiSync"):
+            candidates.append({**item, "sourceType": "external", "type": "text",
+                               "language": "eng", "codec": item.get("format")})
     ranked = []
     for item in candidates:
         score, reasons, text = 0, [], _penalty_text(item)
@@ -274,7 +277,7 @@ def rank_english(embedded: list[dict], external: list[dict]) -> list[dict]:
         if item.get("forced"): score -= 40; reasons.append("-40 forced")
         if item.get("hearingImpaired"): score -= 18; reasons.append("-18 hearing impaired")
         ranked.append({**item, "score": score, "reasons": reasons})
-    return sorted(ranked, key=lambda item: (-item["score"], str(item.get("name") or item.get("streamIndex"))))
+    return sorted(ranked, key=lambda item: (item["sourceType"] != "embedded", -item["score"], str(item.get("name") or item.get("streamIndex"))))
 
 
 def rank_polish(media: dict, external: list[dict], embedded: list[dict]) -> list[dict]:
@@ -330,3 +333,7 @@ async def extract_reference(reference: dict | None, media_path: Path, work_dir: 
     result = await extract_subtitle(reference, media_path, work_dir, timeout,
                                     basename=f"reference-stream-{stream_index}", keep_text_original=False)
     return str(result.files[0]) if result.files else None
+
+
+def reference_source_id(item: dict) -> str:
+    return f"external:{item['name']}" if item.get("sourceType") == "external" else f"embedded:{item.get('streamIndex')}"
