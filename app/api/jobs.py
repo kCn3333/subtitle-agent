@@ -115,9 +115,9 @@ async def download_preview(job_id: str, request: Request) -> FileResponse:
 
 
 @router.get("/{job_id}/events")
-async def job_events(job_id: str, request: Request, last_event_id: str | None = Header(default=None)) -> StreamingResponse:
+async def job_events(job_id: str, request: Request, last_event_id: str | None = Header(default=None), after: int = 0) -> StreamingResponse:
     if not request.app.state.jobs.get(job_id):
         raise not_found()
-    after = int(last_event_id) if last_event_id and last_event_id.isdigit() else 0
+    after = int(last_event_id) if last_event_id and last_event_id.isdigit() else max(0, after)
     return StreamingResponse(request.app.state.jobs.stream(job_id, after), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

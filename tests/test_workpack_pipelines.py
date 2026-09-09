@@ -2,6 +2,8 @@ import json
 import hashlib
 import time
 import zipfile
+
+import pytest
 from pathlib import Path
 
 from app.services.subtitle_extraction import SubtitleExtractionResult
@@ -474,3 +476,54 @@ def test_gui_exposes_only_three_polish_modes_and_config_is_v2(client):
     assert "requestAnimationFrame" in javascript
     assert "data.progress" in javascript
     assert "Pobieranie pliku" in javascript
+
+
+@pytest.mark.parametrize("mode, count", [("PREPARE_TRANSLATION", 2), ("PREPARE_SYNC", 1)])
+def test_external_english_requires_confirmation_and_copies_selected_file(client, media_file, settings, mode, count):
+    content = "1\n00:00:01,000 --> 00:00:02,000\nYou are not the one and you know it is true.\n"
+    external = media_file.with_suffix('.srt')
+    external.write_text(content)
+    other = media_file.with_name(media_file.stem + '.eng.srt')
+    if count > 1:
+        other.write_text(content.replace('true', 'false'))
+    if mode == 'PREPARE_SYNC':
+        media_file.with_name(media_file.stem + '.pl.srt').write_text(content.replace('You are not the one and you know it is true.', 'To jest polski tekst.'))
+    response = client.post('/api/tasks', json={'mediaPath': str(media_file), 'mode': mode})
+    job_id = response.json()['jobId']
+    body = _wait(client, job_id)
+    assert body['status'] == 'WORKPACK_INCOMPLETE'
+    assert body['report']['selectedEnglish'] is None
+    assert body['report']['externalReferenceConfirmationRequired'] is True
+    assert len(body['report']['englishRanking']) == count
+    assert not list((settings.data_root / 'work' / 'jobs' / job_id).rglob('selected.eng.srt'))
+    assert client.post(f'/api/workpacks/{job_id}/reference', json={'referenceSourceId': 'external:missing.srt'}).status_code == 422
+    response = client.post(f'/api/workpacks/{job_id}/reference', json={'referenceSourceId': f'external:{external.name}'})
+    assert response.status_code == 202
+    for _ in range(300):
+        body = client.get(f'/api/workpacks/{job_id}').json()
+        if body['report'].get('selectedEnglish') or body['status'] == 'FAILED':
+            break
+        time.sleep(.01)
+    assert body['status'] == 'WORKPACK_READY', body
+    assert body['report']['externalReferenceConfirmationRequired'] is False
+    assert body['report']['selectedEnglish']['name'] == external.name
+    with zipfile.ZipFile(body['report']['workpack']['path']) as archive:
+        assert archive.read('reference/selected/selected.eng.srt') == content.encode()
+        manifest = json.loads(archive.read('manifest.json'))
+        assert manifest['reference']['sourceType'] == 'external'
+        assert str(media_file.parent) not in json.dumps(manifest)
+    assert external.read_text() == content
+    events = client.get(f'/api/jobs/{job_id}/events?after={response.json()["afterSequence"]}').text
+    assert 'WORKPACK_INCOMPLETE' not in events
+    assert 'WORKPACK_READY' in events
+
+
+def test_embedded_reference_remains_automatic_with_external_english(client, media_file, monkeypatch):
+    _configure_probe(monkeypatch)
+    _configure_extraction(monkeypatch)
+    media_file.with_suffix('.srt').write_text('1\n00:00:01,000 --> 00:00:02,000\nYou are not the one and you know it is true.\n')
+    response = client.post('/api/tasks', json={'mediaPath': str(media_file), 'mode': 'PREPARE_TRANSLATION'})
+    body = _wait(client, response.json()['jobId'])
+    assert body['status'] == 'WORKPACK_READY'
+    assert body['report']['selectedEnglish']['sourceType'] == 'embedded'
+    assert body['report']['externalReferenceConfirmationRequired'] is False

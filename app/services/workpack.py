@@ -124,7 +124,7 @@ def inspection_report(media: dict, english_ranking: list[dict], polish_ranking: 
             },
         }
         (incompatible if item.get("timingCompatibility") == "INCOMPATIBLE" else polish).append(details)
-    english_keys = ("streamIndex", "codec", "language", "title", "type", "score", "reasons",
+    english_keys = ("sourceType", "name", "streamIndex", "codec", "language", "title", "type", "score", "reasons",
                     "default", "forced", "hearingImpaired")
     rejected_polish = [item for item in rejected if item.get("languageHint") in {"pl", "pol", "polish"}]
     return {

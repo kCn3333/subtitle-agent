@@ -1,4 +1,5 @@
 import re
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -36,6 +37,24 @@ def _validate_vobsub(index_path: Path, sub_path: Path) -> None:
 async def extract_subtitle(reference: dict, media_path: Path, target: Path, timeout: float,
                            basename: str = "selected", keep_text_original: bool = True) -> SubtitleExtractionResult:
     target.mkdir(parents=True, exist_ok=True)
+    if reference.get("sourceType") == "external":
+        source = Path(reference["path"]).resolve(strict=True)
+        if not source.is_file() or not source.is_relative_to(media_path.parent.resolve(strict=True)):
+            raise RuntimeError("Zewnętrzna referencja jest poza katalogiem materiału")
+        extension = reference.get("format")
+        if extension not in {"srt", "ass", "ssa", "vtt"}:
+            raise RuntimeError("Nieobsługiwany format zewnętrznej referencji")
+        original = target / f"{basename}.original.{extension}"
+        shutil.copyfile(source, original)
+        converted = target / f"{basename}.eng.srt"
+        if extension == "srt":
+            shutil.copyfile(original, converted)
+        else:
+            await run_process(["ffmpeg", "-v", "error", "-i", str(original),
+                               "-c:s", "srt", "-y", str(converted)], timeout)
+        outputs = [original, converted] if keep_text_original else [converted]
+        _validate_files(outputs)
+        return SubtitleExtractionResult(outputs, [])
     index, codec = int(reference["streamIndex"]), reference.get("codec")
     subtitle_type = reference.get("type")
     prefix = f"{basename}.eng" if basename == "selected" else basename

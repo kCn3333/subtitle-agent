@@ -65,10 +65,10 @@ async def task_report(job_id: str, request: Request) -> dict:
 @router.post("/{job_id}/reference", status_code=status.HTTP_202_ACCEPTED)
 async def rebuild(job_id: str, payload: RebuildWorkpackRequest, request: Request) -> dict:
     try:
-        await request.app.state.jobs.rebuild_workpack(job_id, payload.reference_source_id)
+        after = await request.app.state.jobs.rebuild_workpack(job_id, payload.reference_source_id)
     except UserInputError as exc:
         raise HTTPException(status_code=422, detail={"code": "INVALID_REFERENCE", "message": str(exc)}) from exc
-    return {"jobId": job_id, "status": "BUILDING_WORKPACK"}
+    return {"jobId": job_id, "status": "BUILDING_WORKPACK", "afterSequence": after}
 
 
 @router.get("/{job_id}/download")
