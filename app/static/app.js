@@ -4,7 +4,37 @@ const results=document.querySelector('#results'),content=document.querySelector(
 const referenceBox=document.querySelector('#reference-choice'),referenceSelect=document.querySelector('#reference-source');
 const ocrHealth=document.querySelector('#ocr-health');
 let source=null,activeJobId=null;
-function line(level,stage,message,time=new Date(),progress=null){const el=document.createElement('div'),percent=progress==null?'':` [${Math.max(0,Math.min(100,Number(progress)||0))}%]`;el.className=`entry ${level}`;el.textContent=`[${time.toLocaleTimeString('pl-PL',{hour12:false})}] [${level}] [${stage}]${percent} ${message}`;output.append(el);requestAnimationFrame(()=>{output.scrollTop=output.scrollHeight})}
+const ocrActivity=document.createElement('div'),ocrActivityLabel=document.createElement('span'),ocrElapsed=document.createElement('span');
+ocrActivity.className='entry INFO ocr-console-entry';
+ocrActivity.setAttribute('aria-live','off');
+ocrActivity.append(ocrActivityLabel,ocrElapsed);
+let ocrStartedAt=null,ocrTimer=null,ocrConnected=true;
+function updateOcrElapsed(){
+  if(ocrStartedAt===null)return;
+  const seconds=Math.max(0,Math.floor((Date.now()-ocrStartedAt)/1000));
+  if(!output.contains(ocrActivity))output.append(ocrActivity);
+  ocrElapsed.textContent=` · czas oczekiwania: ${Math.floor(seconds/60)} min ${String(seconds%60).padStart(2,'0')} s`;
+}
+function setOcrConnection(connected){
+  ocrConnected=connected;
+  ocrActivity.setAttribute('data-connected',String(connected));
+  ocrActivityLabel.textContent=connected?'[OCR_RUNNING] OCR w toku…':'[OCR_RUNNING] Brak połączenia — stan OCR niepotwierdzony';
+}
+function setOcrActivity(stage,progress,timestamp){
+  if(stage!=='OCR_RUNNING'||Number(progress)>=75){
+    if(ocrTimer!==null)clearInterval(ocrTimer);
+    ocrTimer=null;ocrStartedAt=null;ocrActivity.remove();
+    return;
+  }
+  const started=Date.parse(timestamp);
+  if(ocrStartedAt===null)ocrStartedAt=Number.isFinite(started)?started:Date.now();
+  setOcrConnection(ocrConnected);
+  updateOcrElapsed();
+  if(ocrTimer===null)ocrTimer=setInterval(updateOcrElapsed,1000);
+}
+
+function clearConsole(){output.replaceChildren();updateOcrElapsed()}
+function line(level,stage,message,time=new Date(),progress=null){const el=document.createElement('div'),percent=progress==null?'':` [${Math.max(0,Math.min(100,Number(progress)||0))}%]`;el.className=`entry ${level}`;el.textContent=`[${time.toLocaleTimeString('pl-PL',{hour12:false})}] [${level}] [${stage}]${percent} ${message}`;output.append(el);if(ocrStartedAt!==null)output.append(ocrActivity);requestAnimationFrame(()=>{output.scrollTop=output.scrollHeight})}
 function nodeText(value){const node=document.createElement('span');node.textContent=value??'—';return node.outerHTML}
 function sourceId(item){return `${item.sourceType}:${item.sourceType==='external'?item.name:item.streamIndex}`}
 function referenceLabel(item){if(!item)return '—';if(item.sourceType==='external')return item.name;return `#${item.streamIndex} · ${(item.codec||'').toUpperCase()} · ${(item.language||'—').toUpperCase()}${item.title?` · ${item.title}`:''}`}
@@ -26,7 +56,7 @@ function render(job){const report=job.report||{},pack=report.workpack;setDownloa
   referenceSelect.replaceChildren();for(const item of report.englishRanking||[]){const option=document.createElement('option');option.value=sourceId(item);option.textContent=`${referenceLabel(item)} · ${item.score} pkt`;option.selected=selected&&sourceId(item)===sourceId(selected);referenceSelect.append(option)}
   document.querySelector('#reference-question').hidden=!report.externalReferenceConfirmationRequired;document.querySelector('#rebuild').textContent=report.externalReferenceConfirmationRequired?'Tak, użyj jako wzorca':'Zbuduj ponownie z tą referencją';referenceBox.hidden=!(report.externalReferenceConfirmationRequired||referenceSelect.options.length>1)}
 async function load(jobId){const response=await fetch(`/api/tasks/${jobId}`);if(response.ok){const job=await response.json();statusEl.textContent=job.status;setProgress(job.progress);render(job)}}
-function connect(jobId,after=0){if(source)source.close();const connection=new EventSource(`/api/jobs/${jobId}/events?after=${after}`);source=connection;let finished=false;line('DEBUG','SSE',`Połączenie ze strumieniem zdarzeń zadania ${jobId}`);connection.addEventListener('open',()=>line('SUCCESS','SSE','Połączono — oczekiwanie na kolejne etapy'));connection.addEventListener('job',event=>{const data=JSON.parse(event.data);statusEl.textContent=data.stage;setProgress(data.progress);activityEl.textContent=data.message;line(data.level,data.stage,data.message,new Date(data.timestamp),data.progress);if(['INSPECTION_READY','WORKPACK_READY','WORKPACK_INCOMPLETE','NEEDS_OCR','FAILED','INTERRUPTED'].includes(data.stage)){finished=true;connection.close();if(source===connection)source=null;line('DEBUG','SSE','Zadanie zakończone — strumień zdarzeń zamknięty');load(jobId)}});connection.onerror=()=>{if(!finished&&source===connection){activityEl.textContent='Utracono połączenie — trwa ponowne łączenie';line('WARNING','SSE','Utracono połączenie. Trwa ponowne łączenie…')}};localStorage.setItem('subtitleAgentWorkpackJobId',jobId)}
+function connect(jobId,after=0){if(source)source.close();setOcrActivity("QUEUED",0);setOcrConnection(false);const connection=new EventSource(`/api/jobs/${jobId}/events?after=${after}`);source=connection;let finished=false;line('DEBUG','SSE',`Połączenie ze strumieniem zdarzeń zadania ${jobId}`);connection.addEventListener('open',()=>{if(source!==connection)return;setOcrConnection(true);line('SUCCESS','SSE','Połączono — oczekiwanie na kolejne etapy')});connection.addEventListener('job',event=>{if(source!==connection)return;const data=JSON.parse(event.data);setOcrActivity(data.stage,data.progress,data.timestamp);statusEl.textContent=data.stage;setProgress(data.progress);activityEl.textContent=data.message;line(data.level,data.stage,data.message,new Date(data.timestamp),data.progress);if(['INSPECTION_READY','WORKPACK_READY','WORKPACK_INCOMPLETE','NEEDS_OCR','FAILED','INTERRUPTED'].includes(data.stage)){finished=true;connection.close();if(source===connection)source=null;line('DEBUG','SSE','Zadanie zakończone — strumień zdarzeń zamknięty');load(jobId)}});connection.onerror=()=>{if(!finished&&source===connection){setOcrConnection(false);activityEl.textContent='Utracono połączenie — trwa ponowne łączenie';line('WARNING','SSE','Utracono połączenie. Trwa ponowne łączenie…')}};localStorage.setItem('subtitleAgentWorkpackJobId',jobId)}
 form.addEventListener('submit',async event=>{event.preventDefault();const button=form.querySelector('button'),mode=document.querySelector('#task-type').value;button.disabled=true;setDownload({progress:1},null);output.replaceChildren();line('INFO','REQUEST',`Tworzenie zadania w trybie ${mode}`);try{const response=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mediaPath:document.querySelector('#media-path').value,mode})});const body=await response.json();if(!response.ok)throw new Error(body.detail?.message||'Nie udało się utworzyć zadania');results.hidden=true;line('SUCCESS','REQUEST',`Zadanie przyjęte: ${body.jobId}`);connect(body.jobId)}catch(error){setDownload(null,null);line('ERROR','REQUEST',error.message)}finally{button.disabled=false}});
 document.querySelector('#rebuild').addEventListener('click',async()=>{if(!activeJobId)return;const response=await fetch(`/api/workpacks/${activeJobId}/reference`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({referenceSourceId:referenceSelect.value})});const body=await response.json();if(!response.ok){line('ERROR','REFERENCE',body.detail?.message||'Nie udało się zmienić referencji');return}referenceBox.hidden=true;setDownload(null,null);connect(activeJobId,body.afterSequence)});
-download.addEventListener('click',()=>line('INFO','DOWNLOAD',`Pobieranie pliku ${download.download||'workpack.zip'}`));document.querySelector('#clear').addEventListener('click',()=>output.replaceChildren());refreshOcrHealth();setInterval(refreshOcrHealth,30000);const saved=localStorage.getItem('subtitleAgentWorkpackJobId');if(saved){load(saved);connect(saved)}
+download.addEventListener('click',()=>line('INFO','DOWNLOAD',`Pobieranie pliku ${download.download||'workpack.zip'}`));document.querySelector('#clear').addEventListener('click',clearConsole);refreshOcrHealth();setInterval(refreshOcrHealth,30000);const saved=localStorage.getItem('subtitleAgentWorkpackJobId');if(saved){load(saved);connect(saved)}

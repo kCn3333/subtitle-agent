@@ -7,7 +7,7 @@ function renderReport(report) {
   const elements = new Map();
   function element() {
     return {hidden: false, options: [], setAttribute() {}, removeAttribute() {},
-      replaceChildren() {this.options = []}, append(option) {this.options.push(option)},
+      replaceChildren() {this.options = []}, append(...options) {this.options.push(...options)},
       get outerHTML() {return String(this.textContent ?? '')}};
   }
   const document = {

@@ -58,3 +58,10 @@ def test_openai_key_file_has_priority_and_is_masked(tmp_path, monkeypatch):
                         openai_api_key_file=secret)
     assert settings.openai_api_key.get_secret_value() == "file-placeholder-secret"
     assert "file-placeholder-secret" not in repr(settings)
+
+
+def test_include_graphic_reference_environment(monkeypatch):
+    monkeypatch.delenv('INCLUDE_GRAPHIC_REFERENCE', raising=False)
+    assert Settings(_env_file=None).include_graphic_reference is False
+    monkeypatch.setenv('INCLUDE_GRAPHIC_REFERENCE', 'true')
+    assert Settings(_env_file=None).include_graphic_reference is True

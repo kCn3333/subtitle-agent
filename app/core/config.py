@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     workpack_cleanup_interval_hours: int = 6
     ffprobe_timeout_seconds: float = 30
     ffmpeg_timeout_seconds: float = 600
+    include_graphic_reference: bool = False
     ocr_worker_url: str | None = None
     ocr_timeout_seconds: float = 900
     ocr_max_output_bytes: int = 20 * 1024 * 1024

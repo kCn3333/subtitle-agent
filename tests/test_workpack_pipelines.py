@@ -146,7 +146,7 @@ def test_same_episode_title_from_different_production_is_blocked(client, setting
     monkeypatch.setattr("app.services.job_manager.extract_embedded", extract)
     response = client.post("/api/workpacks", json={"mediaPath": str(media), "taskType": "PREPARE_SYNC"})
     body = _wait(client, response.json()["jobId"])
-    assert body["status"] == "WORKPACK_INCOMPLETE"
+    assert body["status"] == "NEEDS_OCR"
     assert body["report"]["polishCandidates"] == []
     suspect = body["report"]["incompatiblePolishCandidates"][0]
     assert suspect["timingCompatibility"] == "INCOMPATIBLE"
@@ -156,7 +156,7 @@ def test_same_episode_title_from_different_production_is_blocked(client, setting
         "Znaleziony polski plik prawdopodobnie pochodzi z innej wersji lub produkcji. "
         "Automatyczna synchronizacja została zablokowana."
     ]
-    assert body["report"]["synchronizationHypotheses"][0]["structuralOnly"] is True
+    assert body["report"]["synchronizationHypotheses"] == []
     with zipfile.ZipFile(body["report"]["workpack"]["path"]) as archive:
         manifest = json.loads(archive.read("manifest.json"))
         assert manifest["reference"]["cueCount"] == 760
@@ -529,7 +529,8 @@ def test_embedded_reference_remains_automatic_with_external_english(client, medi
     assert body['report']['externalReferenceConfirmationRequired'] is False
 
 
-def test_manual_embedded_reference_rebuild_changes_selected_track_and_zip(client, media_file, monkeypatch):
+def test_manual_embedded_reference_rebuild_changes_selected_track_and_zip(client, media_file, settings, monkeypatch):
+    settings.include_graphic_reference = True
     tracks = [
         {**_embedded('graphic'), 'streamIndex': 4, 'title': 'English', 'default': False},
         {**_embedded(), 'streamIndex': 13, 'title': None, 'default': False},
@@ -556,7 +557,7 @@ def test_manual_embedded_reference_rebuild_changes_selected_track_and_zip(client
     created = client.post('/api/tasks', json={'mediaPath': str(media_file), 'mode': 'PREPARE_SYNC'})
     job_id = created.json()['jobId']
     body = _wait(client, job_id)
-    assert body['status'] == 'WORKPACK_READY'
+    assert body['status'] == 'NEEDS_OCR'
     assert body['report']['selectedEnglish']['streamIndex'] == 4
     assert body['report']['workpack']['referenceAmbiguous'] is False
     for stream, suffix in [(13, 'srt'), (4, 'sup')]:
@@ -564,7 +565,7 @@ def test_manual_embedded_reference_rebuild_changes_selected_track_and_zip(client
                                json={'referenceSourceId': f'embedded:{stream}'})
         assert response.status_code == 202
         body = _wait(client, job_id)
-        assert body['status'] == 'WORKPACK_READY', body
+        assert body['status'] == ('NEEDS_OCR' if stream == 4 else 'WORKPACK_READY'), body
         assert body['report']['selectedEnglish']['streamIndex'] == stream
         with zipfile.ZipFile(body['report']['workpack']['path']) as archive:
             manifest = json.loads(archive.read('manifest.json'))
@@ -572,7 +573,7 @@ def test_manual_embedded_reference_rebuild_changes_selected_track_and_zip(client
             selected_files = [name for name in archive.namelist() if name.startswith('reference/selected/')]
             assert selected_files == [f'reference/selected/selected.eng.{suffix}']
         events = client.get(f'/api/jobs/{job_id}/events?after={response.json()["afterSequence"]}').text
-        assert 'WORKPACK_READY' in events
+        assert ('NEEDS_OCR' if stream == 4 else 'WORKPACK_READY') in events
 
 
 @pytest.mark.parametrize('mode', ['INSPECT', 'PREPARE_SYNC', 'PREPARE_TRANSLATION'])
@@ -602,6 +603,7 @@ def test_real_mov_text_pipeline(client, settings, mov_text_media, monkeypatch, m
 @pytest.mark.parametrize('probe_timeout, extraction_timeout', [(30, 600), (900, 600)])
 def test_graphic_packet_scan_uses_full_file_timeout_without_extracting_alternatives(
         client, settings, media_file, monkeypatch, mode, probe_timeout, extraction_timeout):
+    settings.include_graphic_reference = True
     settings.ffprobe_timeout_seconds = probe_timeout
     settings.ffmpeg_timeout_seconds = extraction_timeout
     tracks = [
@@ -633,7 +635,7 @@ def test_graphic_packet_scan_uses_full_file_timeout_without_extracting_alternati
     media_file.with_suffix('.pl.srt').write_text('1\n00:00:01,000 --> 00:00:02,000\nTo jest tekst.\n')
     response = client.post('/api/tasks', json={'mediaPath': str(media_file), 'mode': mode})
     body = _wait(client, response.json()['jobId'])
-    assert body['status'] == ('WORKPACK_READY' if mode == 'PREPARE_SYNC' else 'NEEDS_OCR'), body
+    assert body['status'] == 'NEEDS_OCR', body
     assert calls == [5]
     assert body['report']['workpack']['referenceAmbiguous'] is True
     assert body['report']['referenceAlternatives'][0]['streamIndex'] == 13
@@ -643,3 +645,110 @@ def test_graphic_packet_scan_uses_full_file_timeout_without_extracting_alternati
         assert manifest['reference_alternatives'][0]['streamIndex'] == 13
     events = client.get(f'/api/jobs/{body["jobId"]}/events').text
     assert f'odczyt całego materiału, limit {max(probe_timeout, extraction_timeout)} s' in events
+
+
+@pytest.mark.parametrize('codec', ['hdmv_pgs_subtitle', 'dvd_subtitle'])
+@pytest.mark.parametrize('include_graphics', [False, True])
+@pytest.mark.parametrize('outcome', ['success', 'unavailable', 'invalid', 'unconfigured'])
+def test_sync_graphic_ocr_pipeline(client, media_file, settings, monkeypatch, codec, include_graphics, outcome):
+    import base64
+    import io
+    import httpx
+
+    settings.include_graphic_reference = include_graphics
+    settings.ocr_worker_url = None if outcome == 'unconfigured' else 'http://ocr-worker:8090'
+    reference = {**_embedded('graphic'), 'codec': codec, 'title': 'English SDH', 'hearingImpaired': True}
+    original = media_file.read_bytes()
+    graphic_names = ['selected.eng.sup'] if codec == 'hdmv_pgs_subtitle' else ['selected.eng.idx', 'selected.eng.sub']
+    ocr_srt = b'1\n00:00:03,000 --> 00:00:04,000\nHello world.\n\n2\n00:00:05,000 --> 00:00:06,000\nGoodbye.\n'
+    requests = []
+
+    async def probe(path, timeout):
+        return {'path': str(path), 'name': path.name, 'sizeBytes': path.stat().st_size,
+                'durationSeconds': 100, 'audioTracks': [], 'embeddedSubtitles': [reference]}
+
+    async def extract(ref, path, target, timeout):
+        target.mkdir(parents=True, exist_ok=True)
+        files = [target / name for name in graphic_names]
+        for path in files:
+            path.write_bytes(b'graphic fixture')
+            if path.suffix == '.idx':
+                path.write_text('# VobSub index file, v7\nid: en, index: 0\ntimestamp: 00:00:01:000, filepos: 000000000\n')
+        return SubtitleExtractionResult(files, [])
+
+    async def graphic(*args):
+        # Deliberately different from the OCR result: synchronization must use SRT.
+        return {'event_count': 1, 'events': [{'start_ms': 1000}]}
+
+    def worker(request):
+        requests.append(request)
+        assert str(request.url) == 'http://ocr-worker:8090/v1/ocr'
+        with zipfile.ZipFile(io.BytesIO(request.content)) as archive:
+            assert sorted(archive.namelist()) == sorted(graphic_names)
+        if outcome == 'unavailable':
+            raise httpx.ConnectError('offline', request=request)
+        content = ocr_srt if outcome == 'success' else b'not an srt'
+        return httpx.Response(200, json={'srtBase64': base64.b64encode(content).decode(),
+                              'engine': 'test-ocr', 'cueCount': 2, 'firstMs': 3000, 'lastMs': 6000})
+
+    async_client = httpx.AsyncClient
+    monkeypatch.setattr('app.services.ocr_client.httpx.AsyncClient',
+                        lambda **kwargs: async_client(transport=httpx.MockTransport(worker), **kwargs))
+    monkeypatch.setattr('app.services.job_manager.probe_media', probe)
+    monkeypatch.setattr('app.services.job_manager.extract_embedded', extract)
+    monkeypatch.setattr('app.services.job_manager.graphic_timeline', graphic)
+    media_file.with_suffix('.pl.srt').write_text('1\n00:00:03,000 --> 00:00:04,000\nTo jest tekst.\n')
+    created = client.post('/api/tasks', json={'mediaPath': str(media_file), 'mode': 'PREPARE_SYNC'})
+    body = _wait(client, created.json()['jobId'])
+    assert body['status'] == ('WORKPACK_READY' if outcome == 'success' else 'NEEDS_OCR'), body
+    assert len(requests) == (0 if outcome == 'unconfigured' else 1)
+    with zipfile.ZipFile(body['report']['workpack']['path']) as archive:
+        names = set(archive.namelist())
+        manifest = json.loads(archive.read('manifest.json'))
+        assert set(manifest['files']) == names
+        for name in graphic_names:
+            assert (f'reference/selected/{name}' in names) is include_graphics
+        ref = manifest['reference']
+        for key in ('streamIndex', 'codec', 'title', 'hearingImpaired'):
+            assert ref[key] == reference[key]
+            assert ref['ocrSource'][key] == reference[key]
+        assert all(item['name'] in names for item in ref['files'])
+        for item in ref['files']:
+            assert item['sha256'] == hashlib.sha256(archive.read(item['name'])).hexdigest()
+        quality = json.loads(archive.read('analysis/ocr-quality.json'))
+        if outcome == 'success':
+            assert archive.read('reference/selected/selected.eng.ocr.srt') == ocr_srt
+            assert quality['cueCount'] == 2
+            timeline = json.loads(archive.read('analysis/reference-timeline.json'))
+            assert timeline['cue_count'] == 2 and timeline['first_ms'] == 3000
+            hypotheses = body['report']['synchronizationHypotheses']
+            assert hypotheses[0]['englishSegments'] == 2
+            assert hypotheses[0]['structuralOnly'] is False
+            assert body['report']['ocr']['engine'] == 'test-ocr'
+            assert ref['requiresOcr'] is False
+        else:
+            assert 'reference/selected/selected.eng.ocr.srt' not in names
+            assert quality['status'] == 'FAILED' and quality['error']
+            assert body['report']['ocrError']
+            assert body['report']['synchronizationHypotheses'] == []
+            assert ref['requiresOcr'] is True
+    assert media_file.read_bytes() == original
+
+
+def test_sync_text_reference_does_not_call_configured_ocr(client, settings, media_file, monkeypatch):
+    settings.ocr_worker_url = 'http://ocr-worker:8090'
+    _configure_probe(monkeypatch)
+    _configure_extraction(monkeypatch)
+
+    async def forbidden_ocr(*args):
+        raise AssertionError('Text references must not use OCR')
+
+    monkeypatch.setattr('app.services.job_manager.recognize_reference', forbidden_ocr)
+    media_file.with_suffix('.pl.srt').write_text('1\n00:00:01,000 --> 00:00:02,000\nTo jest tekst.\n')
+    created = client.post('/api/tasks', json={'mediaPath': str(media_file), 'mode': 'PREPARE_SYNC'})
+    body = _wait(client, created.json()['jobId'])
+    assert body['status'] == 'WORKPACK_READY', body
+    with zipfile.ZipFile(body['report']['workpack']['path']) as archive:
+        assert 'reference/selected/selected.eng.srt' in archive.namelist()
+        assert 'analysis/ocr-quality.json' not in archive.namelist()
+        assert 'reference/selected/selected.eng.ocr.srt' not in archive.namelist()

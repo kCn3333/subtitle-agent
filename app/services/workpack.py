@@ -259,6 +259,19 @@ def request_text(task: WorkpackTaskType, manifest: dict) -> str:
                 "Opisz ustalenia na podstawie plików analysis/ i manifest.json.\n\n"
                 f"## Ostrzeżenia\n{warnings}\n")
     reference = manifest.get("reference") or {}
+    if task == WorkpackTaskType.PREPARE_SYNC and reference.get("requiresOcr"):
+        return (f"# Zadanie: {task.value}\n\n"
+                "Brak poprawnej angielskiej referencji tekstowej. Najpierw wykonaj OCR wybranej ścieżki "
+                "graficznej; nie synchronizuj na podstawie technicznych pakietów napisów. "
+                "Oryginały graficzne są dołączane tylko przy INCLUDE_GRAPHIC_REFERENCE=true.\n\n"
+                f"## Ostrzeżenia\n{warnings}\n")
+    if task == WorkpackTaskType.PREPARE_SYNC and reference.get("ocr"):
+        return (f"# Zadanie: {task.value}\n\n{REQUESTS[task]}\n\n"
+                "Użyj angielskiej referencji `reference/selected/selected.eng.ocr.srt`. "
+                "Uwzględnij raport `analysis/ocr-quality.json` i możliwe błędy rozpoznania tekstu. "
+                "Zachowaj polski tekst i skoryguj timing; techniczna oś pakietów graficznych nie jest wzorcem.\n\n"
+                f"Zapisz kompletny UTF-8 SRT jako `{manifest['expected_output']['filename']}`.\n\n"
+                f"## Polskie materiały\n{polish}\n\n## Ostrzeżenia\n{warnings}\n")
     if task == WorkpackTaskType.PREPARE_TRANSLATION and reference.get("ocr"):
         return (f"# Zadanie: {task.value}\n\n"
                 "Angielska referencja graficzna została rozpoznana lokalnie przez OCR i zapisana jako "

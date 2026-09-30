@@ -54,12 +54,18 @@ Pełny zestaw bezpiecznych wartości znajduje się w `.env.example` i `compose.e
 
 OCR działa na CPU przy użyciu Tesseracta i przypiętego `seconv v5.2.0-rc2`. Obsługiwane są referencje PGS (`.sup`) i DVD/VobSub (`.idx` + `.sub`).
 
+Podczas OCR konsola pokazuje jeden aktualizowany wiersz z informacją o pracy i czasem oczekiwania. Worker nie udostępnia procentu postępu. Utrata połączenia z aplikacją jest oznaczana osobno.
+
 Wynik zawiera osobne oceny:
 
 - `structuralQuality` — poprawność SRT i zgodność timestampów;
 - `textQuality` — podejrzane błędy rozpoznanego tekstu.
 
-OCR może wymagać korekty językowej. Gdy worker jest niedostępny lub wynik jest niepoprawny, aplikacja zachowuje oryginalną referencję graficzną i zwraca status `NEEDS_OCR` zamiast błędu całego zadania.
+W `PREPARE_SYNC` referencja graficzna jest automatycznie wysyłana do skonfigurowanego workera. Wynik `reference/selected/selected.eng.ocr.srt` służy do analizy synchronizacji; ZIP zawiera też `analysis/ocr-quality.json`. Źródłowy strumień jest opisany w `reference.ocrSource` manifestu. Techniczny timeline pakietów służy wyłącznie ocenie OCR.
+
+Domyślnie ZIP synchronizacji nie zawiera plików graficznych. `INCLUDE_GRAPHIC_REFERENCE=true` dołącza oryginalny `.sup` lub parę `.idx`/`.sub`. Oryginały pozostają w katalogu roboczym do czasu jego usunięcia przez retencję. Ta opcja nie zmienia paczek do tłumaczenia.
+
+OCR może wymagać korekty językowej. Gdy worker jest niedostępny lub wynik jest niepoprawny, aplikacja zachowuje oryginalną referencję graficzną w katalogu roboczym i zwraca status `NEEDS_OCR` z czytelnym opisem przyczyny zamiast błędu całego zadania. W synchronizacji bez poprawnego OCR nie są generowane hipotezy z pakietów graficznych.
 
 ## Zawartość paczki
 
@@ -107,6 +113,6 @@ python3.12 -m venv .venv
 . .venv/bin/activate
 pip install -r requirements-dev.txt
 pytest -q
-node --test tests/reference_ui.test.cjs
+node --test tests/*.test.cjs
 docker build --target test -t subtitle-agent:test .
 ```
