@@ -527,3 +527,49 @@ def test_embedded_reference_remains_automatic_with_external_english(client, medi
     assert body['status'] == 'WORKPACK_READY'
     assert body['report']['selectedEnglish']['sourceType'] == 'embedded'
     assert body['report']['externalReferenceConfirmationRequired'] is False
+
+
+def test_manual_embedded_reference_rebuild_changes_selected_track_and_zip(client, media_file, monkeypatch):
+    tracks = [
+        {**_embedded('graphic'), 'streamIndex': 4, 'title': 'English', 'default': False},
+        {**_embedded(), 'streamIndex': 13, 'title': None, 'default': False},
+    ]
+
+    async def probe(path, timeout):
+        return {'path': str(path), 'name': path.name, 'sizeBytes': path.stat().st_size,
+                'durationSeconds': 100, 'audioTracks': [], 'embeddedSubtitles': tracks}
+
+    async def extract(reference, media_path, target, timeout):
+        target.mkdir(parents=True, exist_ok=True)
+        output = target / ('selected.eng.sup' if reference['type'] == 'graphic' else 'selected.eng.srt')
+        output.write_bytes(b'PGS fixture' if reference['type'] == 'graphic' else
+                           b'1\n00:00:01,000 --> 00:00:02,000\nHello\n')
+        return SubtitleExtractionResult([output], [])
+
+    async def graphic(*args):
+        return {'event_count': 1, 'events': [{'start_ms': 1000, 'end_ms': 2000}]}
+
+    monkeypatch.setattr('app.services.job_manager.probe_media', probe)
+    monkeypatch.setattr('app.services.job_manager.extract_embedded', extract)
+    monkeypatch.setattr('app.services.job_manager.graphic_timeline', graphic)
+    media_file.with_suffix('.pl.srt').write_text('1\n00:00:01,000 --> 00:00:02,000\nTo jest tekst.\n')
+    created = client.post('/api/tasks', json={'mediaPath': str(media_file), 'mode': 'PREPARE_SYNC'})
+    job_id = created.json()['jobId']
+    body = _wait(client, job_id)
+    assert body['status'] == 'WORKPACK_READY'
+    assert body['report']['selectedEnglish']['streamIndex'] == 4
+    assert body['report']['workpack']['referenceAmbiguous'] is False
+    for stream, suffix in [(13, 'srt'), (4, 'sup')]:
+        response = client.post(f'/api/workpacks/{job_id}/reference',
+                               json={'referenceSourceId': f'embedded:{stream}'})
+        assert response.status_code == 202
+        body = _wait(client, job_id)
+        assert body['status'] == 'WORKPACK_READY', body
+        assert body['report']['selectedEnglish']['streamIndex'] == stream
+        with zipfile.ZipFile(body['report']['workpack']['path']) as archive:
+            manifest = json.loads(archive.read('manifest.json'))
+            assert manifest['reference']['streamIndex'] == stream
+            selected_files = [name for name in archive.namelist() if name.startswith('reference/selected/')]
+            assert selected_files == [f'reference/selected/selected.eng.{suffix}']
+        events = client.get(f'/api/jobs/{job_id}/events?after={response.json()["afterSequence"]}').text
+        assert 'WORKPACK_READY' in events

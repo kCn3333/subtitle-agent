@@ -269,6 +269,10 @@ def rank_english(embedded: list[dict], external: list[dict]) -> list[dict]:
         if language in {"eng", "en", "english"}: score += 60; reasons.append("+60 język angielski")
         if "full dialogue" in text: score += 20; reasons.append("+20 pełne dialogi")
         if item.get("default"): score += 12; reasons.append("+12 ścieżka domyślna")
+        # Prefer the embedded Blu-ray reference over a text conversion. This is
+        # a heuristic; partial/accessibility/commentary penalties still apply.
+        if item.get("sourceType") == "embedded" and item.get("codec") == "hdmv_pgs_subtitle":
+            score += 30; reasons.append("+30 osadzona referencja PGS")
         if item.get("type") == "text" or item.get("format") in {"srt", "ass", "ssa", "vtt"}: score += 10; reasons.append("+10 napisy tekstowe")
         penalties = [("commentary", -55), ("director", -45), ("sdh", -18), (" cc", -18),
                      ("signs", -35), ("songs", -30), ("parts only", -45), ("hearing", -18)]

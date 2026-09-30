@@ -114,3 +114,30 @@ async def test_reference_extraction_uses_safe_stream_index_name(tmp_path, monkey
     )
     assert Path(output).name == "reference-stream-7.srt"
     assert captured[0] == "ffmpeg"
+
+
+def test_english_ranking_prefers_pgs_over_default_subrip():
+    tracks = [
+        {"streamIndex": 13, "language": "eng", "codec": "subrip", "type": "text", "default": True},
+        {"streamIndex": 14, "language": "eng", "codec": "subrip", "type": "text", "default": True,
+         "title": "SDH", "hearingImpaired": True},
+        {"streamIndex": 4, "language": "eng", "codec": "hdmv_pgs_subtitle", "type": "graphic", "title": "English"},
+        {"streamIndex": 5, "language": "eng", "codec": "hdmv_pgs_subtitle", "type": "graphic", "default": True,
+         "title": "English (SDH)", "hearingImpaired": True},
+    ]
+    ranked = rank_english(tracks, [])
+    assert ranked[0]["streamIndex"] == 4
+    assert ranked[0]["score"] > ranked[1]["score"]
+
+
+@pytest.mark.parametrize("flags", [
+    {"forced": True}, {"title": "Director Commentary"},
+    {"title": "Parts Only"}, {"title": "SDH", "hearingImpaired": True},
+])
+def test_pgs_preference_does_not_override_partial_or_accessibility_penalties(flags):
+    ranked = rank_english([
+        {"streamIndex": 4, "language": "eng", "codec": "hdmv_pgs_subtitle", "type": "graphic",
+         "default": True, **flags},
+        {"streamIndex": 13, "language": "eng", "codec": "subrip", "type": "text"},
+    ], [])
+    assert ranked[0]["streamIndex"] == 13

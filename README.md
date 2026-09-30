@@ -5,7 +5,9 @@ Subtitle Agent analizuje napisy filmu lub odcinka i przygotowuje ZIP do synchron
 ## Co potrafi
 
 - sprawdza parametry materiału i dostępne ścieżki napisów;
-- wybiera wbudowaną angielską referencję; przy jej braku proponuje zewnętrzne napisy EN i wymaga potwierdzenia użytkownika (język SRT rozpoznaje także z treści, bez oznaczenia w nazwie);
+- wybiera wbudowaną angielską referencję; ranking preferuje PGS, uwzględniając kary za ścieżki częściowe, komentarze i SDH;
+- przy kilku źródłach EN pozwala ręcznie wybrać wzorzec i ponownie przygotować paczkę;
+- przy braku wbudowanej referencji proponuje zewnętrzne napisy EN i wymaga potwierdzenia użytkownika (język SRT rozpoznaje także z treści, bez oznaczenia w nazwie);
 - wykrywa niezgodne polskie napisy i inne wersje materiału;
 - eksportuje napisy tekstowe, PGS oraz DVD/VobSub;
 - opcjonalnie wykonuje OCR napisów graficznych na CPU;
@@ -105,5 +107,6 @@ python3.12 -m venv .venv
 . .venv/bin/activate
 pip install -r requirements-dev.txt
 pytest -q
+node --test tests/reference_ui.test.cjs
 docker build --target test -t subtitle-agent:test .
 ```
