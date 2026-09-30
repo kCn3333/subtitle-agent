@@ -5,6 +5,7 @@ import threading
 import uuid
 from contextlib import suppress
 from datetime import datetime, timedelta
+from dataclasses import replace
 from pathlib import Path
 from typing import AsyncIterator
 
@@ -28,7 +29,7 @@ from app.services.semantic import (CompositeAnchorProvider, OpenAIAnchorProvider
 from app.services.publisher import (PublishBlockedQuality, PublishConflict, PublishDisabled, PublishError,
                                     PublishSourceChanged, SubtitlePublisher, identity)
 from app.services.ocr_client import OcrWorkerError, recognize_reference
-from app.services.ocr_quality import InvalidOcrSrt, quality_report
+from app.services.ocr_quality import InvalidOcrSrt, normalize_ocr_text, quality_report
 from app.services.workpack import (SCHEMA_VERSION, build_zip, copy_polish_candidates, diagnostic_hypotheses,
                                    extract_embedded, graphic_timeline, inspection_report, media_summary,
                                    parse_vobsub_idx, request_text, safe_filename, sha256_file, subtitle_streams,
@@ -704,6 +705,7 @@ class JobManager:
                 legacy_pgs_timeline = packets
                 graphic_reference_timestamps = [event["start_ms"] for event in packets.get("events", [])]
                 graphic_reference_timeline = {
+                    "codec": selected.get("codec"),
                     "cueCount": packets.get("event_count", 0),
                     "firstMs": graphic_reference_timestamps[0] if graphic_reference_timestamps else None,
                     "lastMs": graphic_reference_timestamps[-1] if graphic_reference_timestamps else None,
@@ -725,7 +727,10 @@ class JobManager:
                         reference_files, self.settings.ocr_worker_url, self.settings.ocr_timeout_seconds,
                         self.settings.ocr_max_output_bytes,
                     )
+                    normalized_content, normalization = normalize_ocr_text(ocr_result.content)
+                    ocr_result = replace(ocr_result, content=normalized_content)
                     ocr_quality = quality_report(ocr_result.content, graphic_reference_timeline)
+                    ocr_quality["normalization"] = normalization
                     selected_srt = job_dir / "reference" / "selected" / "selected.eng.ocr.srt"
                     selected_srt.write_bytes(ocr_result.content)
                     reference_files.append(selected_srt)
@@ -778,8 +783,8 @@ class JobManager:
             write_json(analysis / "reference-graphic-timeline.json", graphic_reference_timeline)
         if ocr_quality:
             write_json(analysis / "ocr-quality-report.json", ocr_quality)
-        if requirements.name == "PREPARE_SYNC" and (ocr_quality or ocr_error):
-            write_json(analysis / "ocr-quality.json", ocr_quality or {"status": "FAILED", "error": ocr_error})
+        if requirements.name == "PREPARE_SYNC" and ocr_error:
+            write_json(analysis / "ocr-quality-report.json", {"status": "FAILED", "error": ocr_error})
         if legacy_pgs_timeline:
             write_json(analysis / "reference-pgs-timeline.json", legacy_pgs_timeline)
         write_json(analysis / "polish-timelines.json", polish_timelines)
@@ -882,7 +887,7 @@ class JobManager:
                               if selected and (selected.get("type") == "graphic" or path.name == "selected.eng.srt")}
             package_files |= {item["archiveName"] for item in polish}
             if requirements.name == "PREPARE_SYNC" and (ocr_quality or ocr_error):
-                package_files.add("analysis/ocr-quality.json")
+                package_files.add("analysis/ocr-quality-report.json")
             if requirements.name == "PREPARE_SYNC" and ocr_result:
                 package_files.add("analysis/reference-timeline.json")
         manifest["files"] = sorted(package_files | {"checksums.sha256"})

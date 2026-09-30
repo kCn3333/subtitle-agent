@@ -268,7 +268,7 @@ def request_text(task: WorkpackTaskType, manifest: dict) -> str:
     if task == WorkpackTaskType.PREPARE_SYNC and reference.get("ocr"):
         return (f"# Zadanie: {task.value}\n\n{REQUESTS[task]}\n\n"
                 "Użyj angielskiej referencji `reference/selected/selected.eng.ocr.srt`. "
-                "Uwzględnij raport `analysis/ocr-quality.json` i możliwe błędy rozpoznania tekstu. "
+                "Uwzględnij raport `analysis/ocr-quality-report.json` i możliwe błędy rozpoznania tekstu. "
                 "Zachowaj polski tekst i skoryguj timing; techniczna oś pakietów graficznych nie jest wzorcem.\n\n"
                 f"Zapisz kompletny UTF-8 SRT jako `{manifest['expected_output']['filename']}`.\n\n"
                 f"## Polskie materiały\n{polish}\n\n## Ostrzeżenia\n{warnings}\n")

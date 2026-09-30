@@ -715,7 +715,7 @@ def test_sync_graphic_ocr_pipeline(client, media_file, settings, monkeypatch, co
         assert all(item['name'] in names for item in ref['files'])
         for item in ref['files']:
             assert item['sha256'] == hashlib.sha256(archive.read(item['name'])).hexdigest()
-        quality = json.loads(archive.read('analysis/ocr-quality.json'))
+        quality = json.loads(archive.read('analysis/ocr-quality-report.json'))
         if outcome == 'success':
             assert archive.read('reference/selected/selected.eng.ocr.srt') == ocr_srt
             assert quality['cueCount'] == 2
@@ -750,5 +750,70 @@ def test_sync_text_reference_does_not_call_configured_ocr(client, settings, medi
     assert body['status'] == 'WORKPACK_READY', body
     with zipfile.ZipFile(body['report']['workpack']['path']) as archive:
         assert 'reference/selected/selected.eng.srt' in archive.namelist()
-        assert 'analysis/ocr-quality.json' not in archive.namelist()
+        assert 'analysis/ocr-quality-report.json' not in archive.namelist()
         assert 'reference/selected/selected.eng.ocr.srt' not in archive.namelist()
+
+
+def test_sync_pgs_show_hide_ocr_integration(client, settings, media_file, monkeypatch, pgs_ocr_case):
+    import base64
+    import io
+    import httpx
+
+    settings.ocr_worker_url = 'http://ocr-worker:8090'
+    assert settings.include_graphic_reference is False
+    _configure_probe(monkeypatch, 'graphic')
+    received = []
+
+    async def extract(reference, source, target, timeout):
+        assert reference['codec'] == 'hdmv_pgs_subtitle'
+        target.mkdir(parents=True, exist_ok=True)
+        sup = target / 'selected.eng.sup'
+        sup.write_bytes(b'graphic reference fixture')
+        return SubtitleExtractionResult([sup], [])
+
+    async def packets(source, stream_index, timeout):
+        return {'event_count': 4536, 'events': pgs_ocr_case['events']}
+
+    def worker(request):
+        with zipfile.ZipFile(io.BytesIO(request.content)) as archive:
+            received.append(archive.read('selected.eng.sup'))
+        return httpx.Response(200, json={
+            'srtBase64': base64.b64encode(pgs_ocr_case['content']).decode(), 'engine': 'test-ocr',
+            'cueCount': 2268, 'firstMs': 107483, 'lastStartMs': 7441728, 'lastMs': 7442728,
+        })
+
+    async_client = httpx.AsyncClient
+    monkeypatch.setattr('app.services.ocr_client.httpx.AsyncClient',
+                        lambda **kwargs: async_client(transport=httpx.MockTransport(worker), **kwargs))
+    monkeypatch.setattr('app.services.job_manager.extract_embedded', extract)
+    monkeypatch.setattr('app.services.job_manager.graphic_timeline', packets)
+    media_file.with_suffix('.pl.srt').write_text('1\n00:01:47,483 --> 00:01:48,483\nTo jest tekst.\n')
+    created = client.post('/api/tasks', json={'mediaPath': str(media_file), 'mode':'PREPARE_SYNC'})
+    body = _wait(client, created.json()['jobId'])
+    assert body['status'] == 'WORKPACK_READY', body
+    assert received == [b'graphic reference fixture']
+    with zipfile.ZipFile(body['report']['workpack']['path']) as archive:
+        names = archive.namelist()
+        assert 'reference/selected/selected.eng.ocr.srt' in names
+        assert 'polish/candidate-001.pl.srt' in names
+        assert not any(name.endswith(('.sup', '.idx', '.sub')) for name in names)
+        report = json.loads(archive.read('analysis/ocr-quality-report.json'))
+        assert report['structuralQuality'] == 'GOOD'
+        assert report['validSrt'] is True and report['timestampsMonotonic'] is True
+        assert report['malformedCueCount'] == report['reversedIntervalCount'] == report['emptyCueCount'] == 0
+        assert report['graphicCueCount'] == 4536 and report['cueCount'] == 2268
+        assert report['graphicFirstMs'] == report['ocrFirstMs'] == 107483
+        assert report['graphicLastMs'] == report['ocrLastEndMs'] == 7442728
+        assert report['normalization']['pipeToICount'] == 2
+        assert b"-I think I've seen it." in archive.read('reference/selected/selected.eng.ocr.srt')
+        timeline = json.loads(archive.read('analysis/reference-timeline.json'))
+        assert timeline['cue_count'] == 2268 and timeline['last_ms'] == 7442728
+        manifest = json.loads(archive.read('manifest.json'))
+        assert manifest['reference']['streamIndex'] == 2
+        assert manifest['reference']['codec'] == 'hdmv_pgs_subtitle'
+        assert manifest['reference']['ocrSource']['codec'] == 'hdmv_pgs_subtitle'
+        assert set(manifest['files']) == set(names)
+        for file in manifest['reference']['files']:
+            assert hashlib.sha256(archive.read(file['name'])).hexdigest() == file['sha256']
+    assert body['report']['synchronizationHypotheses'][0]['englishSegments'] == 2268
+    assert body['report']['synchronizationHypotheses'][0]['structuralOnly'] is False

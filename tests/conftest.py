@@ -66,3 +66,21 @@ def mov_text_media(settings, require_tools):
 @pytest.fixture
 def anyio_backend():
     return "asyncio"
+
+
+@pytest.fixture
+def pgs_ocr_case():
+    first, last, count = 107_483, 7_442_728, 2268
+
+    def stamp(value):
+        return f'{value // 3600000:02d}:{value // 60000 % 60:02d}:{value // 1000 % 60:02d},{value % 1000:03d}'
+
+    cues, events = [], []
+    for index in range(count):
+        start = first + index * (last - first - 1000) // (count - 1)
+        end = start + 1000
+        text = "-| think |'ve seen it." if index == 0 else 'English subtitle sentence.'
+        cues.append(f'{index + 1}\n{stamp(start)} --> {stamp(end)}\n{text}\n')
+        events.extend([{'start_ms': start}, {'start_ms': end}])
+    return {'content': '\n'.join(cues).encode(), 'events': events,
+            'timeline': {'codec': 'hdmv_pgs_subtitle', 'cueCount': len(events), 'firstMs': first, 'lastMs': last}}

@@ -61,7 +61,11 @@ Wynik zawiera osobne oceny:
 - `structuralQuality` — poprawność SRT i zgodność timestampów;
 - `textQuality` — podejrzane błędy rozpoznanego tekstu.
 
-W `PREPARE_SYNC` referencja graficzna jest automatycznie wysyłana do skonfigurowanego workera. Wynik `reference/selected/selected.eng.ocr.srt` służy do analizy synchronizacji; ZIP zawiera też `analysis/ocr-quality.json`. Źródłowy strumień jest opisany w `reference.ocrSource` manifestu. Techniczny timeline pakietów służy wyłącznie ocenie OCR.
+Walidacja PGS uwzględnia zdarzenia pokazania i ukrycia bitmapy: stosunek liczby segmentów OCR do zdarzeń równy 0,5 sam w sobie nie obniża oceny. Porównuje pierwszy timestamp oraz koniec ostatniego segmentu OCR z ostatnim zdarzeniem PGS. Raport zachowuje surowy i oceniany stosunek liczników; dla indeksu VobSub nadal porównywane są początki segmentów.
+
+Przed zapisaniem SRT normalizowane są jednoznaczne formy `|` → `I`, `-|` → `-I` i skróty takie jak `|'ve` → `I've`. Numery i timestampy pozostają bez zmian. Raport zawiera liczbę poprawek (`normalization.pipeToICount`) i pozostawionych niejednoznacznych znaków (`unresolvedPipeCount`).
+
+W `PREPARE_SYNC` referencja graficzna jest automatycznie wysyłana do skonfigurowanego workera. Wynik `reference/selected/selected.eng.ocr.srt` służy do analizy synchronizacji; ZIP zawiera też `analysis/ocr-quality-report.json`. Źródłowy strumień jest opisany w `reference.ocrSource` manifestu. Techniczny timeline pakietów służy wyłącznie ocenie OCR.
 
 Domyślnie ZIP synchronizacji nie zawiera plików graficznych. `INCLUDE_GRAPHIC_REFERENCE=true` dołącza oryginalny `.sup` lub parę `.idx`/`.sub`. Oryginały pozostają w katalogu roboczym do czasu jego usunięcia przez retencję. Ta opcja nie zmienia paczek do tłumaczenia.
 

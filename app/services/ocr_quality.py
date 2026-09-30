@@ -52,6 +52,29 @@ def _english_dictionary() -> frozenset[str] | None:
     return frozenset(words) if words else None
 
 
+def normalize_ocr_text(content: bytes) -> tuple[bytes, dict]:
+    """Correct only standalone English I and its known contractions in dialogue."""
+    try:
+        text = content.decode("utf-8-sig", errors="strict")
+    except UnicodeDecodeError as exc:
+        raise InvalidOcrSrt("Wynik OCR nie jest poprawnym UTF-8") from exc
+    pipe_i = re.compile(r'''(?<![\w|])\|(?=['’](?:m|d|ll|ve)(?!\w)|$|[\s.,!?;:)\]"”])''')
+    lines = []
+    in_dialogue = False
+    replacements = 0
+    for line in text.splitlines(keepends=True):
+        if not line.strip():
+            in_dialogue = False
+        elif TIMING.fullmatch(line.strip()):
+            in_dialogue = True
+        elif in_dialogue:
+            line, count = pipe_i.subn("I", line)
+            replacements += count
+        lines.append(line)
+    normalized = "".join(lines).encode("utf-8") if replacements else content
+    return normalized, {"pipeToICount": replacements}
+
+
 def quality_report(content: bytes, graphic_timeline: dict | None,
                    dictionary: frozenset[str] | set[str] | None = None) -> dict:
     try:
@@ -93,18 +116,28 @@ def quality_report(content: bytes, graphic_timeline: dict | None,
     expected_first = (graphic_timeline or {}).get("firstMs")
     expected_last = (graphic_timeline or {}).get("lastMs")
     count_ratio = len(cues) / expected_count if expected_count else None
+    is_pgs = (graphic_timeline or {}).get("codec") == "hdmv_pgs_subtitle"
+    # PGS packet counts may include both display and clear events. Keep the
+    # raw ratio visible and assess the closer of the 1:1 and 1:2 interpretations.
+    assessed_ratio = count_ratio
+    paired_events = bool(is_pgs and count_ratio is not None
+                         and abs(count_ratio * 2 - 1) < abs(count_ratio - 1))
+    if paired_events:
+        assessed_ratio = count_ratio * 2
     first_delta = cues[0][0] - int(expected_first) if expected_first is not None else None
-    last_delta = cues[-1][0] - int(expected_last) if expected_last is not None else None
+    # VobSub IDX timestamps describe starts; a final PGS clear event is an end.
+    last_ocr_timestamp = cues[-1][1] if is_pgs else cues[-1][0]
+    last_delta = last_ocr_timestamp - int(expected_last) if expected_last is not None else None
     letter_ratio = letters / len(visible) if visible else 0.0
     isolated_ratio = isolated / len(cues)
     empty_ratio = empty / len(cues)
 
     structural_poor = (empty_ratio > .10
-                       or (count_ratio is not None and not .70 <= count_ratio <= 1.30)
+                       or (assessed_ratio is not None and not .70 <= assessed_ratio <= 1.30)
                        or (first_delta is not None and abs(first_delta) > 10_000)
                        or (last_delta is not None and abs(last_delta) > 15_000))
     structural_warning = (empty > 0
-                          or (count_ratio is not None and not .90 <= count_ratio <= 1.10)
+                          or (assessed_ratio is not None and not .90 <= assessed_ratio <= 1.10)
                           or (first_delta is not None and abs(first_delta) > 2_000)
                           or (last_delta is not None and abs(last_delta) > 5_000))
     structural_quality = "POOR" if structural_poor else "WARNING" if structural_warning else "GOOD"
@@ -118,6 +151,7 @@ def quality_report(content: bytes, graphic_timeline: dict | None,
     out_of_dictionary_ratio = (len(unknown_words) / len(dictionary_words)
                                if effective_dictionary is not None and dictionary_words else None)
     pipe_as_i = len(re.findall(r"(?i)(?<!\w)\|(?!\w)|(?<=[a-z])\||\|(?=[a-z])", dialogue))
+    unresolved_pipes = dialogue.count("|")
     slash_as_letter = _slash_as_letter_count(dialogue, effective_dictionary)
     unusual_capitalization = sum(
         any(character.isupper() for character in word[1:]) and not word.isupper()
@@ -133,7 +167,7 @@ def quality_report(content: bytes, graphic_timeline: dict | None,
                     normalized = word.casefold().replace("’", "'")
                     if word[:1].isupper() and not word.isupper() and normalized not in effective_dictionary:
                         unknown_proper_names.append(word)
-    suspicious_count = (replacement_count + control_count + pipe_as_i + slash_as_letter
+    suspicious_count = (replacement_count + control_count + unresolved_pipes + slash_as_letter
                         + unusual_capitalization + missing_apostrophes + len(unknown_proper_names))
     text_poor = (replacement_count > 0 or control_count > 0 or letter_ratio < .35
                  or (out_of_dictionary_ratio is not None and len(dictionary_words) >= 20
@@ -164,6 +198,8 @@ def quality_report(content: bytes, graphic_timeline: dict | None,
         text_messages.append(f"Niski udział liter w tekście: {letter_ratio:.1%}")
     if pipe_as_i:
         text_messages.append(f"Podejrzany znak | zamiast I/l: {pipe_as_i}")
+    if unresolved_pipes:
+        text_messages.append(f"Niejednoznaczne znaki | pozostawione do weryfikacji: {unresolved_pipes}")
     if slash_as_letter:
         text_messages.append(f"Podejrzany ukośnik zamiast litery: {slash_as_letter}")
     if unusual_capitalization:
@@ -181,9 +217,14 @@ def quality_report(content: bytes, graphic_timeline: dict | None,
         "cueCount": len(cues),
         "graphicCueCount": expected_count or None,
         "cueCountRatio": count_ratio,
+        "assessedCueCountRatio": assessed_ratio,
+        "graphicCountInterpretation": "PGS_SHOW_HIDE_EVENTS" if paired_events else "ONE_EVENT_PER_CUE",
         "firstMs": cues[0][0],
         "lastStartMs": cues[-1][0],
         "lastEndMs": cues[-1][1],
+        "ocrFirstMs": cues[0][0],
+        "ocrLastEndMs": cues[-1][1],
+        "lastTimestampComparison": "END" if is_pgs else "START",
         "graphicFirstMs": expected_first,
         "graphicLastMs": expected_last,
         "firstTimestampDeltaMs": first_delta,
@@ -200,6 +241,7 @@ def quality_report(content: bytes, graphic_timeline: dict | None,
         "outOfDictionaryWordCount": len(unknown_words) if effective_dictionary is not None else None,
         "outOfDictionaryWordRatio": out_of_dictionary_ratio,
         "pipeAsLetterCount": pipe_as_i,
+        "unresolvedPipeCount": unresolved_pipes,
         "slashAsLetterCount": slash_as_letter,
         "unusualCapitalizationCount": unusual_capitalization,
         "missingApostropheCount": missing_apostrophes,

@@ -85,3 +85,50 @@ def test_text_quality_is_unknown_without_dictionary_or_enough_text():
 def test_quality_report_rejects_reversed_timestamps():
     with pytest.raises(InvalidOcrSrt):
         quality_report(b"1\n00:00:02,000 --> 00:00:01,000\nText\n", {"cueCount": 1})
+
+
+def test_pgs_show_hide_events_match_ocr_cues_and_final_end(pgs_ocr_case):
+    report = quality_report(pgs_ocr_case['content'], pgs_ocr_case['timeline'])
+    assert report['structuralQuality'] == 'GOOD'
+    assert report['validSrt'] is True and report['timestampsMonotonic'] is True
+    assert report['malformedCueCount'] == report['reversedIntervalCount'] == report['emptyCueCount'] == 0
+    assert report['graphicCueCount'] == 4536 and report['cueCount'] == 2268
+    assert report['cueCountRatio'] == .5 and report['assessedCueCountRatio'] == 1
+    assert report['graphicCountInterpretation'] == 'PGS_SHOW_HIDE_EVENTS'
+    assert report['graphicFirstMs'] == report['ocrFirstMs'] == 107483
+    assert report['graphicLastMs'] == report['ocrLastEndMs'] == 7442728
+    assert report['firstTimestampDeltaMs'] == report['lastTimestampDeltaMs'] == 0
+
+
+@pytest.mark.parametrize('override', [
+    {'firstMs': 507483}, {'lastMs': 7542728}, {'cueCount': 20000}, {'codec': 'dvd_subtitle'},
+])
+def test_pgs_pair_interpretation_does_not_hide_other_structural_problems(pgs_ocr_case, override):
+    report = quality_report(pgs_ocr_case['content'], {**pgs_ocr_case['timeline'], **override})
+    assert report['structuralQuality'] == 'POOR'
+
+
+def test_pgs_single_event_per_cue_and_long_final_cue():
+    content = b'1\n00:00:01,000 --> 00:00:30,000\nHello there\n'
+    report = quality_report(content, {'codec':'hdmv_pgs_subtitle', 'cueCount':1, 'firstMs':1000, 'lastMs':30000})
+    assert report['structuralQuality'] == 'GOOD'
+    assert report['lastTimestampDeltaMs'] == 0
+    assert report['graphicCountInterpretation'] == 'ONE_EVENT_PER_CUE'
+
+
+def test_conservative_pipe_normalization_only_changes_known_dialogue_tokens():
+    from app.services.ocr_quality import normalize_ocr_text
+
+    content = ("1\r\n00:00:01,000 --> 00:00:02,000\r\n"
+               "| know. -| agree. |'ve |'m |'d |'ll |’ve\r\n"
+               "wo|rd |word word| |'unknown || 1|2 /l and/or\r\n").encode()
+    normalized, changes = normalize_ocr_text(content)
+    assert normalized == content.replace(b'| know', b'I know').replace(b'-| agree', b'-I agree').replace(
+        b"|'ve", b"I've").replace(b"|'m", b"I'm").replace(b"|'d", b"I'd").replace(
+        b"|'ll", b"I'll").replace('|’ve'.encode(), 'I’ve'.encode())
+    assert changes['pipeToICount'] == 7
+    report = quality_report(normalized, None)
+    assert report['unresolvedPipeCount'] == 7
+    assert report['textQuality'] != 'GOOD'
+    assert any('pozostawione do weryfikacji' in message for message in report['textWarnings'])
+    assert normalize_ocr_text(normalized)[0] == normalized
