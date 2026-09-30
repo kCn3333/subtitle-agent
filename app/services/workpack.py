@@ -7,7 +7,7 @@ from pathlib import Path, PurePosixPath
 
 from app.models.job import WorkpackTaskType
 from app.services.alignment import Cue, StructuralAnchorProvider, fit_models, parse_cues, public_model, quality, select_model
-from app.services.process_runner import run_process
+from app.services.process_runner import ProcessTimeoutError, run_process
 from app.services.subtitle_extraction import SubtitleExtractionResult, extract_subtitle
 
 SCHEMA_VERSION = "subtitle-workpack-v2"
@@ -143,9 +143,15 @@ async def extract_embedded(reference: dict, media_path: Path, target: Path,
 
 
 async def graphic_timeline(media_path: Path, stream_index: int, timeout: float) -> dict:
-    result = await run_process(["ffprobe", "-v", "error", "-select_streams", str(stream_index),
-                                "-show_packets", "-show_entries", "packet=pts_time,duration_time,stream_index",
-                                "-of", "json", str(media_path)], timeout)
+    try:
+        result = await run_process(["ffprobe", "-v", "error", "-select_streams", str(stream_index),
+                                    "-show_packets", "-show_entries", "packet=pts_time,duration_time,stream_index",
+                                    "-of", "json", str(media_path)], timeout)
+    except ProcessTimeoutError as exc:
+        raise ProcessTimeoutError(
+            f"Analiza osi czasu napisów graficznych (strumień {stream_index}) przekroczyła limit {timeout:g} s. "
+            "Odczyt obejmuje cały materiał; sprawdź wydajność dostępu do pliku lub zwiększ FFMPEG_TIMEOUT_SECONDS."
+        ) from exc
     payload = json.loads(result.stdout)
     events = []
     for sequence, packet in enumerate(payload.get("packets", []), 1):

@@ -641,16 +641,8 @@ class JobManager:
                 ),
                 50,
             )
-        alternative_files: list[Path] = []
-        for number, alternative in enumerate(alternatives if requirements.extract_reference else [], 1):
-            extraction = await extract_embedded(alternative, media_path,
-                                                job_dir / "reference" / "alternatives" / f"source-{number:03d}",
-                                                self.settings.ffmpeg_timeout_seconds)
-            warnings.extend(extraction.warnings)
-            for path in extraction.files:
-                variant = path.name.removeprefix("selected")
-                destination = job_dir / "reference" / "alternatives" / f"alternative-{number:03d}{variant}"
-                destination.parent.mkdir(parents=True, exist_ok=True); path.replace(destination); alternative_files.append(destination)
+        # Alternatives remain in the ranking for manual selection. The v2
+        # packages include only the selected reference, so do not extract them.
         polish: list[dict] = []
         omitted_polish: list[dict] = []
         if requirements.copy_polish:
@@ -699,8 +691,15 @@ class JobManager:
                     selected_idx, round(media_duration * 1000)
                 )
             else:
+                # Packet probing scans the whole movie, unlike metadata probing.
+                timeline_timeout = max(self.settings.ffprobe_timeout_seconds, self.settings.ffmpeg_timeout_seconds)
+                await self._emit(
+                    job_id, "INFO", JobStatus.BUILDING_TIMELINES,
+                    f"Analiza pakietów napisów graficznych: strumień {selected['streamIndex']}; "
+                    f"odczyt całego materiału, limit {timeline_timeout:g} s", 68,
+                )
                 packets = await graphic_timeline(media_path, int(selected["streamIndex"]),
-                                                 self.settings.ffprobe_timeout_seconds)
+                                                 timeline_timeout)
                 legacy_pgs_timeline = packets
                 graphic_reference_timestamps = [event["start_ms"] for event in packets.get("events", [])]
                 graphic_reference_timeline = {

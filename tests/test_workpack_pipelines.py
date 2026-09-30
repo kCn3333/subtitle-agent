@@ -596,3 +596,50 @@ def test_real_mov_text_pipeline(client, settings, mov_text_media, monkeypatch, m
             if mode == 'PREPARE_TRANSLATION':
                 assert 'reference/selected/selected.original.mp4' in archive.namelist()
     assert hashlib.sha256(mov_text_media.read_bytes()).hexdigest() == before
+
+
+@pytest.mark.parametrize('mode', ['PREPARE_SYNC', 'PREPARE_TRANSLATION'])
+@pytest.mark.parametrize('probe_timeout, extraction_timeout', [(30, 600), (900, 600)])
+def test_graphic_packet_scan_uses_full_file_timeout_without_extracting_alternatives(
+        client, settings, media_file, monkeypatch, mode, probe_timeout, extraction_timeout):
+    settings.ffprobe_timeout_seconds = probe_timeout
+    settings.ffmpeg_timeout_seconds = extraction_timeout
+    tracks = [
+        {**_embedded('graphic'), 'streamIndex': 5, 'title': 'English', 'default': False},
+        {**_embedded(), 'streamIndex': 13, 'title': None},
+    ]
+    calls = []
+
+    async def probe(path, timeout):
+        assert timeout == probe_timeout
+        return {'path': str(path), 'name': path.name, 'sizeBytes': path.stat().st_size,
+                'durationSeconds': 100, 'audioTracks': [], 'embeddedSubtitles': tracks}
+
+    async def extract(reference, path, target, timeout):
+        calls.append(reference['streamIndex'])
+        target.mkdir(parents=True, exist_ok=True)
+        output = target / 'selected.eng.sup'
+        output.write_bytes(b'pgs')
+        return SubtitleExtractionResult([output], [])
+
+    async def graphic(path, stream, timeout):
+        assert path == media_file and stream == 5
+        assert timeout == max(probe_timeout, extraction_timeout)
+        return {'event_count': 1, 'events': [{'start_ms': 1000}]}
+
+    monkeypatch.setattr('app.services.job_manager.probe_media', probe)
+    monkeypatch.setattr('app.services.job_manager.extract_embedded', extract)
+    monkeypatch.setattr('app.services.job_manager.graphic_timeline', graphic)
+    media_file.with_suffix('.pl.srt').write_text('1\n00:00:01,000 --> 00:00:02,000\nTo jest tekst.\n')
+    response = client.post('/api/tasks', json={'mediaPath': str(media_file), 'mode': mode})
+    body = _wait(client, response.json()['jobId'])
+    assert body['status'] == ('WORKPACK_READY' if mode == 'PREPARE_SYNC' else 'NEEDS_OCR'), body
+    assert calls == [5]
+    assert body['report']['workpack']['referenceAmbiguous'] is True
+    assert body['report']['referenceAlternatives'][0]['streamIndex'] == 13
+    with zipfile.ZipFile(body['report']['workpack']['path']) as archive:
+        assert 'reference/selected/selected.eng.sup' in archive.namelist()
+        manifest = json.loads(archive.read('manifest.json'))
+        assert manifest['reference_alternatives'][0]['streamIndex'] == 13
+    events = client.get(f'/api/jobs/{body["jobId"]}/events').text
+    assert f'odczyt całego materiału, limit {max(probe_timeout, extraction_timeout)} s' in events

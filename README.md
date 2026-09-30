@@ -78,7 +78,7 @@ ZIP nie zawiera filmu, audio, sekretów ani pełnych ścieżek hosta.
 
 - **Backend:** Python 3.12, FastAPI i Uvicorn.
 - **Stan zadań:** SQLite w `/data`; zdarzenia i postęp są przesyłane do GUI przez SSE.
-- **Analiza mediów:** `ffprobe`; ekstrakcja tekstu i PGS przez FFmpeg.
+- **Analiza mediów:** `ffprobe`; ekstrakcja tekstu i PGS przez FFmpeg. Metadane mają limit `FFPROBE_TIMEOUT_SECONDS` (domyślnie 30 s), a odczyt pakietów napisów graficznych z całego filmu korzysta z większego z limitów `FFPROBE_TIMEOUT_SECONDS` i `FFMPEG_TIMEOUT_SECONDS` (domyślnie 600 s). Eksportowana jest tylko wybrana referencja; alternatywy pozostają w rankingu do ręcznego wyboru.
 - **DVD/VobSub:** remuks wybranej ścieżki do tymczasowego MKS i eksport pary `.idx` + `.sub` przez `mkvextract`.
 - **OCR:** osobny worker CPU-only z Tesseractem i `seconv`; przetwarza pojedynczą kolejkę z limitem czasu i rozmiaru.
 - **Ocena OCR:** niezależna walidacja struktury/timestampów oraz heurystyki jakości tekstu; metryki trafiają do `ocr-quality-report.json`.

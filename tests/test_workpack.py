@@ -375,3 +375,27 @@ async def test_real_mov_text_extraction(mov_text_media, tmp_path, keep_original)
         assert streams[0]['codec_name'] == 'mov_text'
         assert streams[0]['codec_type'] == 'subtitle'
     assert sha256_file(mov_text_media) == before
+
+
+@pytest.mark.anyio
+async def test_graphic_timeline_timeout_explains_full_file_scan(tmp_path, monkeypatch):
+    from app.services.process_runner import ProcessTimeoutError
+
+    async def slow_probe(arguments, timeout):
+        raise ProcessTimeoutError(f'Proces przekroczył limit {timeout} s')
+
+    monkeypatch.setattr('app.services.workpack.run_process', slow_probe)
+    with pytest.raises(ProcessTimeoutError, match=r'strumień 5.*600 s.*FFMPEG_TIMEOUT_SECONDS'):
+        await graphic_timeline(tmp_path / 'movie.mkv', 5, 600)
+
+
+@pytest.mark.anyio
+async def test_real_graphic_packet_timeline(require_tools, tmp_path):
+    fixture = Path(__file__).parent / 'fixtures' / 'vobsub-reference.mkv.b64'
+    media = tmp_path / 'graphic.mkv'
+    media.write_bytes(base64.b64decode(fixture.read_text(encoding='ascii')))
+    result = await graphic_timeline(media, 0, 10)
+    assert result['event_count'] > 0
+    assert all(event['stream_index'] == 0 for event in result['events'])
+    timestamps = [event['start_ms'] for event in result['events']]
+    assert timestamps == sorted(timestamps)
