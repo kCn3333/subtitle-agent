@@ -6,7 +6,9 @@ from pathlib import Path
 from app.services.process_runner import ProcessExecutionError, run_process, safe_process_detail
 
 
-TEXT_CODECS = {"subrip": "srt", "ass": "ass", "ssa": "ssa", "webvtt": "vtt", "mov_text": "txt"}
+# mov_text is a timed MP4 stream, not a standalone plain-text format.
+# Preserve it in a subtitle-only MP4 before producing the working SRT.
+TEXT_CODECS = {"subrip": "srt", "ass": "ass", "ssa": "ssa", "webvtt": "vtt", "mov_text": "mp4"}
 VOBSUB_HEADER = "# VobSub index file,"
 VOBSUB_ID = re.compile(r"^id:\s*[^,\r\n]+,\s*index:\s*\d+\s*$", re.MULTILINE)
 VOBSUB_TIMESTAMP = re.compile(

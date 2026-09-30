@@ -1,4 +1,5 @@
 import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -46,6 +47,20 @@ def media_file(settings: Settings) -> Path:
 def require_tools():
     assert shutil.which("ffmpeg")
     assert shutil.which("ffprobe")
+
+
+@pytest.fixture
+def mov_text_media(settings, require_tools):
+    source = settings.data_root / "fixture.srt"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text("1\n00:00:00,500 --> 00:00:01,500\nHello world.\n", encoding="utf-8")
+    media = settings.media_roots[0] / "Example Movie.mp4"
+    subprocess.run([
+        "ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=size=16x16:rate=1:duration=2",
+        "-i", str(source), "-map", "0:v", "-map", "1:s", "-c:v", "mpeg4", "-c:s", "mov_text",
+        "-metadata:s:s:0", "language=eng", "-y", str(media),
+    ], check=True, capture_output=True, timeout=10)
+    return media
 
 
 @pytest.fixture

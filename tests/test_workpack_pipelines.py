@@ -573,3 +573,26 @@ def test_manual_embedded_reference_rebuild_changes_selected_track_and_zip(client
             assert selected_files == [f'reference/selected/selected.eng.{suffix}']
         events = client.get(f'/api/jobs/{job_id}/events?after={response.json()["afterSequence"]}').text
         assert 'WORKPACK_READY' in events
+
+
+@pytest.mark.parametrize('mode', ['INSPECT', 'PREPARE_SYNC', 'PREPARE_TRANSLATION'])
+def test_real_mov_text_pipeline(client, settings, mov_text_media, monkeypatch, mode):
+    from app.services.media_analysis import probe_media
+
+    monkeypatch.setattr('app.services.job_manager.probe_media', probe_media)
+    before = hashlib.sha256(mov_text_media.read_bytes()).hexdigest()
+    mov_text_media.with_suffix('.pl.srt').write_text('1\n00:00:00,500 --> 00:00:01,500\nTo jest tekst.\n')
+    response = client.post('/api/tasks', json={'mediaPath': str(mov_text_media), 'mode': mode})
+    assert response.status_code == 202
+    body = _wait(client, response.json()['jobId'])
+    assert body['status'] == ('INSPECTION_READY' if mode == 'INSPECT' else 'WORKPACK_READY'), body
+    assert body['report']['selectedEnglish']['codec'] == 'mov_text'
+    if mode == 'INSPECT':
+        assert body['report']['workpack'] is None
+        assert not (settings.data_root / 'work' / 'jobs' / body['jobId']).exists()
+    else:
+        with zipfile.ZipFile(body['report']['workpack']['path']) as archive:
+            assert b'Hello world.' in archive.read('reference/selected/selected.eng.srt')
+            if mode == 'PREPARE_TRANSLATION':
+                assert 'reference/selected/selected.original.mp4' in archive.namelist()
+    assert hashlib.sha256(mov_text_media.read_bytes()).hexdigest() == before

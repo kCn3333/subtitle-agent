@@ -347,3 +347,31 @@ def test_compose_has_no_openai_publish_or_rw_mount():
     assert 'OPENAI_API_KEY' not in compose and '/publish' not in compose and ':rw' not in compose
     assert 'subtitle-ocr-worker:' in compose and 'OCR_WORKER_URL: http://subtitle-ocr-worker:8090' in compose
     assert 'cpus: 2.0' in compose and 'mem_limit: 1g' in compose
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('keep_original', [True, False])
+async def test_real_mov_text_extraction(mov_text_media, tmp_path, keep_original):
+    from app.services.media_analysis import probe_media
+    from app.services.process_runner import run_process
+    from app.services.subtitle_extraction import extract_subtitle
+
+    before = sha256_file(mov_text_media)
+    media = await probe_media(mov_text_media, 10)
+    reference = media['embeddedSubtitles'][0]
+    assert reference['codec'] == 'mov_text'
+    result = await extract_subtitle(reference, mov_text_media, tmp_path / 'reference', 10,
+                                    keep_text_original=keep_original)
+    names = {path.name for path in result.files}
+    assert names == ({'selected.original.mp4', 'selected.eng.srt'} if keep_original else {'selected.eng.srt'})
+    converted = tmp_path / 'reference' / 'selected.eng.srt'
+    assert 'Hello world.' in converted.read_text()
+    assert '00:00:00,500 --> 00:00:01,500' in converted.read_text()
+    if keep_original:
+        original = tmp_path / 'reference' / 'selected.original.mp4'
+        probed = await run_process(['ffprobe', '-v', 'error', '-show_streams', '-of', 'json', str(original)], 10)
+        streams = json.loads(probed.stdout)['streams']
+        assert len(streams) == 1
+        assert streams[0]['codec_name'] == 'mov_text'
+        assert streams[0]['codec_type'] == 'subtitle'
+    assert sha256_file(mov_text_media) == before
