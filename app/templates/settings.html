@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="pl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ustawienia AI · {{ app_name }}</title><link rel="stylesheet" href="/static/styles.css"></head>
+<body><main><header><h1>Ustawienia AI</h1><a href="/">Wróć do aplikacji</a></header>
+<section class="card"><form id="ai-settings">
+<p>Model działa niezależnie. Podaj adres API zgodnego z Chat Completions.</p>
+<label>Adres API <input id="api-url" type="url" required placeholder="http://serwer-modelu:8000/v1" maxlength="2048"></label>
+<label>Nazwa modelu <input id="model" required maxlength="200"></label>
+<label>Klucz API (opcjonalny) <input id="api-key" type="password" autocomplete="new-password" placeholder="Puste pole zachowuje zapisany klucz"></label>
+<p id="key-status"></p><label><input id="clear-key" type="checkbox"> Usuń zapisany klucz</label>
+<label>Timeout (sekundy) <input id="timeout" type="number" min="1" max="3600" required value="120"></label>
+<label>Reasoning effort <span class="select-wrap"><select id="reasoning-effort">
+  <option value="">domyślne modelu</option><option value="none">wyłączone</option>
+</select></span></label>
+<div class="row"><button type="submit">Zapisz</button><button type="button" id="test-api">Zapisz i testuj połączenie</button></div>
+<p id="settings-status" role="status"></p>
+</form></section><footer>kCn &amp; Codex 2026</footer></main><script src="/static/settings.js"></script></body></html>

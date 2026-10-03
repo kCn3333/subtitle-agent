@@ -5,7 +5,7 @@
   <title>{{ app_name }}</title><link rel="stylesheet" href="/static/styles.css">
 </head>
 <body data-app-mode="{{ app_mode }}"><main>
-  <header><h1>{{ app_name }}</h1><div class="health-group"><span class="health">● ONLINE</span><span id="ocr-health" class="health health-checking">● OCR SPRAWDZANIE</span></div></header>
+  <header><h1>{{ app_name }}</h1><div class="health-group"><a href="/settings">Ustawienia AI</a><span class="health">● ONLINE</span><span id="ocr-health" class="health health-checking">● OCR SPRAWDZANIE</span></div></header>
   <section class="card"><form id="job-form">
     <label for="media-path">Pełna ścieżka do filmu lub odcinka</label>
     <div class="row"><input id="media-path" required placeholder="/media/shows/Example/Season 1/example.mkv">
@@ -22,7 +22,7 @@
       <div class="current"><span>Aktualnie</span><strong id="current-activity">Oczekiwanie</strong></div>
     </div>
     <div class="status-actions"><a id="download" class="button download-button" aria-disabled="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 5-5m-5 5-5-5M5 19h14"/></svg><span id="download-label">Pobierz pakiet ZIP</span></a>
-      <button class="agent-button" type="button" disabled>Przekaż do agenta AI</button></div>
+      </div>
   </section>
   <section class="console-card"><div class="console-head"><span>Konsola postępu</span><button id="clear" type="button">Wyczyść widok konsoli</button></div>
     <div id="console" class="console" aria-live="polite"></div></section>
@@ -31,5 +31,11 @@
       <button id="rebuild" type="button">Zbuduj ponownie z tą referencją</button></div>
     <p class="safe-note">Film i biblioteka mediów pozostają tylko do odczytu. Paczka powstaje wyłącznie w /data.</p></section>
   {% if app_mode == "ADVANCED" %}<section class="card"><h2>Tryb ADVANCED</h2><p>Historyczne endpointy analizy, semantyki i publikacji są aktywne. Podstawowy ekran nadal tworzy workpack.</p></section>{% endif %}
+  <section id="ai-sync-panel" class="card" hidden><h2>Synchronizacja przez AI</h2>
+    <label>Istniejące napisy PL <span class="select-wrap"><select id="ai-polish"></select></span></label>
+    <button id="ai-sync-button" type="button">Synchronizuj przez API</button>
+    <p id="ai-sync-status" role="status"></p><a id="ai-download" class="button" hidden>Pobierz wynik SRT</a>
+    <p>AI zwraca czasy; aplikacja zachowuje oryginalny tekst PL. Sprawdź wynik przed użyciem.</p>
+  </section>
   <footer>kCn &amp; Codex 2026</footer>
-</main><script src="/static/app.js"></script></body></html>
+</main><script src="/static/app.js"></script><script src="/static/ai-sync.js"></script></body></html>

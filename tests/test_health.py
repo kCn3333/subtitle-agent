@@ -17,7 +17,9 @@ def test_index_is_html(client):
     assert 'aria-disabled="true"' in response.text
     assert '<svg viewBox="0 0 24 24"' in response.text
     assert 'id="ocr-health"' in response.text
-    assert "Przekaż do agenta AI" in response.text
+    assert 'id="ai-sync-button"' in response.text
+    assert "Synchronizuj przez API" in response.text
+    assert 'href="/settings"' in response.text
     assert "kCn &amp; Codex 2026" in response.text
     assert response.text.index('id="download"') < response.text.index('id="results"')
 

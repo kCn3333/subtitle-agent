@@ -28,6 +28,9 @@ label, .status span { display: block; margin-bottom: 8px; color: var(--muted); f
 .row { display: flex; gap: 10px; }
 input, select { padding: 12px; border: 1px solid #344258; border-radius: 8px; outline: none; background: #0b111a; color: var(--text); font: inherit; transition: border-color .15s, box-shadow .15s; }
 input { flex: 1; min-width: 0; }
+#ai-settings input:not([type="checkbox"]) { display: block; width: 100%; margin-top: 6px; }
+button:disabled { opacity: .55; cursor: not-allowed; }
+[hidden] { display: none !important; }
 input:focus, select:focus { border-color: #438fc4; box-shadow: 0 0 0 3px #2581c426; }
 .select-wrap { position: relative; display: block; margin: 0; }
 .select-wrap::after { position: absolute; top: 50%; right: 14px; width: 7px; height: 7px; border-right: 2px solid var(--blue); border-bottom: 2px solid var(--blue); content: ""; pointer-events: none; transform: translateY(-70%) rotate(45deg); }
