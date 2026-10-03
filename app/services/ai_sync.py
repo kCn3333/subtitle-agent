@@ -6,6 +6,7 @@ import sqlite3
 from dataclasses import replace
 from pathlib import Path
 from time import perf_counter
+from typing import Literal
 from urllib.parse import urlsplit
 
 import httpx
@@ -24,6 +25,7 @@ class ApiSettings(BaseModel):
     model: str = Field(default="", max_length=200)
     api_key: SecretStr | None = None  # None preserves saved key; empty clears it.
     timeout_seconds: int = Field(default=120, ge=1, le=3600)
+    reasoning_effort: Literal["none"] | None = None
 
     @field_validator("api_url")
     @classmethod
@@ -86,6 +88,8 @@ async def chat_request(settings: ApiSettings, instruction: str, data: dict,
     payload = {"model": settings.model, "stream": False, "messages": [
         {"role": "system", "content": instruction},
         {"role": "user", "content": json.dumps(data, ensure_ascii=False)}]}
+    if settings.reasoning_effort is not None:
+        payload["reasoning_effort"] = settings.reasoning_effort
     async with httpx.AsyncClient(timeout=settings.timeout_seconds, follow_redirects=False,
                                  trust_env=False, transport=transport) as client:
         started = perf_counter()

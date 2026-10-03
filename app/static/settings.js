@@ -3,6 +3,7 @@ function displaySettings(settings){
   document.querySelector('#api-url').value=settings.api_url;
   document.querySelector('#model').value=settings.model;
   document.querySelector('#timeout').value=settings.timeout_seconds;
+  document.querySelector('#reasoning-effort').value=settings.reasoning_effort??'';
   document.querySelector('#api-key').value='';
   document.querySelector('#clear-key').checked=false;
   document.querySelector('#key-status').textContent=settings.api_key_set?'Klucz API jest zapisany.':'Klucz API nie jest ustawiony.';
@@ -17,7 +18,8 @@ async function saveAiSettings(test){
   settingsStatus.textContent=test?'Zapisywanie i testowanie połączenia…':'Zapisywanie…';
   try{
     const payload={api_url:document.querySelector('#api-url').value,model:document.querySelector('#model').value,
-      timeout_seconds:Number(document.querySelector('#timeout').value)};
+      timeout_seconds:Number(document.querySelector('#timeout').value),
+      reasoning_effort:document.querySelector('#reasoning-effort').value||null};
     const key=document.querySelector('#api-key').value;
     if(document.querySelector('#clear-key').checked)payload.api_key='';else if(key)payload.api_key=key;
     displaySettings(await settingsRequest('/api/settings/ai',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}));

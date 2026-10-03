@@ -13,6 +13,8 @@ Aplikacja przygotowuje referencję EN i istniejące napisy PL, korzystając z do
 
 Ustawienia zapisują się w SQLite w `/data` i pozostają po restarcie. Klucz jest przechowywany w bazie bez szyfrowania aplikacyjnego; nie trafia do odpowiedzi API ustawień, raportu ani SRT. Puste pole w formularzu zachowuje zapisany klucz; checkbox pozwala go usunąć. Nowe API nie dodaje mechanizmu logowania do aplikacji; dostęp do ustawień podlega temu samemu zabezpieczeniu dostępu co reszta panelu.
 
+Opcjonalne **Reasoning effort** domyślnie ma wartość **domyślne modelu**: pole `reasoning_effort` jest pomijane w żądaniu do modelu. **Wyłączone** dodaje `"reasoning_effort":"none"`. Ustawienie obowiązuje zarówno podczas testu połączenia, jak i synchronizacji. W API ustawień `null` oznacza pominięcie, a `"none"` wyłączenie. Istniejące konfiguracje bez tego pola zachowują domyślne zachowanie. Opcję wyłączenia wybieraj dla modelu i dostawcy obsługującego tę wartość.
+
 ## Kontrakt
 
 Adapter używa [OpenAI Chat Completions](https://developers.openai.com/api/reference/resources/chat): `POST /chat/completions`, pola `model`, `messages` i `stream:false`. Klucz, jeśli ustawiony, jest przesyłany jako `Authorization: Bearer …`. Aplikacja nie korzysta z endpointu listowania modeli ani z wymagających osobnego wsparcia opcji structured outputs. Usługa z innym API wymaga osobnego adaptera.

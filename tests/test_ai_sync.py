@@ -196,3 +196,42 @@ def test_pipeline_prepares_inputs_for_new_api(client,media_file,monkeypatch):
     response=client.post(f'/api/tasks/{job_id}/ai-sync',json={'polish_file':polish,'reference_source_id':'embedded:4'})
     assert response.status_code==200,response.text
     assert client.get(f'/api/tasks/{job_id}/ai-sync/download').status_code==200
+
+
+@pytest.mark.parametrize('effort',[None,'none'])
+def test_reasoning_effort_in_connection_test_and_sync(client,prepared_job,monkeypatch,effort):
+    job_id,_=prepared_job
+    calls=[]
+    def respond(request):
+        body=json.loads(request.content)
+        if effort is None:
+            assert 'reasoning_effort' not in body
+        else:
+            assert body['reasoning_effort']=='none'
+        calls.append(body)
+        data=json.loads(body['messages'][1]['content'])
+        content={'ok':True} if data.get('test') else {'segments':[{'id':'pl:1','start_ms':3000,'end_ms':4500}]}
+        return httpx.Response(200,json={'choices':[{'message':{'content':json.dumps(content)},'finish_reason':'stop'}]})
+    async def request_with_transport(settings,instruction,data):
+        return await chat_request(settings,instruction,data,httpx.MockTransport(respond))
+    monkeypatch.setattr('app.api.ai_sync.chat_request',request_with_transport)
+    settings={'api_url':'http://local/v1','model':'test','reasoning_effort':effort}
+    assert client.put('/api/settings/ai',json=settings).json()['reasoning_effort']==effort
+    assert client.get('/api/settings/ai').json()['reasoning_effort']==effort
+    assert client.post('/api/settings/ai/test').status_code==200
+    response=client.post(f'/api/tasks/{job_id}/ai-sync',json={'polish_file':'polish/original.pl.srt','reference_source_id':'embedded:4'})
+    assert response.status_code==200,response.text
+    assert len(calls)==2
+    # Switching back must stop sending the optional parameter.
+    assert client.put('/api/settings/ai',json={**settings,'reasoning_effort':None}).status_code==200
+    assert client.get('/api/settings/ai').json()['reasoning_effort'] is None
+
+
+def test_legacy_settings_default_reasoning_effort(tmp_path):
+    store=ApiSettingsStore(tmp_path/'settings.db')
+    with sqlite3.connect(store.db_path) as db:
+        db.execute('INSERT INTO ai_api_settings VALUES (1,?)',
+                   (json.dumps({'api_url':'http://local/v1','model':'test','timeout_seconds':120}),))
+    assert ApiSettingsStore(store.db_path).get().reasoning_effort is None
+    store.save(ApiSettings(reasoning_effort='none'))
+    assert ApiSettingsStore(store.db_path).get().reasoning_effort=='none'

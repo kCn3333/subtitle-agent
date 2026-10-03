@@ -9,6 +9,9 @@
 <label>Klucz API (opcjonalny) <input id="api-key" type="password" autocomplete="new-password" placeholder="Puste pole zachowuje zapisany klucz"></label>
 <p id="key-status"></p><label><input id="clear-key" type="checkbox"> Usuń zapisany klucz</label>
 <label>Timeout (sekundy) <input id="timeout" type="number" min="1" max="3600" required value="120"></label>
+<label>Reasoning effort <span class="select-wrap"><select id="reasoning-effort">
+  <option value="">domyślne modelu</option><option value="none">wyłączone</option>
+</select></span></label>
 <div class="row"><button type="submit">Zapisz</button><button type="button" id="test-api">Zapisz i testuj połączenie</button></div>
 <p id="settings-status" role="status"></p>
 </form></section><footer>kCn &amp; Codex 2026</footer></main><script src="/static/settings.js"></script></body></html>
