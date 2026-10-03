@@ -29,7 +29,13 @@
   <section id="results" class="card results" hidden><h2>Wynik analizy</h2><div id="result-content"></div>
     <div id="reference-choice" hidden><p id="reference-question" hidden>Brak wbudowanej referencji EN. Czy użyć wybranych zewnętrznych napisów angielskich jako wzorca?</p><label>Wybierz wykrytą referencję<span class="select-wrap"><select id="reference-source"></select></span></label>
       <button id="rebuild" type="button">Zbuduj ponownie z tą referencją</button></div>
+    <div id="local-sync" hidden><p id="local-health">AI: sprawdzanie dostępności</p>
+      <label>Napisy PL<select id="local-polish"></select></label>
+      <button id="local-align" type="button">Synchronizuj lokalnie</button>
+      <button id="local-cancel" type="button" hidden>Anuluj oczekiwanie</button>
+      <div id="local-result"></div></div>
     <p class="safe-note">Film i biblioteka mediów pozostają tylko do odczytu. Paczka powstaje wyłącznie w /data.</p></section>
   {% if app_mode == "ADVANCED" %}<section class="card"><h2>Tryb ADVANCED</h2><p>Historyczne endpointy analizy, semantyki i publikacji są aktywne. Podstawowy ekran nadal tworzy workpack.</p></section>{% endif %}
+  <p><a href="/settings">Ustawienia lokalnego AI: CPU / GPU w LAN</a></p>
   <footer>kCn &amp; Codex 2026</footer>
 </main><script src="/static/app.js"></script></body></html>

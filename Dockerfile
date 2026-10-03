@@ -22,6 +22,8 @@ USER root
 COPY requirements-dev.txt pytest.ini compose.example.yml ./
 COPY tests tests
 COPY ocr_worker ocr_worker
+COPY semantic_worker semantic_worker
+COPY compose.semantic*.yml ./
 RUN pip install --no-cache-dir -r requirements-dev.txt
 RUN pytest -q
 

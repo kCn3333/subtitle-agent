@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 import sqlite3
 import threading
 import uuid
@@ -10,6 +11,7 @@ from pathlib import Path
 from typing import AsyncIterator
 
 from app.core.config import Settings
+from app.services.prepared_reference import PreparedReference
 from app.models.job import AlignmentMode, JobEvent, JobStatus, WorkpackTaskType
 from app.models.media import MediaIdentity
 from app.services.media_analysis import (
@@ -37,7 +39,7 @@ from app.services.workpack import (SCHEMA_VERSION, build_zip, copy_polish_candid
 
 
 TERMINAL = {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.INTERRUPTED, JobStatus.REVIEW_REQUIRED,
-            JobStatus.NEEDS_OCR, JobStatus.AI_UNAVAILABLE, JobStatus.AI_BUDGET_EXCEEDED,
+            JobStatus.WAITING_AI, JobStatus.CANCELLED, JobStatus.NEEDS_OCR, JobStatus.AI_UNAVAILABLE, JobStatus.AI_BUDGET_EXCEEDED,
             JobStatus.READY_TO_PUBLISH, JobStatus.PUBLISHED, JobStatus.PUBLISH_DISABLED,
             JobStatus.PUBLISH_BLOCKED_QUALITY, JobStatus.PUBLISH_SOURCE_CHANGED, JobStatus.PUBLISH_CONFLICT,
             JobStatus.PUBLISH_PERMISSION_DENIED, JobStatus.PUBLISH_UNSUPPORTED_FILESYSTEM, JobStatus.PUBLISH_FAILED}
@@ -84,7 +86,7 @@ class JobManager:
         self._lock = threading.RLock()
         self._conditions: dict[str, asyncio.Condition] = {}
         self._publish_locks: dict[str, asyncio.Lock] = {}
-        self._queue: asyncio.Queue[str] = asyncio.Queue()
+        self._queue: asyncio.Queue = asyncio.Queue(maxsize=64)
         self._workers: list[asyncio.Task[None]] = []
         self._maintenance_task: asyncio.Task[None] | None = None
         self._closed = False
@@ -107,6 +109,7 @@ class JobManager:
                     resolved_media_path TEXT, report_json TEXT, job_type TEXT NOT NULL DEFAULT 'ANALYZE_MEDIA',
                     task_type TEXT
                 );
+                CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS events (
                     job_id TEXT NOT NULL, sequence INTEGER NOT NULL, timestamp TEXT NOT NULL,
                     level TEXT NOT NULL, stage TEXT NOT NULL, message TEXT NOT NULL,
@@ -129,6 +132,8 @@ class JobManager:
                 db.execute("ALTER TABLE jobs ADD COLUMN report_json TEXT")
             if "job_type" not in columns:
                 db.execute("ALTER TABLE jobs ADD COLUMN job_type TEXT NOT NULL DEFAULT 'ANALYZE_MEDIA'")
+            if "pending_json" not in columns:
+                db.execute("ALTER TABLE jobs ADD COLUMN pending_json TEXT")
             if "task_type" not in columns:
                 db.execute("ALTER TABLE jobs ADD COLUMN task_type TEXT")
             for legacy, current in LEGACY_EVENT_STAGES.items():
@@ -138,6 +143,21 @@ class JobManager:
             placeholders = ",".join("?" for _ in terminal_values)
             db.execute(f"UPDATE jobs SET status=?, finished_at=?, error_message=? WHERE status NOT IN ({placeholders})",
                        (JobStatus.INTERRUPTED, stamp, "Zadanie przerwane przez restart aplikacji", *terminal_values))
+
+        with self._lock, self._connect() as db:
+            interrupted = db.execute("SELECT id,report_json FROM jobs WHERE status=? AND pending_json IS NOT NULL", (JobStatus.INTERRUPTED,)).fetchall()
+            for row in interrupted:
+                report = json.loads(row['report_json'] or '{}'); report.pop('alignment', None)
+                report['localAlignmentWaiting'] = {'reason': 'Zadanie przerwane; wymagane jawne wznowienie', 'resumeAllowed': True}
+                db.execute('UPDATE jobs SET report_json=? WHERE id=?', (json.dumps(report),row['id']))
+                directory = self.settings.data_root / 'work' / 'jobs' / row['id']
+                for name in ('preview.AI-Sync.pl.srt','alignment-report.json'):
+                    (directory/name).unlink(missing_ok=True)
+
+        from app.api.local_settings import apply_settings
+        with self._lock, self._connect() as db:
+            saved = db.execute("SELECT value_json FROM app_settings WHERE key='local_ai'").fetchone()
+        if saved: apply_settings(self.settings, json.loads(saved[0]))
 
     async def start(self) -> None:
         await asyncio.to_thread(self.cleanup_expired_artifacts)
@@ -228,21 +248,35 @@ class JobManager:
         if reference_source_id not in {subtitle_source_id(item) for item in detected}:
             raise UserInputError("Wybrana referencja nie została wykryta w analizie")
         after = max((event.sequence for event in self.events(job_id)), default=0)
-        await self._emit(job_id, "INFO", JobStatus.QUEUED, "Zatwierdzono referencję; przygotowanie paczki", 0)
-        async def run() -> None:
-            try:
-                task_type = WorkpackTaskType(job.get("task_type") or WorkpackTaskType.SYNC_AND_LANGUAGE_REVIEW)
-                await workpack_service(task_type).prepare(self, job_id, job["report"], reference_source_id)
-            except (ProcessExecutionError, ProcessTimeoutError) as exc:
-                message = str(exc)
-                with self._lock, self._connect() as db: db.execute("UPDATE jobs SET error_message=? WHERE id=?", (message, job_id))
-                await self._emit(job_id, "ERROR", JobStatus.FAILED, message, 100)
-            except Exception as exc:
-                message = f"Ponowne budowanie workpacka nie powiodło się ({type(exc).__name__})"
-                with self._lock, self._connect() as db: db.execute("UPDATE jobs SET error_message=? WHERE id=?", (message, job_id))
-                await self._emit(job_id, "ERROR", JobStatus.FAILED, message, 100)
-        asyncio.create_task(run())
+        await self._enqueue_action(job_id, {"action": "rebuild", "reference": reference_source_id})
         return after
+
+    async def _enqueue_action(self, job_id: str, action: dict) -> None:
+        if self._queue.full(): raise UserInputError("Kolejka jest pełna; spróbuj później")
+        action = dict(action, requestId=str(uuid.uuid4()), enqueuedAt=now().isoformat())
+        with self._lock, self._connect() as db:
+            row = db.execute("SELECT status,report_json FROM jobs WHERE id=?", (job_id,)).fetchone()
+            if not row or row["status"] not in TERMINAL:
+                raise UserInputError("Zadanie jest już w kolejce lub jest przetwarzane")
+            report = json.loads(row["report_json"] or "{}")
+            report.pop("alignment", None)
+            report.pop("semanticAlignment", None)
+            db.execute("UPDATE jobs SET pending_json=?,status=?,finished_at=NULL,error_message=NULL,report_json=? WHERE id=?",
+                       (json.dumps(action), JobStatus.QUEUED, json.dumps(report), job_id))
+        directory = self.settings.data_root / "work" / "jobs" / job_id
+        for name in ("preview.AI-Sync.pl.srt", "alignment-report.json"):
+            (directory / name).unlink(missing_ok=True)
+        await self._emit(job_id, "INFO", JobStatus.QUEUED, "Zadanie dodano do kontrolowanej kolejki", 0)
+        self._queue.put_nowait((job_id, action["requestId"]))
+
+    async def cancel_alignment(self, job_id: str) -> None:
+        job = self.get(job_id)
+        pending = json.loads((job or {}).get('pending_json') or '{}')
+        if not job or pending.get('mode') != 'LOCAL' or job["status"] not in {JobStatus.WAITING_AI, JobStatus.INTERRUPTED, JobStatus.QUEUED}:
+            raise UserInputError("Anulowanie dostępne dla zadania oczekującego lub przerwanego")
+        with self._lock, self._connect() as db:
+            db.execute("UPDATE jobs SET pending_json=NULL WHERE id=?", (job_id,))
+        await self._emit(job_id, "WARNING", JobStatus.CANCELLED, "Synchronizacja anulowana", 100)
 
     def get(self, job_id: str) -> dict | None:
         with self._lock, self._connect() as db:
@@ -388,19 +422,11 @@ class JobManager:
 
     async def start_alignment(self, job_id: str, english_source_id: str | None, polish_source_id: str | None,
                               mode: AlignmentMode) -> None:
-        async def run() -> None:
-            try:
-                await self.align(job_id, english_source_id, polish_source_id, mode)
-            except UserInputError as exc:
-                with self._lock, self._connect() as db:
-                    db.execute("UPDATE jobs SET error_message=? WHERE id=?", (str(exc), job_id))
-                await self._emit(job_id, "ERROR", JobStatus.FAILED, str(exc), 100)
-            except Exception as exc:
-                message = f"Synchronizacja nie powiodła się ({type(exc).__name__})"
-                with self._lock, self._connect() as db:
-                    db.execute("UPDATE jobs SET error_message=? WHERE id=?", (message, job_id))
-                await self._emit(job_id, "ERROR", JobStatus.FAILED, message, 100)
-        asyncio.create_task(run())
+        action = {"action": "alignment", "english": english_source_id, "polish": polish_source_id, "mode": str(mode)}
+        if mode == AlignmentMode.LOCAL:
+            action['localConfig'] = {name: getattr(self.settings, name) for name in
+                ('local_worker_url','local_worker_expected_device','local_cpu_fallback_enabled','local_cpu_fallback_url')}
+        await self._enqueue_action(job_id, action)
 
     async def align(self, job_id: str, english_source_id: str | None, polish_source_id: str | None,
                     mode: AlignmentMode = AlignmentMode.SEMANTIC_PREFERRED) -> None:
@@ -423,15 +449,32 @@ class JobManager:
                          f"Źródła: EN {candidate_label(english)}, PL {candidate_label(polish)}", 5)
         if not english or not polish:
             raise UserInputError("Brak kompletnej pary angielskich i polskich napisów")
-        if english.get("type") == "graphic":
-            report["alignment"] = {"status": "NEEDS_OCR", "quality": "UNUSABLE",
-                                   "warnings": ["Angielskie źródło jest graficzne i wymaga OCR"],
-                                   "selectedEnglish": english, "selectedPolish": polish}
-            self._save_report(job_id, report, job.get("resolved_media_path") or job["media_path"])
-            await self._emit(job_id, "WARNING", JobStatus.NEEDS_OCR, "Wybrane napisy graficzne wymagają OCR", 100)
-            return
-        english_path = Path(report.get("workingFiles", {}).get("englishReference") or "")
+        prepared = report.get("preparedReference")
+        if prepared:
+            reference = PreparedReference.verified(prepared, english)
+            english_path = Path(reference.textPath)
+        else:
+            # Legacy analysis copies can be reused only for the source actually extracted.
+            if subtitle_source_id(english) != subtitle_source_id(report.get("selectedEnglish") or {}):
+                raise UserInputError("Zmiana referencji wymaga ponownego przygotowania paczki")
+            if english.get("type") == "graphic":
+                report["alignment"] = {"status": "NEEDS_OCR", "quality": "UNUSABLE"}
+                self._save_report(job_id, report, job.get("resolved_media_path") or job["media_path"])
+                await self._emit(job_id, "WARNING", JobStatus.NEEDS_OCR, "Wybrane napisy wymagają poprawnego OCR", 100)
+                return
+            english_path = Path(report.get("workingFiles", {}).get("englishReference") or "")
         polish_path = Path(polish.get("path") or "")
+        copied = next((item for item in report.get("polishCandidates", [])
+                       if subtitle_source_id(item) == subtitle_source_id(polish)), None)
+        if copied:
+            polish_path = self.settings.data_root / "work" / "jobs" / job_id / copied["archiveName"]
+            if not polish_path.is_file() or sha256(polish_path) != copied["sha256"]:
+                raise UserInputError("Polska kopia robocza zmieniła się lub wygasła")
+        if english_path.suffix.lower() != ".srt" or polish_path.suffix.lower() != ".srt":
+            raise UserInputError("Synchronizacja wymaga przygotowanych tekstowych SRT")
+        if mode == AlignmentMode.LOCAL:
+            await self._align_local(job_id, report, english_path, polish_path)
+            return
         if not english_path.is_file() or polish.get("sourceType") != "external" or not polish_path.is_file():
             raise UserInputError("Etap 3 wymaga tekstowej kopii angielskiej i zewnętrznego polskiego pliku")
         await self._emit(job_id, "INFO", JobStatus.PARSING_SUBTITLES, "Parsowanie napisów do modelu milisekundowego", 15)
@@ -499,10 +542,20 @@ class JobManager:
             await self._emit(job_id, "WARNING", JobStatus.SEMANTIC_FALLBACK,
                              "Semantyka nieaktywna — użyto kotwic strukturalnych", 44)
         await self._emit(job_id, "INFO", JobStatus.FITTING_MODELS, f"Dopasowanie modeli do {len(anchors)} punktów", 45)
-        models = fit_models(anchors, self.settings.alignment_min_scale, self.settings.alignment_max_scale,
-                            self.settings.alignment_max_segments, self.settings.alignment_min_points_per_segment)
+        content_anchors = [a for a in anchors if a.origin != 'structural']
+        control_anchors = [a for i,a in enumerate(content_anchors) if i % 4 == 2]
+        fit_anchors = [a for i,a in enumerate(content_anchors) if i % 4 != 2] if content_anchors else anchors
+        models = fit_models(fit_anchors, self.settings.alignment_min_scale, self.settings.alignment_max_scale,
+                            self.settings.alignment_max_segments, self.settings.alignment_min_points_per_segment, duration_ms)
         await self._emit(job_id, "INFO", JobStatus.SELECTING_STRATEGY, "Deterministyczny wybór najprostszego wiarygodnego modelu", 60)
-        model = select_model(models); grade = quality(model)
+        model = select_model(models)
+        if model and content_anchors:
+            from app.services.alignment import coverage_report, percentile
+            controls = [abs(a.reference_time-model['predict'](a.source_time)) for a in control_anchors]
+            model['independentValidated'] = len(controls) >= 3 and percentile(controls, .95) <= 750
+            model['coverage'] = coverage_report(content_anchors, english_cues, duration_ms)['dialogueCoverage']
+            model['controls'] = {'residualMs': controls, 'independentOfFit': True, 'groundTruth': False}
+        grade = quality(model)
         semantic_report["qualityAfter"] = grade
         if not model:
             grade = "UNUSABLE"
@@ -518,7 +571,7 @@ class JobManager:
             await self._emit(job_id, "INFO", JobStatus.GENERATING_PREVIEW, "Atomowy zapis podglądu UTF-8 w katalogu roboczym", 92)
             write_preview(transformed, preview)
             warnings = []
-            if validation["reversedSegments"] or validation["overlappingSegments"]: warnings.append("Wynik zawiera konflikty czasowe")
+            if any(validation[key] for key in ("reversedSegments", "introducedOverlaps", "orderErrors", "clampedSegments", "outOfRangeSegments")): warnings.append("Wynik zawiera konflikty czasowe lub ograniczone przedziały")
             status = "COMPLETED" if grade in {"HIGH", "MEDIUM"} and not warnings else "REVIEW_REQUIRED"
             alignment = {"status": status, "quality": grade, "model": public_model(model),
                          "models": [public_model(item) for item in models], "anchorCount": len(anchors),
@@ -548,8 +601,79 @@ class JobManager:
         await self._emit(job_id, "SUCCESS" if terminal == JobStatus.COMPLETED else "WARNING", terminal,
                          f"Synchronizacja: {alignment['quality']} — plik pozostaje tylko podglądem", 100)
 
+    async def _align_local(self, job_id: str, report: dict, english_path: Path, polish_path: Path) -> None:
+        from app.services.local_semantic import EmbeddingClient, LocalUnavailable, LocalProtocolError, synchronize
+        import time
+        job = self.get(job_id)
+        pending = json.loads(job.get('pending_json') or '{}')
+        local_settings = self.settings.model_copy(deep=True, update=pending.get('localConfig') or {})
+        source_path = job.get("resolved_media_path") or job["media_path"]
+        began = time.perf_counter()
+        input_hash, reference_hash = sha256(polish_path), sha256(english_path)
+        english = await asyncio.to_thread(parse_cues, english_path, "english", True)
+        polish = await asyncio.to_thread(parse_cues, polish_path, "polish", True)
+        duration = round((report.get("media", {}).get("durationSeconds") or 0)*1000)
+        await self._emit(job_id, "INFO", JobStatus.REQUESTING_SEMANTIC_ANCHORS,
+                         "Lokalne embeddingi EN–PL; tylko tekst i identyfikatory", 35)
+        async def progress(stage):
+            stages = {'matching': (JobStatus.BUILDING_ANCHORS, 55, 'Globalne wyszukiwanie treści i dopasowanie monotoniczne'),
+                      'fitting': (JobStatus.FITTING_MODELS, 70, 'Ważone modele czasu i osobne punkty kontrolne'),
+                      'validation': (JobStatus.VALIDATING_OUTPUT, 80, 'Walidacja transformacji')}
+            status, value, message = stages[stage]
+            await self._emit(job_id, 'INFO', status, message, value)
+        client = EmbeddingClient(local_settings)
+        fallback = False
+        try:
+            try:
+                transformed, result = await synchronize(english, polish, duration, client, local_settings.local_worker_max_cues, progress)
+            except LocalUnavailable:
+                if not local_settings.local_cpu_fallback_enabled or not local_settings.local_cpu_fallback_url: raise
+                fallback = True
+                client = EmbeddingClient(local_settings, url=local_settings.local_cpu_fallback_url, expected_device='cpu')
+                metadata = await client.ready()
+                if metadata['device'] != 'cpu': raise LocalUnavailable('Fallback wymaga urządzenia CPU')
+                transformed, result = await synchronize(english, polish, duration, client, local_settings.local_worker_max_cues, progress)
+        except LocalProtocolError as exc:
+            report['localAlignmentError'] = {'reason': str(exc)}
+            self._save_report(job_id, report, source_path)
+            await self._emit(job_id, 'ERROR', JobStatus.FAILED, str(exc), 100)
+            return
+        except LocalUnavailable as exc:
+            report["localAlignmentWaiting"] = {"reason": str(exc), "resumeAllowed": True}
+            self._save_report(job_id, report, source_path)
+            await self._emit(job_id, "WARNING", JobStatus.WAITING_AI, str(exc)+"; można wznowić lub anulować", 35)
+            return
+        await self._emit(job_id, "INFO", JobStatus.VALIDATING_OUTPUT, "Kontrola czasów, tekstu PL i hashy źródeł", 85)
+        if sha256(polish_path) != input_hash or sha256(english_path) != reference_hash:
+            raise UserInputError("Źródło zmieniło się podczas synchronizacji")
+        directory = self.settings.data_root / "work" / "jobs" / job_id
+        preview = directory / "preview.AI-Sync.pl.srt"
+        await asyncio.to_thread(write_preview, transformed, preview)
+        prepared = report.get('preparedReference') or {}
+        result['reference'] = {key: prepared.get(key) for key in ('sourceId','sha256','originalKind','provenance','ocrQuality')}
+        if prepared.get('ocrQuality') and prepared['ocrQuality'].get('textQuality') != 'GOOD':
+            result['warnings'].append('Podejrzany tekst OCR wymaga przeglądu językowego referencji.')
+        result.update({"previewPath": str(preview), "previewSha256": sha256(preview), "inputSha256": input_hash,
+                       "referenceSha256": reference_hash, "referenceSourceId": report.get("preparedReference", {}).get("sourceId"),
+                       "fallbackUsed": fallback, "mediaIdentity": identity(Path(source_path))})
+        pending = json.loads(job.get('pending_json') or '{}')
+        queued = datetime.fromisoformat(pending['enqueuedAt']) if pending.get('enqueuedAt') else None
+        result['timings']['queueMs'] = max(0, (now()-queued).total_seconds()*1000 - (time.perf_counter()-began)*1000) if queued else None
+        result['timings']['referencePreparation'] = report.get('preparationTimings')
+        result["timings"]["totalAlignmentMs"] = (time.perf_counter()-began)*1000
+        report.pop("localAlignmentWaiting", None)
+        report["alignment"] = result
+        temporary_report = directory / ".alignment-report.json.tmp"
+        await asyncio.to_thread(write_json, temporary_report, result)
+        temporary_report.replace(directory / "alignment-report.json")
+        self._save_report(job_id, report, source_path)
+        await self._emit(job_id, "WARNING", JobStatus.REVIEW_REQUIRED,
+                         f"Podgląd lokalny ({client.metadata['device']}); wymagany przegląd", 100)
+
     async def _build_workpack(self, job_id: str, requirements: PipelineRequirements,
                               cached: dict | None = None, requested_reference: str | None = None) -> None:
+        preparation_started = time.perf_counter()
+        ocr_elapsed_ms = 0.0
         job = self.get(job_id)
         task_type = WorkpackTaskType(job.get("task_type") or WorkpackTaskType.SYNC_AND_LANGUAGE_REVIEW)
         await self._emit(job_id, "INFO", JobStatus.VALIDATING_PATH, "Bezpieczna weryfikacja ścieżki", 5)
@@ -723,10 +847,12 @@ class JobManager:
                 await self._emit(job_id, "INFO", JobStatus.OCR_RUNNING,
                                  "Rozpoznawanie angielskiej referencji przez CPU OCR", 72)
                 try:
+                    ocr_started = time.perf_counter()
                     ocr_result = await recognize_reference(
                         reference_files, self.settings.ocr_worker_url, self.settings.ocr_timeout_seconds,
                         self.settings.ocr_max_output_bytes,
                     )
+                    ocr_elapsed_ms = (time.perf_counter()-ocr_started)*1000
                     normalized_content, normalization = normalize_ocr_text(ocr_result.content)
                     ocr_result = replace(ocr_result, content=normalized_content)
                     ocr_quality = quality_report(ocr_result.content, graphic_reference_timeline)
@@ -949,6 +1075,9 @@ class JobManager:
                                     "structuralQuality": ocr_quality["structuralQuality"],
                                     "textQuality": ocr_quality["textQuality"]}
                                    if ocr_result else None)})
+        report["preparationTimings"] = {"totalMs": (time.perf_counter()-preparation_started)*1000, "ocrHttpMs": ocr_elapsed_ms}
+        if selected_srt and selected:
+            report["preparedReference"] = PreparedReference.create(selected, selected_srt, ocr_quality).to_dict()
         self._save_report(job_id, report, str(media_path))
         if requirements.name == "INSPECT":
             await asyncio.to_thread(remove_job_directory, self.settings.data_root / "work" / "jobs", job_dir)
@@ -964,9 +1093,25 @@ class JobManager:
 
     async def _worker(self) -> None:
         while True:
-            job_id = await self._queue.get()
+            item = await self._queue.get()
+            job_id, ticket = item if isinstance(item, tuple) else (item, None)
             try:
                 job = self.get(job_id)
+                if not job or job["status"] == JobStatus.CANCELLED:
+                    continue
+                pending = json.loads(job.get("pending_json") or "null")
+                if ticket and (not pending or pending.get("requestId") != ticket):
+                    continue
+                if pending:
+                    if pending["action"] == "alignment":
+                        await self.align(job_id, pending.get("english"), pending.get("polish"), AlignmentMode(pending["mode"]))
+                    else:
+                        task_type = WorkpackTaskType(job.get("task_type") or WorkpackTaskType.PREPARE_SYNC)
+                        await workpack_service(task_type).prepare(self, job_id, job["report"], pending["reference"])
+                    with self._lock, self._connect() as db:
+                        if self.get(job_id)["status"] != JobStatus.WAITING_AI:
+                            db.execute("UPDATE jobs SET pending_json=NULL WHERE id=?", (job_id,))
+                    continue
                 if job.get("job_type") == "PREPARE_WORKPACK":
                     task_type = WorkpackTaskType(job.get("task_type") or WorkpackTaskType.SYNC_AND_LANGUAGE_REVIEW)
                     await workpack_service(task_type).prepare(self, job_id)
