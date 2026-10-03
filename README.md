@@ -2,6 +2,8 @@
 
 Subtitle Agent analizuje napisy filmu lub odcinka i przygotowuje ZIP do synchronizacji albo tłumaczenia. Biblioteka mediów jest montowana tylko do odczytu, a aplikacja nie wymaga klucza OpenAI.
 
+Gotowy workpack do synchronizacji można przekazać do niezależnego modelu przez API zgodne z Chat Completions. W `/settings` ustaw adres API, nazwę modelu, opcjonalny klucz i timeout. Aplikacja sprawdza zwrócone czasy po ID, zachowuje tekst PL i udostępnia wynik SRT oraz czas żądania. [Instrukcja konfiguracji i testowania](docs/ai-api-sync.md).
+
 ## Co potrafi
 
 - sprawdza parametry materiału i dostępne ścieżki napisów;
