@@ -1,0 +1,350 @@
+{
+  "scope": "full_synthetic",
+  "points": [
+    {
+      "polishIds": [
+        "polish:1",
+        "polish:2"
+      ],
+      "englishIds": [
+        "english:1"
+      ],
+      "startMs": 5000,
+      "endMs": 9300,
+      "uncertain": false
+    },
+    {
+      "polishIds": [
+        "polish:2"
+      ],
+      "englishIds": [],
+      "startMs": 7500,
+      "endMs": 9300,
+      "uncertain": false,
+      "relationOnly": false,
+      "relationExcluded": true
+    },
+    {
+      "polishIds": [
+        "polish:3",
+        "polish:4"
+      ],
+      "englishIds": [
+        "english:2"
+      ],
+      "startMs": 45000,
+      "endMs": 49300,
+      "uncertain": false
+    },
+    {
+      "polishIds": [
+        "polish:4"
+      ],
+      "englishIds": [],
+      "startMs": 47500,
+      "endMs": 49300,
+      "uncertain": false,
+      "relationOnly": false,
+      "relationExcluded": true
+    },
+    {
+      "polishIds": [
+        "polish:5",
+        "polish:6"
+      ],
+      "englishIds": [
+        "english:3"
+      ],
+      "startMs": 85000,
+      "endMs": 89300,
+      "uncertain": false
+    },
+    {
+      "polishIds": [
+        "polish:6"
+      ],
+      "englishIds": [],
+      "startMs": 87500,
+      "endMs": 89300,
+      "uncertain": false,
+      "relationOnly": false,
+      "relationExcluded": true
+    },
+    {
+      "polishIds": [
+        "polish:7",
+        "polish:8"
+      ],
+      "englishIds": [
+        "english:4"
+      ],
+      "startMs": 125000,
+      "endMs": 129300,
+      "uncertain": false
+    },
+    {
+      "polishIds": [
+        "polish:8"
+      ],
+      "englishIds": [],
+      "startMs": 127500,
+      "endMs": 129300,
+      "uncertain": false,
+      "relationOnly": false,
+      "relationExcluded": true
+    },
+    {
+      "polishIds": [
+        "polish:9",
+        "polish:10"
+      ],
+      "englishIds": [
+        "english:5"
+      ],
+      "startMs": 165000,
+      "endMs": 169300,
+      "uncertain": false
+    },
+    {
+      "polishIds": [
+        "polish:10"
+      ],
+      "englishIds": [],
+      "startMs": 167500,
+      "endMs": 169300,
+      "uncertain": false,
+      "relationOnly": false,
+      "relationExcluded": true
+    },
+    {
+      "polishIds": [
+        "polish:11",
+        "polish:12"
+      ],
+      "englishIds": [
+        "english:6"
+      ],
+      "startMs": 205000,
+      "endMs": 209300,
+      "uncertain": false
+    },
+    {
+      "polishIds": [
+        "polish:12"
+      ],
+      "englishIds": [],
+      "startMs": 207500,
+      "endMs": 209300,
+      "uncertain": false,
+      "relationOnly": false,
+      "relationExcluded": true
+    },
+    {
+      "polishIds": [
+        "polish:13",
+        "polish:14"
+      ],
+      "englishIds": [
+        "english:7"
+      ],
+      "startMs": 245000,
+      "endMs": 249300,
+      "uncertain": false
+    },
+    {
+      "polishIds": [
+        "polish:14"
+      ],
+      "englishIds": [],
+      "startMs": 247500,
+      "endMs": 249300,
+      "uncertain": false,
+      "relationOnly": false,
+      "relationExcluded": true
+    },
+    {
+      "polishIds": [
+        "polish:15",
+        "polish:16"
+      ],
+      "englishIds": [
+        "english:8"
+      ],
+      "startMs": 285000,
+      "endMs": 289300,
+      "uncertain": false
+    },
+    {
+      "polishIds": [
+        "polish:16"
+      ],
+      "englishIds": [],
+      "startMs": 287500,
+      "endMs": 289300,
+      "uncertain": false,
+      "relationOnly": false,
+      "relationExcluded": true
+    },
+    {
+      "polishIds": [
+        "polish:17",
+        "polish:18"
+      ],
+      "englishIds": [
+        "english:9"
+      ],
+      "startMs": 325000,
+      "endMs": 329300,
+      "uncertain": false
+    },
+    {
+      "polishIds": [
+        "polish:18"
+      ],
+      "englishIds": [],
+      "startMs": 327500,
+      "endMs": 329300,
+      "uncertain": false,
+      "relationOnly": false,
+      "relationExcluded": true
+    },
+    {
+      "polishIds": [
+        "polish:19",
+        "polish:20"
+      ],
+      "englishIds": [
+        "english:10"
+      ],
+      "startMs": 365000,
+      "endMs": 369300,
+      "uncertain": false
+    },
+    {
+      "polishIds": [
+        "polish:20"
+      ],
+      "englishIds": [],
+      "startMs": 367500,
+      "endMs": 369300,
+      "uncertain": false,
+      "relationOnly": false,
+      "relationExcluded": true
+    },
+    {
+      "polishIds": [
+        "polish:21",
+        "polish:22"
+      ],
+      "englishIds": [
+        "english:11"
+      ],
+      "startMs": 405000,
+      "endMs": 409300,
+      "uncertain": false
+    },
+    {
+      "polishIds": [
+        "polish:22"
+      ],
+      "englishIds": [],
+      "startMs": 407500,
+      "endMs": 409300,
+      "uncertain": false,
+      "relationOnly": false,
+      "relationExcluded": true
+    },
+    {
+      "polishIds": [
+        "polish:23",
+        "polish:24"
+      ],
+      "englishIds": [
+        "english:12"
+      ],
+      "startMs": 445000,
+      "endMs": 449300,
+      "uncertain": false
+    },
+    {
+      "polishIds": [
+        "polish:24"
+      ],
+      "englishIds": [],
+      "startMs": 447500,
+      "endMs": 449300,
+      "uncertain": false,
+      "relationOnly": false,
+      "relationExcluded": true
+    },
+    {
+      "polishIds": [
+        "polish:25",
+        "polish:26"
+      ],
+      "englishIds": [
+        "english:13"
+      ],
+      "startMs": 485000,
+      "endMs": 489300,
+      "uncertain": false
+    },
+    {
+      "polishIds": [
+        "polish:26"
+      ],
+      "englishIds": [],
+      "startMs": 487500,
+      "endMs": 489300,
+      "uncertain": false,
+      "relationOnly": false,
+      "relationExcluded": true
+    },
+    {
+      "polishIds": [
+        "polish:27",
+        "polish:28"
+      ],
+      "englishIds": [
+        "english:14"
+      ],
+      "startMs": 525000,
+      "endMs": 529300,
+      "uncertain": false
+    },
+    {
+      "polishIds": [
+        "polish:28"
+      ],
+      "englishIds": [],
+      "startMs": 527500,
+      "endMs": 529300,
+      "uncertain": false,
+      "relationOnly": false,
+      "relationExcluded": true
+    },
+    {
+      "polishIds": [
+        "polish:29",
+        "polish:30"
+      ],
+      "englishIds": [
+        "english:15"
+      ],
+      "startMs": 565000,
+      "endMs": 569300,
+      "uncertain": false
+    },
+    {
+      "polishIds": [
+        "polish:30"
+      ],
+      "englishIds": [],
+      "startMs": 567500,
+      "endMs": 569300,
+      "uncertain": false,
+      "relationOnly": false,
+      "relationExcluded": true
+    }
+  ]
+}

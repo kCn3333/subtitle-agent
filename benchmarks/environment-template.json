@@ -1,0 +1,10 @@
+{
+  "hardware": "REQUIRED: actual CPU/GPU and RAM, not assumed target",
+  "targetHostVerified": false,
+  "os": "REQUIRED", "containerRuntime": "REQUIRED",
+  "containerCpuLimit": null, "containerMemoryLimitBytes": null,
+  "driverVersion": "REQUIRED for CUDA", "otherLoad": "REQUIRED: observed concurrent jobs",
+  "processStartToReadyMs": null, "weightsDownloadSeconds": null,
+  "deviceMonitoring": "Attach timestamped nvidia-smi and container stats logs separately",
+  "batchComparison": "controlled: equal worker and HTTP batch sizes, threads, dtype; optimized: label separately"
+}

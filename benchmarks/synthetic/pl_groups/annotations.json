@@ -1,0 +1,185 @@
+{
+  "scope": "full_synthetic",
+  "points": [
+    {
+      "polishIds": [
+        "polish:1"
+      ],
+      "englishIds": [
+        "english:1",
+        "english:2"
+      ],
+      "startMs": 5000,
+      "endMs": 9300,
+      "uncertain": false
+    },
+    {
+      "polishIds": [
+        "polish:2"
+      ],
+      "englishIds": [
+        "english:3",
+        "english:4"
+      ],
+      "startMs": 45000,
+      "endMs": 49300,
+      "uncertain": false
+    },
+    {
+      "polishIds": [
+        "polish:3"
+      ],
+      "englishIds": [
+        "english:5",
+        "english:6"
+      ],
+      "startMs": 85000,
+      "endMs": 89300,
+      "uncertain": false
+    },
+    {
+      "polishIds": [
+        "polish:4"
+      ],
+      "englishIds": [
+        "english:7",
+        "english:8"
+      ],
+      "startMs": 125000,
+      "endMs": 129300,
+      "uncertain": false
+    },
+    {
+      "polishIds": [
+        "polish:5"
+      ],
+      "englishIds": [
+        "english:9",
+        "english:10"
+      ],
+      "startMs": 165000,
+      "endMs": 169300,
+      "uncertain": false
+    },
+    {
+      "polishIds": [
+        "polish:6"
+      ],
+      "englishIds": [
+        "english:11",
+        "english:12"
+      ],
+      "startMs": 205000,
+      "endMs": 209300,
+      "uncertain": false
+    },
+    {
+      "polishIds": [
+        "polish:7"
+      ],
+      "englishIds": [
+        "english:13",
+        "english:14"
+      ],
+      "startMs": 245000,
+      "endMs": 249300,
+      "uncertain": false
+    },
+    {
+      "polishIds": [
+        "polish:8"
+      ],
+      "englishIds": [
+        "english:15",
+        "english:16"
+      ],
+      "startMs": 285000,
+      "endMs": 289300,
+      "uncertain": false
+    },
+    {
+      "polishIds": [
+        "polish:9"
+      ],
+      "englishIds": [
+        "english:17",
+        "english:18"
+      ],
+      "startMs": 325000,
+      "endMs": 329300,
+      "uncertain": false
+    },
+    {
+      "polishIds": [
+        "polish:10"
+      ],
+      "englishIds": [
+        "english:19",
+        "english:20"
+      ],
+      "startMs": 365000,
+      "endMs": 369300,
+      "uncertain": false
+    },
+    {
+      "polishIds": [
+        "polish:11"
+      ],
+      "englishIds": [
+        "english:21",
+        "english:22"
+      ],
+      "startMs": 405000,
+      "endMs": 409300,
+      "uncertain": false
+    },
+    {
+      "polishIds": [
+        "polish:12"
+      ],
+      "englishIds": [
+        "english:23",
+        "english:24"
+      ],
+      "startMs": 445000,
+      "endMs": 449300,
+      "uncertain": false
+    },
+    {
+      "polishIds": [
+        "polish:13"
+      ],
+      "englishIds": [
+        "english:25",
+        "english:26"
+      ],
+      "startMs": 485000,
+      "endMs": 489300,
+      "uncertain": false
+    },
+    {
+      "polishIds": [
+        "polish:14"
+      ],
+      "englishIds": [
+        "english:27",
+        "english:28"
+      ],
+      "startMs": 525000,
+      "endMs": 529300,
+      "uncertain": false
+    },
+    {
+      "polishIds": [
+        "polish:15"
+      ],
+      "englishIds": [
+        "english:29",
+        "english:30"
+      ],
+      "startMs": 565000,
+      "endMs": 569300,
+      "uncertain": false
+    }
+  ]
+}
