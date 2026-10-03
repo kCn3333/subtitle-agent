@@ -39,7 +39,11 @@ def window():
 def test_valid_relations(relation, en, pl):
     good, bad = validate_batch(result(relation=relation, en=en, pl=pl), window(), .72)
     assert len(good) == 1 and not bad
-    assert good[0]["representativeMethod"] == "median_group_start"
+    assert good[0]["representativeMethod"] == "first_boundary_with_uncertainty"
+    assert good[0]["referenceTime"] == 1000
+    assert good[0]["sourceTime"] == 1000
+    if relation != "ONE_TO_ONE":
+        assert good[0]["finalWeight"] < .4 and good[0]["boundaryUncertaintyMs"] >= 1800
 
 
 def test_schema_rejects_extra_fields_empty_ids_and_confidence():

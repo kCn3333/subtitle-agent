@@ -151,11 +151,11 @@ def validate_batch(result: SemanticBatchResult, window: dict, min_confidence: fl
             pl_index = round(sum(pl_lookup[x] for x in match.polish_cue_ids) / len(match.polish_cue_ids))
             if en_index < last[0] or pl_index < last[1]: reason = "NON_MONOTONIC"
         record = {**match.model_dump(), "batchId": result.batch_id, "validation": "REJECTED" if reason else "ACCEPTED",
-                  "reason": reason, "representativeMethod": "median_group_start"}
+                  "reason": reason, "representativeMethod": "first_boundary_with_uncertainty"}
         if reason: rejected.append(record); continue
         used_en.update(match.english_cue_ids); used_pl.update(match.polish_cue_ids); last = (en_index, pl_index)
-        en_time = round(sum(en_cues[x].start_ms for x in match.english_cue_ids) / len(match.english_cue_ids))
-        pl_time = round(sum(pl_cues[x].start_ms for x in match.polish_cue_ids) / len(match.polish_cue_ids))
+        en_time = min(en_cues[x].start_ms for x in match.english_cue_ids)
+        pl_time = min(pl_cues[x].start_ms for x in match.polish_cue_ids)
         if expected_source_time and max_time_jump_ms is not None and abs(pl_time - expected_source_time(en_time)) > max_time_jump_ms:
             record.update({"validation": "REJECTED", "reason": "LOCAL_TIME_JUMP"})
             rejected.append(record)
@@ -164,6 +164,11 @@ def validate_batch(result: SemanticBatchResult, window: dict, min_confidence: fl
             en_index = round(sum(global_indexes[0][x] for x in match.english_cue_ids) / len(match.english_cue_ids))
             pl_index = round(sum(global_indexes[1][x] for x in match.polish_cue_ids) / len(match.polish_cue_ids))
         evidence_weight = {"EXACT_MEANING": 1.0, "PARAPHRASE": .92, "NAME_OR_NUMBER": .88, "SCENE_CONTEXT": .78, "WEAK": .55}[match.evidence]
+        grouped = len(match.english_cue_ids)>1 or len(match.polish_cue_ids)>1
+        if grouped: evidence_weight *= .35
+        record['boundaryUncertaintyMs'] = max(
+            max(en_cues[x].end_ms for x in match.english_cue_ids)-en_time,
+            max(pl_cues[x].end_ms for x in match.polish_cue_ids)-pl_time) if grouped else 0
         record.update({"englishIndex": en_index, "polishIndex": pl_index, "referenceTime": en_time,
                        "sourceTime": pl_time, "finalWeight": round(match.confidence * evidence_weight, 4)})
         accepted.append(record)

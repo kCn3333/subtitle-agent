@@ -198,7 +198,7 @@ async def test_alignment_preview_persists_and_input_is_unchanged(settings, media
     await manager.align("sync", None, None)
     job = manager.get("sync"); alignment = job["report"]["alignment"]
     assert alignment["model"]["strategy"] == "IDENTITY"
-    assert alignment["quality"] == "HIGH"
+    assert alignment["quality"] in {"LOW", "UNUSABLE"}  # structural timing is not content evidence
     assert polish_path.read_bytes() == before
     preview = Path(alignment["previewPath"])
     assert preview.is_file() and "<i>Polski tekst</i>" in preview.read_text()
@@ -225,7 +225,7 @@ async def test_structural_only_never_constructs_openai_provider(settings, media_
     monkeypatch.setattr("app.services.job_manager.OpenAIAnchorProvider",
                         lambda *_: (_ for _ in ()).throw(AssertionError("OpenAI must not be constructed")))
     await manager.align("structural", None, None, AlignmentMode.STRUCTURAL_ONLY)
-    assert manager.get("structural")["status"] == "COMPLETED"
+    assert manager.get("structural")["status"] == "REVIEW_REQUIRED"
 
 
 @pytest.mark.anyio

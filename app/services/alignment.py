@@ -73,16 +73,19 @@ def decode_subtitle(path: Path) -> str:
     return raw.decode("utf-8", errors="replace")
 
 
-def parse_cues(path: Path, source: str) -> list[Cue]:
-    text = decode_subtitle(path).replace("\r\n", "\n").replace("\r", "\n").strip()
+def parse_cues(path: Path, source: str, strict: bool = False) -> list[Cue]:
+    text = decode_subtitle(path).replace("\r\n", "\n").replace("\r", "\n").strip("\n")
     cues: list[Cue] = []
     for position, block in enumerate(re.split(r"\n{2,}", text), 1):
         match = TIMING.search(block)
         if not match:
+            if strict and block.strip(): raise ValueError("Unparseable subtitle block")
             continue
         before = block[:match.start()].strip()
         sequence = int(before.splitlines()[-1]) if before.splitlines() and before.splitlines()[-1].isdigit() else position
         raw_text = block[match.end():].lstrip("\n")
+        if strict and any(int(match.groups()[i]) > 59 for i in (1,2,5,6)):
+            raise ValueError("Invalid SRT timestamp")
         start, end = _ms(match.groups()[:4]), _ms(match.groups()[4:])
         cues.append(Cue(f"{source}:{position}", sequence, start, end, end - start, raw_text, normalize_text(raw_text), source))
     return cues
@@ -117,59 +120,95 @@ def percentile(values: list[float], fraction: float) -> float:
     return ordered[max(0, min(index, len(ordered) - 1))]
 
 
-def _metrics(name: str, anchors: list[Anchor], predict, parameters: dict, complexity: float) -> dict:
+def _metrics(name: str, anchors: list[Anchor], predict, parameters: dict, complexity: float, duration_ms: int | None = None) -> dict:
     residuals = [abs(a.reference_time - predict(a.source_time)) for a in anchors]
-    median = statistics.median(residuals) if residuals else math.inf
+    median = weighted_median([(r,a.confidence) for r,a in zip(residuals,anchors)]) if residuals else math.inf
     threshold = max(250.0, min(1500.0, median * 2.5))
     inliers = [r for r in residuals if r <= threshold]
-    positions = [a.reference_time for a, r in zip(anchors, residuals) if r <= threshold]
-    coverage = (max(positions) - min(positions)) / max(1, max(a.reference_time for a in anchors)) if len(positions) > 1 else 0
-    score = (len(inliers) / max(1, len(anchors))) * 100 + coverage * 25 - statistics.median(inliers or residuals or [99999]) / 100 - complexity
+    positions = [a.reference_time for a, r in zip(anchors, residuals) if r <= threshold and a.confidence >= max(x.confidence for x in anchors)*.1]
+    coverage = (max(positions) - min(positions)) / max(1, duration_ms or max(a.reference_time for a in anchors)) if len(positions) > 1 else 0
+    score = (sum(a.confidence for a, r in zip(anchors, residuals) if r <= threshold) / max(1e-9, sum(a.confidence for a in anchors))) * 100 + coverage * 25 - statistics.median(inliers or residuals or [99999]) / 100 - complexity
     return {"strategy": name, **parameters, "pointCount": len(anchors), "inlierCount": len(inliers),
             "inlierRatio": len(inliers) / max(1, len(anchors)), "medianResidualMs": round(statistics.median(inliers or residuals or [math.inf])),
             "p95ResidualMs": round(percentile(inliers or residuals, .95)), "maxResidualMs": round(max(inliers or residuals or [math.inf])),
             "coverage": round(coverage, 4), "complexityPenalty": complexity, "score": round(score, 4), "predict": predict}
 
 
+def weighted_median(values: list[tuple[float, float]]) -> float:
+    ordered = sorted((value, max(0.0, weight)) for value, weight in values)
+    total = sum(weight for _, weight in ordered)
+    if not ordered: return 0.0
+    if total == 0: return statistics.median(value for value, _ in ordered)
+    cumulative = 0.0
+    for value, weight in ordered:
+        cumulative += weight
+        if cumulative >= total / 2: return value
+    return ordered[-1][0]
+
+
 def _robust_affine(anchors: list[Anchor], min_scale: float, max_scale: float) -> tuple[float, float]:
+    # Bounded weighted Theil-Sen; do not construct quadratic storage for a movie.
+    sampled = anchors[::max(1, math.ceil(len(anchors) / 128))]
     slopes = []
-    for i, left in enumerate(anchors):
-        for right in anchors[i + 1:]:
+    for i, left in enumerate(sampled):
+        for right in sampled[i + 1:]:
             delta = right.source_time - left.source_time
             if abs(delta) >= 1000:
                 slope = (right.reference_time - left.reference_time) / delta
-                if min_scale <= slope <= max_scale: slopes.append(slope)
-    scale = statistics.median(slopes) if slopes else 1.0
-    offset = statistics.median([a.reference_time - scale * a.source_time for a in anchors]) if anchors else 0
+                if min_scale <= slope <= max_scale:
+                    slopes.append((slope, left.confidence * right.confidence))
+    scale = weighted_median(slopes) if slopes else 1.0
+    offset = weighted_median([(a.reference_time - scale * a.source_time, a.confidence) for a in anchors])
     return scale, offset
 
 
 def fit_models(anchors: list[Anchor], min_scale: float = .94, max_scale: float = 1.06,
-               max_segments: int = 3, min_points: int = 4) -> list[dict]:
+               max_segments: int = 3, min_points: int = 4, duration_ms: int | None = None) -> list[dict]:
     if not anchors: return []
-    offset = statistics.median([a.reference_time - a.source_time for a in anchors])
-    models = [_metrics("IDENTITY", anchors, lambda value: value, {"offsetMs": 0, "scale": 1.0, "segments": []}, 0),
-              _metrics("GLOBAL_OFFSET", anchors, lambda value, o=offset: value + o, {"offsetMs": round(offset), "scale": 1.0, "segments": []}, 2)]
+    # Structural hypotheses must never outweigh confirmed content relations.
+    content = [a for a in anchors if a.origin != "structural"]
+    anchors = content or anchors
+    offset = weighted_median([(a.reference_time - a.source_time, a.confidence) for a in anchors])
+    def metrics(name, predict, params, cost):
+        return _metrics(name, anchors, predict, params, cost, duration_ms)
+    models = [metrics("IDENTITY", lambda value: value, {"offsetMs": 0, "scale": 1.0, "segments": []}, 0),
+              metrics("GLOBAL_OFFSET", lambda value: value + offset, {"offsetMs": round(offset), "scale": 1.0, "segments": []}, 2)]
     scale, affine_offset = _robust_affine(anchors, min_scale, max_scale)
-    models.append(_metrics("AFFINE_DRIFT", anchors, lambda value, s=scale, o=affine_offset: s * value + o,
-                           {"offsetMs": round(affine_offset), "scale": round(scale, 8), "segments": []}, 5))
+    models.append(metrics("AFFINE_DRIFT", lambda value: scale * value + affine_offset,
+                          {"offsetMs": round(affine_offset), "scale": round(scale, 8), "segments": []}, 5))
     ordered = sorted(anchors, key=lambda a: a.source_time)
-    best_piece = None
-    for parts in range(2, min(max_segments, len(ordered) // min_points) + 1):
-        groups = [ordered[round(i * len(ordered) / parts):round((i + 1) * len(ordered) / parts)] for i in range(parts)]
-        if any(len(group) < min_points for group in groups): continue
-        segments = []
-        for group in groups:
-            s, o = _robust_affine(group, min_scale, max_scale)
-            segments.append({"sourceStartMs": group[0].source_time, "sourceEndMs": group[-1].source_time, "scale": s, "offsetMs": o})
-        if any(segments[i]["scale"] <= 0 for i in range(len(segments))): continue
-        def piece(value, ss=segments):
-            segment = next((item for item in ss if value <= item["sourceEndMs"]), ss[-1])
-            return segment["scale"] * value + segment["offsetMs"]
-        model = _metrics("PIECEWISE_LINEAR", anchors, piece, {"offsetMs": None, "scale": None,
-                         "segments": [{**x, "scale": round(x["scale"], 8), "offsetMs": round(x["offsetMs"])} for x in segments]}, 10 * (parts - 1))
-        if best_piece is None or model["score"] > best_piece["score"]: best_piece = model
-    if best_piece: models.append(best_piece)
+    # Changes are supported by sustained residual steps, not equal list partitions.
+    residual = [a.reference_time - (scale * a.source_time + affine_offset) for a in ordered]
+    cuts = []
+    for i in range(min_points, len(ordered) - min_points + 1):
+        left = statistics.median(residual[max(0, i-min_points):i])
+        right = statistics.median(residual[i:i+min_points])
+        if abs(right-left) > 1500:
+            cuts.append((abs(right-left), i))
+    boundaries = []
+    for _, i in sorted(cuts, reverse=True):
+        if all(abs(i-j) >= min_points for j in boundaries): boundaries.append(i)
+        if len(boundaries) >= max_segments-1: break
+    if boundaries and max_segments > 1:
+        indexes = [0, *sorted(boundaries), len(ordered)]
+        groups = [ordered[a:b] for a,b in zip(indexes, indexes[1:])]
+        if all(len(group) >= min_points for group in groups):
+            segments = []
+            for group in groups:
+                s, o = _robust_affine(group, min_scale, max_scale)
+                segments.append({"sourceStartMs": group[0].source_time, "sourceEndMs": group[-1].source_time,
+                                 "scale": s, "offsetMs": o})
+            def piece(value, ss=segments):
+                # No interpolation across unmatched scene gaps. Preserve those times
+                # and flag them below for review.
+                if value < ss[0]["sourceStartMs"]: item = ss[0]
+                elif value > ss[-1]["sourceEndMs"]: item = ss[-1]
+                else:
+                    item = next((x for x in ss if x["sourceStartMs"] <= value <= x["sourceEndMs"]), None)
+                return item["scale"] * value + item["offsetMs"] if item else value
+            models.append(metrics("PIECEWISE_LINEAR", piece, {"offsetMs": None, "scale": None,
+                "segments": segments, "uncertainRanges": [{"startMs": a["sourceEndMs"], "endMs": b["sourceStartMs"]}
+                    for a,b in zip(segments, segments[1:])]}, 10 * (len(groups)-1)))
     return models
 
 
@@ -182,21 +221,45 @@ def select_model(models: list[dict]) -> dict | None:
 
 def quality(model: dict | None) -> str:
     if not model or model["pointCount"] < 4 or model["coverage"] < .25: return "UNUSABLE"
-    if model["inlierCount"] >= 10 and model["coverage"] >= .7 and model["p95ResidualMs"] <= 750: return "HIGH"
-    if model["inlierCount"] >= 6 and model["coverage"] >= .5 and model["p95ResidualMs"] <= 1500: return "MEDIUM"
+    if model.get("independentValidated") and model["inlierCount"] >= 10 and model["coverage"] >= .7 and model["p95ResidualMs"] <= 750: return "HIGH"
+    if model.get("independentValidated") and model["inlierCount"] >= 6 and model["coverage"] >= .5 and model["p95ResidualMs"] <= 1500: return "MEDIUM"
     return "LOW"
 
 
 def transform(cues: list[Cue], model: dict, duration_ms: int, tolerance_ms: int = 1000) -> tuple[list[Cue], dict]:
-    predict = model["predict"]; output = []; negative = reversed_count = overlaps = 0
+    predict = model["predict"]; output = []; negative = reversed_count = clamped = 0
     for cue in cues:
         start, end = round(predict(cue.start_ms)), round(predict(cue.end_ms))
         negative += start < 0
-        if end <= start: reversed_count += 1
-        output.append(Cue(cue.cue_id, cue.sequence, max(0, start), min(duration_ms + tolerance_ms, end),
-                          end - start, cue.raw_text, cue.normalized_text, cue.source))
-    overlaps = sum(output[i].start_ms < output[i - 1].end_ms for i in range(1, len(output)))
-    return output, {"negativeTimesBeforeClamp": negative, "reversedSegments": reversed_count, "overlappingSegments": overlaps}
+        final_start, final_end = max(0, start), max(0, min(duration_ms + tolerance_ms, end))
+        clamped += (final_start, final_end) != (start, end)
+        reversed_count += final_end <= final_start
+        output.append(Cue(cue.cue_id, cue.sequence, final_start, final_end,
+                          final_end - final_start, cue.raw_text, cue.normalized_text, cue.source))
+    original = {i for i in range(1, len(cues)) if cues[i].start_ms < cues[i-1].end_ms}
+    overlaps = {i for i in range(1, len(output)) if output[i].start_ms < output[i-1].end_ms}
+    return output, {"negativeTimesBeforeClamp": negative, "clampedSegments": clamped,
+        "reversedSegments": reversed_count, "overlappingSegments": len(overlaps),
+        "existingOverlaps": len(original), "introducedOverlaps": len(overlaps-original),
+        "outOfRangeSegments": sum(c.start_ms < 0 or c.end_ms > duration_ms+tolerance_ms for c in output),
+        "orderErrors": sum(output[i].start_ms < output[i-1].start_ms for i in range(1,len(output))),
+        "segmentCountPreserved": len(cues) == len(output),
+        "textPreserved": [c.raw_text for c in cues] == [c.raw_text for c in output]}
+
+
+def coverage_report(anchors: list[Anchor], english: list[Cue], duration_ms: int) -> dict:
+    if not english: return {"dialogueCoverage": 0, "materialCoverage": 0, "largestGapMs": duration_ms}
+    first, last = english[0].start_ms, english[-1].end_ms
+    span = max(1, last-first)
+    positions = sorted(a.reference_time for a in anchors)
+    occupied = {min(9, max(0, int((p-first)*10/span))) for p in positions}
+    dialogue_bins = {min(9, max(0, int((c.start_ms-first)*10/span))) for c in english}
+    edges = [first, *positions, last]
+    return {"materialCoverage": (positions[-1]-positions[0])/max(1,duration_ms) if len(positions)>1 else 0,
+        "dialogueCoverage": len(occupied & dialogue_bins)/max(1,len(dialogue_bins)),
+        "occupiedBins": sorted(occupied), "dialogueBins": sorted(dialogue_bins),
+        "largestGapMs": max((b-a for a,b in zip(edges,edges[1:])), default=span),
+        "beginning": 0 in occupied, "middle": bool(occupied & {4,5}), "end": 9 in occupied}
 
 
 def _stamp(value: int) -> str:
