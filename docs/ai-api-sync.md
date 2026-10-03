@@ -8,8 +8,10 @@ Aplikacja przygotowuje referencję EN i istniejące napisy PL, korzystając z do
 2. Otwórz **Ustawienia AI** (`/settings`). Podaj adres bazowy API, np. `http://serwer-modelu:8000/v1`, nazwę modelu, opcjonalny klucz i timeout. Możesz również podać pełny URL kończący się `/chat/completions`. Adres dotyczy połączenia z kontenera aplikacji; `localhost` oznacza ten kontener.
 3. Kliknij **Zapisz i testuj połączenie**. Test wykonuje małe żądanie Chat Completions do wybranego modelu i oczekuje `{"ok":true}`. Sprawdza uwierzytelnienie, model, odpowiedź i prostą instrukcję JSON; nie potwierdza jakości synchronizacji ani pojemności kontekstu dla całego filmu.
 4. Wróć na ekran główny, wybierz **Przygotuj do synchronizacji** i uruchom przygotowanie filmu/odcinka. Wybór referencji EN i potwierdzenie zewnętrznego EN działają jak dotychczas. PGS/VobSub najpierw przechodzi przez skonfigurowany OCR.
-5. Po przygotowaniu wybierz polski plik SRT i kliknij **Synchronizuj przez API**. Zmiana EN wymaga najpierw ponownego zbudowania workpacka. Aplikacja wyśle tekstowe segmenty EN i PL oraz czas trwania filmu do skonfigurowanego endpointu.
+5. Po przygotowaniu wybierz polski plik SRT i kliknij **Przekaż do AI**. Zmiana EN wymaga najpierw ponownego zbudowania workpacka. Aplikacja wyśle tekstowe segmenty EN i PL oraz czas trwania filmu do skonfigurowanego endpointu.
 6. Pobierz wynik SRT. Ekran pokazuje czas żądania oraz tokeny, jeśli API je zwraca. Sprawdź synchronizację w kilku miejscach filmu. Walidacja sprawdza strukturę i przedziały, a nie trafność dopasowania dialogów.
+
+Przycisk „Przekaż do AI” pojawia się obok pobierania ZIP-a. Pod kartą statusu można wybrać PL. Po kliknięciu konsola pokazuje trwające żądanie i licznik czasu oczekiwania; API nie dostarcza procentowego postępu.
 
 Ustawienia zapisują się w SQLite w `/data` i pozostają po restarcie. Klucz jest przechowywany w bazie bez szyfrowania aplikacyjnego; nie trafia do odpowiedzi API ustawień, raportu ani SRT. Puste pole w formularzu zachowuje zapisany klucz; checkbox pozwala go usunąć. Nowe API nie dodaje mechanizmu logowania do aplikacji; dostęp do ustawień podlega temu samemu zabezpieczeniu dostępu co reszta panelu.
 

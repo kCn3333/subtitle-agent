@@ -33,7 +33,7 @@ function setOcrActivity(stage,progress,timestamp){
   if(ocrTimer===null)ocrTimer=setInterval(updateOcrElapsed,1000);
 }
 
-function clearConsole(){output.replaceChildren();updateOcrElapsed()}
+function clearConsole(){output.replaceChildren();updateOcrElapsed();if(typeof updateAiElapsed==='function')updateAiElapsed()}
 function line(level,stage,message,time=new Date(),progress=null){const el=document.createElement('div'),percent=progress==null?'':` [${Math.max(0,Math.min(100,Number(progress)||0))}%]`;el.className=`entry ${level}`;el.textContent=`[${time.toLocaleTimeString('pl-PL',{hour12:false})}] [${level}] [${stage}]${percent} ${message}`;output.append(el);if(ocrStartedAt!==null)output.append(ocrActivity);requestAnimationFrame(()=>{output.scrollTop=output.scrollHeight})}
 function nodeText(value){const node=document.createElement('span');node.textContent=value??'—';return node.outerHTML}
 function sourceId(item){return `${item.sourceType}:${item.sourceType==='external'?item.name:item.streamIndex}`}
