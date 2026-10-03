@@ -20,9 +20,22 @@ Limity: 1 MiB rzeczywistego body, 128 segmentów/żądanie, 8000 znaków/segment
 
 ## CPU: jeden stack z aplikacją
 
+### Pierwszy test po merge
+
+1. Po merge do `main` poczekaj na udany workflow **Container**. Publikuje on obrazy aplikacji i OCR; nie publikuje obrazów workera semantycznego CPU/CUDA. Samo pobranie `subtitle-agent:latest` nie uruchomi modelu.
+2. Na hoście Docker obsługiwanym przez Portainer pobierz aktualny checkout `main`. Zachowaj nazwę istniejącego stacka/projektu, jego wolumen danych, konfigurację i rzeczywiste mounty mediów. Polecenia poniżej wykonuj z katalogu tego checkouta, z tą samą nazwą projektu (przez `-p` lub `COMPOSE_PROJECT_NAME`).
+3. Przygotuj sekret, zbuduj obrazy i pobierz wagi według poleceń poniżej. Pobranie musi zakończyć się sukcesem przed testem synchronizacji. Następnie zaktualizuj istniejący stack w Portainerze zgodnie z instrukcją Web editor poniżej albo uruchom Compose, jeśli ten stack jest zarządzany z CLI.
+4. Otwórz `/settings`, wybierz CPU, zapisz i sprawdź gotowość workera. Sam zielony healthcheck kontenera potwierdza proces, a nie załadowanie modelu. Ustawienia muszą potwierdzić gotowość modelu i urządzenie CPU.
+5. Zacznij od znanej pary tekstowych napisów EN–PL z tego samego wydania filmu/odcinka. Przygotuj synchronizację, sprawdź wybór EN i PL, uruchom lokalne dopasowanie i pobierz SRT oraz raport. Porównaj tekst PL i czasy na początku, w środku, na końcu oraz w okolicach zmian montażu. Potem przetestuj referencję z OCR.
+6. Do pomiaru skuteczności użyj ręcznie sprawdzonych punktów lub napisów oraz runnera z sekcji benchmarku. Zachowaj raporty i informacje o sprzęcie. Czas wykonania i wewnętrzna ocena dopasowania nie zastępują niezależnego pomiaru błędów czasowych.
+
+Pierwsza walidacja nie objęła pełnej inferencji: pobranie wag z CDN Hugging Face w środowisku implementacji nie powiodło się. Testy aplikacji nie są potwierdzeniem skuteczności modelu na rzeczywistych napisach. Wynik pozostaje podglądem do ręcznej kontroli.
+
 Nie zmieniaj istniejących mountów mediów `:ro`. Przed użyciem ustaw rzeczywiste ścieżki w podstawowym Compose. Użyj tej samej nazwy projektu co dla istniejącego stacka, aby zachować wolumen aplikacji. Nie wdrażano tych zmian do produkcji w ramach implementacji.
 
 Utwórz poza repo plik zawierający losowy token i ustaw `SEMANTIC_TOKEN_FILE` na jego bezwzględną ścieżkę. Sekret jest montowany do obu usług jako `/run/secrets/semantic_token`. W Portainerze wskaż plik dostępny dla procesu wdrażającego stack albo odpowiednik secret zgodny z używanym trybem. Nie wpisuj tokenu w repo, GUI ani URL.
+
+Oba kontenery pracują jako UID/GID `10001:10001`; muszą móc odczytać plik sekretu. W zwykłym Docker Compose sekret z pliku zachowuje uprawnienia źródła. Plik `0600` należący do innego użytkownika nie będzie czytelny. Dla nowego sekretu można użyć pliku `0644` w prywatnym katalogu hosta `0700`, montując wyłącznie plik. Nie zmieniaj uprawnień istniejących katalogów ani innych sekretów.
 
 ```bash
 docker compose -f compose.example.yml -f compose.semantic-cpu.yml --profile local-ai config --quiet
