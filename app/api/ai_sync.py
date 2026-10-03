@@ -113,7 +113,7 @@ async def synchronize(job_id: str, payload: SyncRequest, request: Request):
         if payload.reference_source_id != selected_id:
             raise error("Wybrano inne EN; najpierw zbuduj ponownie workpack z tą referencją")
         english_entries = [entry for entry in reference.get("files", [])
-                           if entry.get("name", "").endswith(".srt")]
+                           if Path(entry.get("name", "")).name in {"selected.eng.srt", "selected.eng.ocr.srt"}]
         polish_entries = [entry for entry in data.get("polish_candidates", [])
                           if entry.get("archiveName") == payload.polish_file]
         if len(english_entries) != 1 or len(polish_entries) != 1:

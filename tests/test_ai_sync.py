@@ -179,7 +179,9 @@ def test_pipeline_prepares_inputs_for_new_api(client,media_file,monkeypatch):
                 'embeddedSubtitles':[{'streamIndex':4,'subtitleOrder':0,'codec':'subrip','language':'eng',
                                      'title':'English','type':'text','default':True}], 'audioTracks':[]}
     async def extract(reference,media,target,timeout):
-        return SubtitleExtractionResult([cue_file(target/'selected.eng.srt','English reference.')],[])
+        prepared=cue_file(target/'selected.eng.srt','English reference.')
+        original=target/'selected.original.srt';original.write_bytes(prepared.read_bytes())
+        return SubtitleExtractionResult([original,prepared],[])
     async def fake(settings,instruction,data):
         return {'segments':[{'id':cue['id'],'start_ms':3000,'end_ms':4500} for cue in data['polish']]},.2,None
     monkeypatch.setattr('app.services.job_manager.probe_media',probe)
