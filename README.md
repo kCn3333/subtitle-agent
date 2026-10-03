@@ -11,8 +11,6 @@ Subtitle Agent analizuje napisy filmu lub odcinka i przygotowuje ZIP do synchron
 - wykrywa niezgodne polskie napisy i inne wersje materiału;
 - eksportuje napisy tekstowe, PGS oraz DVD/VobSub;
 - opcjonalnie wykonuje OCR napisów graficznych na CPU;
-- eksperymentalnie synchronizuje istniejące PL z EN lokalnym modelem, tworząc podgląd SRT i raport do przeglądu;
-- pozwala wybrać CPU w tym samym stacku albo worker GPU w LAN na podstronie `/settings`;
 - tworzy ZIP z manifestem, raportem, sumami SHA-256 i potrzebnymi napisami.
 
 Tryby w GUI:
@@ -72,14 +70,6 @@ W `PREPARE_SYNC` referencja graficzna jest automatycznie wysyłana do skonfiguro
 Domyślnie ZIP synchronizacji nie zawiera plików graficznych. `INCLUDE_GRAPHIC_REFERENCE=true` dołącza oryginalny `.sup` lub parę `.idx`/`.sub`. Oryginały pozostają w katalogu roboczym do czasu jego usunięcia przez retencję. Ta opcja nie zmienia paczek do tłumaczenia.
 
 OCR może wymagać korekty językowej. Gdy worker jest niedostępny lub wynik jest niepoprawny, aplikacja zachowuje oryginalną referencję graficzną w katalogu roboczym i zwraca status `NEEDS_OCR` z czytelnym opisem przyczyny zamiast błędu całego zadania. W synchronizacji bez poprawnego OCR nie są generowane hipotezy z pakietów graficznych.
-
-## Lokalny model EN–PL
-
-CPU uruchamia się w jednym stacku aplikacji przez `compose.semantic-cpu.yml` i profil `local-ai`. Osobny `compose.semantic-gpu.yml` przygotowuje zgodny worker na maszynie GPU w LAN. W **Ustawieniach lokalnego AI** wybiera się wariant, zapisuje URL GPU i sprawdza gotowość urządzenia. Oba warianty używają tej samej przypiętej rewizji modelu Sentence Transformers.
-
-Po **Przygotuj do synchronizacji** wybierz PL i naciśnij **Synchronizuj lokalnie**. Wynik oraz raport pobiera się z GUI. Funkcja nie wymaga OpenAI i nie publikuje automatycznie napisów. Niedostępny worker pozostawia zadanie z możliwością wznowienia lub anulowania.
-
-[Uruchomienie, inicjalizacja cache, limity i benchmark](docs/local-semantic.md) · [Wykonane testy i brakujące pomiary](docs/local-semantic-validation.md).
 
 ## Zawartość paczki
 

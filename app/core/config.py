@@ -38,17 +38,6 @@ class Settings(BaseSettings):
     ocr_worker_url: str | None = None
     ocr_timeout_seconds: float = 900
     ocr_max_output_bytes: int = 20 * 1024 * 1024
-    local_cpu_worker_url: str = "http://subtitle-semantic-worker:8091"
-    local_worker_expected_device: str | None = None
-    local_worker_url: str | None = None
-    local_worker_token: SecretStr | None = Field(default=None, repr=False)
-    local_worker_token_file: Path | None = None
-    local_worker_timeout_seconds: float = Field(default=120, gt=0, le=900)
-    local_worker_retries: int = Field(default=1, ge=0, le=3)
-    local_worker_batch_size: int = Field(default=32, ge=1, le=128)
-    local_worker_max_cues: int = Field(default=12000, ge=1, le=20000)
-    local_cpu_fallback_url: str | None = None
-    local_cpu_fallback_enabled: bool = False
     alignment_min_scale: float = 0.94
     alignment_max_scale: float = 1.06
     alignment_max_segments: int = 3
@@ -190,8 +179,6 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def load_api_key_file(self):
-        if self.local_worker_token_file:
-            self.local_worker_token = SecretStr(self.local_worker_token_file.read_text(encoding="utf-8").strip())
         if self.subtitle_agent_app_mode == "WORKPACK":
             # WORKPACK is deliberately independent from credentials, even if
             # stale OpenAI variables remain in the container environment.
