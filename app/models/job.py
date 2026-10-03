@@ -13,6 +13,8 @@ API_MODEL_CONFIG = ConfigDict(populate_by_name=True, alias_generator=to_camel)
 
 
 class JobStatus(StrEnum):
+    WAITING_AI = "WAITING_AI"
+    CANCELLED = "CANCELLED"
     QUEUED = "QUEUED"
     VALIDATING_PATH = "VALIDATING_PATH"
     PROBING_MEDIA = "PROBING_MEDIA"
@@ -75,6 +77,7 @@ class CreateJobResponse(BaseModel):
 
 
 class AlignmentMode(StrEnum):
+    LOCAL = "LOCAL"
     STRUCTURAL_ONLY = "STRUCTURAL_ONLY"
     SEMANTIC_PREFERRED = "SEMANTIC_PREFERRED"
     SEMANTIC_REQUIRED = "SEMANTIC_REQUIRED"

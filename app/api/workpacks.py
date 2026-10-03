@@ -4,7 +4,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import FileResponse
 
-from app.models.job import CreateTaskRequest, PrepareWorkpackRequest, RebuildWorkpackRequest, WorkpackTaskType
+from app.models.job import AlignmentMode, AlignJobRequest, CreateTaskRequest, PrepareWorkpackRequest, RebuildWorkpackRequest, WorkpackTaskType
 from app.services.media_analysis import UserInputError
 from app.services.ocr_client import worker_available
 from app.services.workpack import sha256_file
@@ -101,3 +101,50 @@ async def download(job_id: str, request: Request) -> FileResponse:
 @tasks_router.get("/{job_id}/download")
 async def task_download(job_id: str, request: Request) -> FileResponse:
     return await download(job_id, request)
+
+
+@router.get('/local-health/status')
+async def local_health(request: Request):
+    from app.services.local_semantic import EmbeddingClient, LocalUnavailable, LocalProtocolError
+    settings = request.app.state.settings
+    try:
+        metadata = await EmbeddingClient(settings).ready()
+        return {'configured': bool(settings.local_worker_url), 'available': True, 'worker': metadata}
+    except (LocalUnavailable, LocalProtocolError) as exc:
+        return {'configured': bool(settings.local_worker_url), 'available': False, 'reason': str(exc)}
+
+
+@tasks_router.post('/{job_id}/local-alignment', status_code=202)
+async def local_alignment(job_id: str, payload: AlignJobRequest, request: Request):
+    manager = request.app.state.jobs
+    job = manager.get(job_id)
+    if not job: raise missing()
+    if not (job.get('report') or {}).get('preparedReference'):
+        raise HTTPException(422, 'Najpierw przygotuj poprawną referencję w PREPARE_SYNC')
+    after = max((e.sequence for e in manager.events(job_id)), default=0)
+    try:
+        await manager.start_alignment(job_id, payload.english_source_id, payload.polish_source_id, AlignmentMode.LOCAL)
+    except UserInputError as exc: raise HTTPException(409, str(exc)) from exc
+    return {'jobId': job_id, 'afterSequence': after, 'status': 'QUEUED'}
+
+
+@tasks_router.post('/{job_id}/local-alignment/cancel')
+async def cancel_local(job_id: str, request: Request):
+    try: await request.app.state.jobs.cancel_alignment(job_id)
+    except UserInputError as exc: raise HTTPException(409, str(exc)) from exc
+    return {'status': 'CANCELLED'}
+
+
+@tasks_router.get('/{job_id}/local-result/{artifact}')
+async def local_result(job_id: str, artifact: str, request: Request):
+    from app.services.alignment import sha256
+    job = request.app.state.jobs.get(job_id)
+    result = ((job or {}).get('report') or {}).get('alignment') or {}
+    if not result.get('worker') or job['status'] != 'REVIEW_REQUIRED': raise missing()
+    names = {'srt': 'preview.AI-Sync.pl.srt', 'report': 'alignment-report.json'}
+    if artifact not in names: raise missing()
+    directory = (request.app.state.settings.data_root / 'work' / 'jobs' / job_id).resolve()
+    path = directory / names[artifact]
+    if path.is_symlink() or not path.is_file() or not path.resolve().is_relative_to(directory): raise missing()
+    if artifact == 'srt' and sha256(path) != result.get('previewSha256'): raise missing()
+    return FileResponse(path, filename=path.name, media_type='application/json' if artifact=='report' else 'application/x-subrip')

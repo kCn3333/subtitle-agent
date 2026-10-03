@@ -1,0 +1,14 @@
+{
+  "validation": {
+    "negativeTimesBeforeClamp": 0,
+    "clampedSegments": 0,
+    "reversedSegments": 0,
+    "overlappingSegments": 1,
+    "existingOverlaps": 0,
+    "introducedOverlaps": 1,
+    "outOfRangeSegments": 0,
+    "orderErrors": 1,
+    "segmentCountPreserved": true,
+    "textPreserved": true
+  }
+}
