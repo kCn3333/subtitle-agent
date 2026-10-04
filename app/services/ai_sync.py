@@ -26,6 +26,7 @@ class ApiSettings(BaseModel):
     api_key: SecretStr | None = None  # None preserves saved key; empty clears it.
     timeout_seconds: int = Field(default=120, ge=1, le=3600)
     reasoning_effort: Literal["none"] | None = None
+    response_format: Literal["json_object"] | None = None
 
     @field_validator("api_url")
     @classmethod
@@ -92,6 +93,8 @@ async def chat_request(settings: ApiSettings, instruction: str, data: dict,
         {"role": "user", "content": json.dumps(data, ensure_ascii=False)}]}
     if settings.reasoning_effort is not None:
         payload["reasoning_effort"] = settings.reasoning_effort
+    if settings.response_format is not None:
+        payload["response_format"] = {"type": settings.response_format}
     async with httpx.AsyncClient(timeout=settings.timeout_seconds, follow_redirects=False,
                                  trust_env=False, transport=transport) as client:
         started = perf_counter()
