@@ -19,6 +19,10 @@ Opcjonalne **Reasoning effort** domyślnie ma wartość **domyślne modelu**: po
 
 ## Kontrakt
 
+Opcjonalny **Format odpowiedzi → JSON** wysyła `response_format: {"type":"json_object"}` podczas testu i synchronizacji. Domyślna opcja **domyślne API** pomija pole, także dla konfiguracji zapisanych przed tą zmianą. Wybierz JSON tylko dla endpointu obsługującego ten parametr; [Ollama obsługuje `response_format` przez API zgodne z OpenAI](https://docs.ollama.com/capabilities/structured-outputs). Tryb JSON ogranicza format odpowiedzi, ale nie gwarantuje poprawnego schematu, kompletu ID ani trafności czasów — dotychczasowa walidacja nadal obowiązuje.
+
+Dla dużych workpacków sprawdź też efektywny kontekst niezależnego serwera modelu. Liczba `prompt_tokens` sama nie potwierdza ucięcia danych. [W Ollama kontekst modelu dla Chat Completions ustawia się po stronie serwera/Modelfile, a nie standardowym polem żądania OpenAI](https://docs.ollama.com/api/openai-compatibility#setting-the-local-context-size). Kontekst musi pomieścić oba zestawy napisów, instrukcję i cały wynik; jego zwiększenie wymaga odpowiedniej pamięci. Aplikacja nie zmienia ustawień serwera.
+
 Adapter używa [OpenAI Chat Completions](https://developers.openai.com/api/reference/resources/chat): `POST /chat/completions`, pola `model`, `messages` i `stream:false`. Klucz, jeśli ustawiony, jest przesyłany jako `Authorization: Bearer …`. Aplikacja nie korzysta z endpointu listowania modeli ani z wymagających osobnego wsparcia opcji structured outputs. Usługa z innym API wymaga osobnego adaptera.
 
 Wiadomość systemowa opisuje synchronizację oraz wymaga odpowiedzi JSON. Wiadomość użytkownika zawiera:
