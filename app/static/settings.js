@@ -30,3 +30,40 @@ async function saveAiSettings(test){
 settingsForm.addEventListener('submit',event=>{event.preventDefault();saveAiSettings(false)});
 document.querySelector('#test-api').addEventListener('click',()=>{if(settingsForm.reportValidity())saveAiSettings(true)});
 settingsRequest('/api/settings/ai').then(displaySettings).catch(error=>settingsStatus.textContent=error.message);
+
+const aiConsole=document.querySelector('#ai-console'),aiConsoleState=document.querySelector('#ai-console-state');
+let consoleSignature=null,consoleBusy=false,consoleGeneration=0;
+async function refreshAiConsole(){
+  if(consoleBusy)return;
+  consoleBusy=true;
+  const generation=consoleGeneration;
+  try{
+    const body=await settingsRequest('/api/settings/ai/console');
+    if(generation!==consoleGeneration)return;
+    const entries=body.entries||[],signature=`${entries.length}:${entries.at(-1)?.id??0}`;
+    if(signature!==consoleSignature){
+      const atBottom=aiConsole.scrollHeight-aiConsole.scrollTop-aiConsole.clientHeight<40,scrollTop=aiConsole.scrollTop;
+      aiConsole.replaceChildren();
+      for(const entry of entries){
+        const node=document.createElement('div');
+        node.className=`entry ${['INFO','SUCCESS','ERROR'].includes(entry.level)?entry.level:'INFO'}`;
+        node.textContent=`[${new Date(entry.timestamp).toLocaleString('pl-PL')}] [${entry.operation}] [${entry.level}]${entry.job_id?` [${entry.job_id}]`:''}\n${entry.message}\n`;
+        aiConsole.append(node);
+      }
+      aiConsole.scrollTop=atBottom?aiConsole.scrollHeight:scrollTop;
+      consoleSignature=signature;
+    }
+    aiConsoleState.textContent=entries.length?'Ostatnie 100 wpisów · odświeżanie co 2 s.':'Brak komunikatów. Wykonaj test połączenia lub synchronizację.';
+  }catch(error){aiConsoleState.textContent=`Nie udało się odczytać konsoli: ${error.message}`}
+  finally{consoleBusy=false}
+}
+document.querySelector('#refresh-ai-console').addEventListener('click',refreshAiConsole);
+document.querySelector('#clear-ai-console').addEventListener('click',async()=>{
+  consoleGeneration++;
+  try{
+    await settingsRequest('/api/settings/ai/console',{method:'DELETE'});
+    aiConsole.replaceChildren();consoleSignature=null;aiConsoleState.textContent='Historia wyczyszczona.';
+    await refreshAiConsole();
+  }catch(error){aiConsoleState.textContent=error.message}
+});
+refreshAiConsole();setInterval(()=>{if(!document.hidden)refreshAiConsole()},2000);

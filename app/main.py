@@ -9,6 +9,7 @@ from fastapi.templating import Jinja2Templates
 from app.api.jobs import router as jobs_router
 from app.api.ai_sync import router as ai_sync_router
 from app.services.ai_sync import ApiSettingsStore
+from app.services.ai_console import AiConsoleStore
 from app.api.workpacks import router as workpacks_router, tasks_router
 from app.core.config import Settings, get_settings
 from app.services.job_manager import JobManager
@@ -30,6 +31,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.tools = tools
         app.state.jobs = JobManager(config.data_root / "subtitle-agent.db", config)
         app.state.ai_settings = ApiSettingsStore(config.data_root / "subtitle-agent.db")
+        app.state.ai_console = AiConsoleStore(config.data_root / "subtitle-agent.db")
         await app.state.jobs.start()
         try:
             yield
