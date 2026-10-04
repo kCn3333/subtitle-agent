@@ -108,27 +108,44 @@ async def chat_request(settings: ApiSettings, instruction: str, data: dict,
             raise AiSyncError(f"Przekroczono timeout API ({settings.timeout_seconds} s)") from exc
         except httpx.HTTPError as exc:
             raise AiSyncError("Nie udało się połączyć z API; sprawdź adres i dostęp sieciowy") from exc
+    def invalid_response(message):
+        return AiSyncError(f"{message}. Czas żądania: {elapsed:g} s")
+
     try:
         envelope = json.loads(body)
-        if not isinstance(envelope, dict) or not isinstance(envelope.get("choices"), list):
-            raise ValueError()
-        choice = envelope["choices"][0]
-        if not isinstance(choice, dict) or not isinstance(choice.get("message"), dict):
-            raise ValueError()
-        if choice.get("finish_reason") not in {None, "stop"}:
-            raise AiSyncError("Model nie zakończył pełnej odpowiedzi; sprawdź limit wyjścia i kontekst modelu")
-        content = choice["message"]["content"]
-        # Accept a single JSON code block, but never repair partial answers.
-        if isinstance(content, str) and content.strip().startswith("```"):
-            match = re.fullmatch(r"```(?:json)?\s*\n?(.*?)\n?```", content.strip(), re.DOTALL)
-            content = match[1] if match else content
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise invalid_response("API zwróciło HTTP 200, ale odpowiedź HTTP nie jest JSON") from exc
+    if not isinstance(envelope, dict):
+        raise invalid_response("Odpowiedź API nie jest obiektem Chat Completions")
+    choices = envelope.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise invalid_response("Odpowiedź API nie zawiera choices[0]")
+    choice = choices[0]
+    if not isinstance(choice, dict) or not isinstance(choice.get("message"), dict):
+        raise invalid_response("Odpowiedź API nie zawiera choices[0].message")
+    if choice.get("finish_reason") not in (None, "stop"):
+        raise invalid_response("Model nie zakończył pełnej odpowiedzi; sprawdź limit wyjścia i kontekst modelu")
+    message = choice["message"]
+    content = message.get("content")
+    if content is None or (isinstance(content, str) and not content.strip()):
+        detail = ("; obecne jest pole reasoning_content" if message.get("reasoning_content") else "")
+        raise invalid_response("Model zwrócił pustą treść message.content" + detail)
+    if not isinstance(content, str):
+        raise invalid_response("message.content nie jest tekstem JSON")
+    # Accept a single JSON code block, but never repair partial answers.
+    content = content.strip()
+    if content.startswith("```"):
+        match = re.fullmatch(r"```(?:json)?\s*\n?(.*?)\n?```", content, re.DOTALL)
+        content = match[1] if match else content
+    try:
         result = json.loads(content)
-        if not isinstance(result, dict):
-            raise ValueError()
-    except AiSyncError:
-        raise
-    except (KeyError, IndexError, TypeError, ValueError) as exc:
-        raise AiSyncError("API nie zwróciło poprawnego JSON w choices[0].message.content") from exc
+    except json.JSONDecodeError as exc:
+        detail = ("Model zwrócił tekst zamiast wymaganego JSON" if not content.startswith(("{", "["))
+                  else "Model zwrócił niepoprawny JSON")
+        raise invalid_response(f"{detail} (wiersz {exc.lineno}, kolumna {exc.colno}, "
+                               f"liczba znaków {len(content)}); sprawdź odpowiedź w serwerze modelu") from exc
+    if not isinstance(result, dict):
+        raise invalid_response("JSON modelu musi być obiektem zawierającym wynik, a nie listą lub wartością prostą")
     usage = envelope.get("usage")
     usage = {key: value for key, value in usage.items()
              if key in {"prompt_tokens", "completion_tokens", "total_tokens"}
