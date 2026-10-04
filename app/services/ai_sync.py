@@ -77,6 +77,8 @@ class ApiSettingsStore:
 
 async def chat_request(settings: ApiSettings, instruction: str, data: dict,
                        transport=None) -> tuple[dict, float, dict | None]:
+    from app.services.ai_console import emit
+
     if not settings.api_url or not settings.model:
         raise AiSyncError("Ustaw adres API i nazwę modelu w ustawieniach")
     url = settings.api_url
@@ -96,14 +98,16 @@ async def chat_request(settings: ApiSettings, instruction: str, data: dict,
         try:
             async with asyncio.timeout(settings.timeout_seconds):
                 async with client.stream("POST", url, json=payload, headers=headers) as response:
-                    if response.status_code != 200:
-                        raise AiSyncError(f"API zwróciło HTTP {response.status_code}; sprawdź adres, model i klucz")
                     body = bytearray()
                     async for chunk in response.aiter_bytes():
                         body.extend(chunk)
                         if len(body) > 8 * 1024 * 1024:
                             raise AiSyncError("Odpowiedź API przekracza 8 MiB")
             elapsed = round(perf_counter() - started, 3)
+            emit("INFO", f"Odebrano HTTP {response.status_code} · czas żądania: {elapsed:g} s")
+            if response.status_code != 200:
+                emit("RESPONSE", body.decode("utf-8", errors="replace"))
+                raise AiSyncError(f"API zwróciło HTTP {response.status_code}; sprawdź adres, model i klucz")
         except (TimeoutError, httpx.TimeoutException) as exc:
             raise AiSyncError(f"Przekroczono timeout API ({settings.timeout_seconds} s)") from exc
         except httpx.HTTPError as exc:
@@ -114,9 +118,11 @@ async def chat_request(settings: ApiSettings, instruction: str, data: dict,
     try:
         envelope = json.loads(body)
     except (ValueError, UnicodeDecodeError) as exc:
+        emit("RESPONSE", body.decode("utf-8", errors="replace"))
         raise invalid_response("API zwróciło HTTP 200, ale odpowiedź HTTP nie jest JSON") from exc
     if not isinstance(envelope, dict):
         raise invalid_response("Odpowiedź API nie jest obiektem Chat Completions")
+    emit("RESPONSE", envelope)
     choices = envelope.get("choices")
     if not isinstance(choices, list) or not choices:
         raise invalid_response("Odpowiedź API nie zawiera choices[0]")

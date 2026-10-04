@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict
 from app.services.ai_sync import (ApiSettings, AiSyncError, SYNC_INSTRUCTION, chat_request,
                                   read_cues, segments, validate_result)
 from app.services.alignment import sha256, write_preview
+from app.services.ai_console import capture
 from app.services.artifact_retention import validated_job_directory
 
 router = APIRouter(tags=["ai-sync"])
@@ -30,12 +31,14 @@ async def save_settings(payload: ApiSettings, request: Request):
 
 @router.post("/api/settings/ai/test")
 async def test_connection(request: Request):
+    settings = request.app.state.ai_settings.get()
     try:
-        result, elapsed, usage = await chat_request(request.app.state.ai_settings.get(),
-            'Return only this JSON object: {"ok":true}', {"test": "connection"})
-        if result != {"ok": True}:
-            raise AiSyncError("Model odpowiedział, ale nie zachował formatu testowego JSON")
-        return {"ok": True, "elapsed_seconds": elapsed, "usage": usage}
+        with capture(request.app.state.ai_console, settings, "TEST"):
+            result, elapsed, usage = await chat_request(settings,
+                'Return only this JSON object: {"ok":true}', {"test": "connection"})
+            if result != {"ok": True}:
+                raise AiSyncError("Model odpowiedział, ale nie zachował formatu testowego JSON")
+            return {"ok": True, "elapsed_seconds": elapsed, "usage": usage}
     except AiSyncError as exc:
         raise error(str(exc), 502) from exc
 
@@ -127,28 +130,29 @@ async def synchronize(job_id: str, payload: SyncRequest, request: Request):
         # Remove the previous result before a new attempt, including invalid responses.
         for name in ("ai-sync.json", "ai-sync.pl.srt"):
             (directory / name).unlink(missing_ok=True)
+        settings = request.app.state.ai_settings.get()
         try:
-            english, polish = read_cues(english_path, "en"), read_cues(polish_path, "pl")
-            settings = request.app.state.ai_settings.get()
-            result, elapsed, usage = await chat_request(settings, SYNC_INSTRUCTION,
-                {"duration_ms": duration, "english": segments(english), "polish": segments(polish)})
-            output = validate_result(result, polish, duration)
-            prepared(request, job_id)
-            if digest != sha256(directory / "manifest.json"):
-                raise AiSyncError("Referencja zmieniła się podczas żądania; przygotuj dane ponownie")
-            input_file(directory, english_entries[0], "name")
-            input_file(directory, polish_entries[0], "archiveName")
-            target = directory / "ai-sync.pl.srt"
-            write_preview(output, target)
-            summary = {"model": settings.model, "elapsed_seconds": elapsed, "usage": usage,
-                       "cue_count": len(output), "manifest_sha256": digest, "sha256": sha256(target),
-                       "inputs": [{"name": entry[name_key], "sha256": entry["sha256"]}
-                                  for entry, name_key in ((english_entries[0], "name"),
-                                                          (polish_entries[0], "archiveName"))]}
-            temporary = directory / ".ai-sync.json.tmp"
-            temporary.write_text(json.dumps(summary, ensure_ascii=False), encoding="utf-8")
-            temporary.replace(directory / "ai-sync.json")
-            return summary
+            with capture(request.app.state.ai_console, settings, "SYNC", job_id):
+                english, polish = read_cues(english_path, "en"), read_cues(polish_path, "pl")
+                result, elapsed, usage = await chat_request(settings, SYNC_INSTRUCTION,
+                    {"duration_ms": duration, "english": segments(english), "polish": segments(polish)})
+                output = validate_result(result, polish, duration)
+                prepared(request, job_id)
+                if digest != sha256(directory / "manifest.json"):
+                    raise AiSyncError("Referencja zmieniła się podczas żądania; przygotuj dane ponownie")
+                input_file(directory, english_entries[0], "name")
+                input_file(directory, polish_entries[0], "archiveName")
+                target = directory / "ai-sync.pl.srt"
+                write_preview(output, target)
+                summary = {"model": settings.model, "elapsed_seconds": elapsed, "usage": usage,
+                           "cue_count": len(output), "manifest_sha256": digest, "sha256": sha256(target),
+                           "inputs": [{"name": entry[name_key], "sha256": entry["sha256"]}
+                                      for entry, name_key in ((english_entries[0], "name"),
+                                                              (polish_entries[0], "archiveName"))]}
+                temporary = directory / ".ai-sync.json.tmp"
+                temporary.write_text(json.dumps(summary, ensure_ascii=False), encoding="utf-8")
+                temporary.replace(directory / "ai-sync.json")
+                return summary
         except AiSyncError as exc:
             raise error(str(exc), 502) from exc
 
@@ -166,3 +170,14 @@ async def download(job_id: str, request: Request):
         raise error("Brak poprawnego wyniku synchronizacji", 404)
     return FileResponse(directory / "ai-sync.pl.srt", media_type="application/x-subrip",
                         filename="AI-Synced.pl.srt")
+
+
+@router.get("/api/settings/ai/console")
+async def ai_console(request: Request):
+    return {"entries": request.app.state.ai_console.read()}
+
+
+@router.delete("/api/settings/ai/console")
+async def clear_ai_console(request: Request):
+    request.app.state.ai_console.clear()
+    return {"ok": True}

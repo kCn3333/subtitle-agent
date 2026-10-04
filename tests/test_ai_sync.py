@@ -254,3 +254,55 @@ async def test_format_errors_are_distinct_and_include_elapsed_without_content(en
     assert expected in str(failure.value)
     assert 'Czas żądania:' in str(failure.value)
     assert 'private' not in str(failure.value)
+
+
+def test_ai_console_preserves_invalid_model_reply(client,prepared_job,monkeypatch):
+    job_id,_=prepared_job
+    reply='I cannot synchronize this film. <script>alert(1)</script>'
+    envelope={'choices':[{'message':{'content':reply,'reasoning_content':'Model reasoning'},'finish_reason':'stop'}],
+              'usage':{'total_tokens':123}}
+    async def fake(settings,instruction,data):
+        return await chat_request(settings,instruction,data,httpx.MockTransport(lambda request:httpx.Response(200,json=envelope)))
+    monkeypatch.setattr('app.api.ai_sync.chat_request',fake)
+    client.put('/api/settings/ai',json={'api_url':'http://local/v1','model':'test'})
+    response=client.post(f'/api/tasks/{job_id}/ai-sync',json={'polish_file':'polish/original.pl.srt','reference_source_id':'embedded:4'})
+    assert response.status_code==502
+    entries=client.get('/api/settings/ai/console').json()['entries']
+    assert [entry['level'] for entry in entries]==['INFO','INFO','RESPONSE','ERROR']
+    assert all(entry['job_id']==job_id and entry['operation']=='SYNC' for entry in entries)
+    assert reply in entries[2]['message'] and 'Model reasoning' in entries[2]['message']
+    assert 'finish_reason' in entries[2]['message'] and '123' in entries[2]['message']
+    assert 'tekst zamiast' in entries[-1]['message']
+    assert client.delete('/api/settings/ai/console').json()=={'ok':True}
+    assert client.get('/api/settings/ai/console').json()['entries']==[]
+
+
+def test_ai_console_records_test_and_redacts_api_key(client,monkeypatch):
+    key='secret-console-token'
+    client.put('/api/settings/ai',json={'api_url':'http://local/v1','model':'test','api_key':key})
+    async def fake(settings,instruction,data):
+        return await chat_request(settings,instruction,data,httpx.MockTransport(
+            lambda request:httpx.Response(401,json={'error':f'Invalid bearer {key}'})))
+    monkeypatch.setattr('app.api.ai_sync.chat_request',fake)
+    assert client.post('/api/settings/ai/test').status_code==502
+    response=client.get('/api/settings/ai/console')
+    assert key not in response.text and 'UKRYTY KLUCZ API' in response.text
+    assert all(row['operation']=='TEST' and row['job_id'] is None for row in response.json()['entries'])
+    assert 'HTTP 401' in response.text
+    page=client.get('/settings').text
+    assert 'Konsola AI' in page and 'id="ai-console"' in page
+
+
+def test_ai_console_is_bounded_and_persistent(tmp_path):
+    from app.services.ai_console import AiConsoleStore, MAX_CHARS, capture, emit
+    path=tmp_path/'console.db';store=AiConsoleStore(path)
+    key='secret"Ż\n'
+    with capture(store,ApiSettings(api_key=key),'TEST'):
+        emit('RESPONSE',json.dumps({'error':key},ensure_ascii=True))
+        emit('RESPONSE','x'*(MAX_CHARS+500))
+    entries=AiConsoleStore(path).read()
+    assert 'UKRYTY KLUCZ API' in entries[1]['message']
+    assert 'ODPOWIEDŹ SKRÓCONA' in entries[2]['message']
+    for index in range(110):store.append('TEST',None,'INFO',str(index))
+    entries=AiConsoleStore(path).read()
+    assert len(entries)==100 and entries[0]['message']=='10' and entries[-1]['message']=='109'

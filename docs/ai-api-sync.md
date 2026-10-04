@@ -43,6 +43,10 @@ Aplikacja ustawia wynik w oryginalnej kolejności PL, dołącza oryginalny tekst
 
 ## Czas i błędy
 
+W **Ustawieniach AI** dostępna jest przewijalna **Konsola AI**, odświeżana co 2 sekundy. Pokazuje komunikaty testu i synchronizacji, ID zadania, status HTTP, czas odpowiedzi, pełną odpowiedź API (w tym `message.content`, `reasoning_content`, `finish_reason` i `usage`, jeśli występują) oraz błąd walidacji. Odpowiedź jest zapisywana także wtedy, gdy model zwraca zwykły tekst zamiast JSON. Nie oznacza to dostępu do wewnętrznych logów serwera ani do postępu generowania: odpowiedź pojawia się po jej odebraniu.
+
+Historia jest zapisywana w SQLite, obejmuje ostatnie 100 wpisów i pozostaje po restarcie aplikacji. Każdy wpis ma limit 131072 znaków; skrócenie jest jawnie oznaczone. Można wyczyścić historię przyciskiem. Konsola może zawierać treść dialogów i odpowiedzi modelu. Nie zapisujemy nagłówków uwierzytelnienia ani wejściowego promptu; wystąpienia skonfigurowanego klucza API w odpowiedzi są maskowane. Starszych błędów sprzed tej poprawki nie można odtworzyć — potrzebna jest nowa odpowiedź modelu.
+
 Czas to okres od rozpoczęcia wysyłania pojedynczego żądania do odebrania całej odpowiedzi HTTP. Obejmuje sieć i pracę serwera/modelu; nie obejmuje przygotowania, OCR, walidacji ani zapisu SRT. Opcjonalnie pokazujemy `prompt_tokens`, `completion_tokens` i `total_tokens` z `usage`. Nie szacujemy brakujących tokenów, nie ponawiamy automatycznie żądania i nie prowadzimy benchmarków.
 
 Wszystkie napisy trafiają do jednego żądania. Model musi mieć wystarczający kontekst i limit wyjścia dla kompletnego wyniku. Przekroczenie tych limitów daje błąd API albo odrzucenie niepełnej odpowiedzi. Nie dodano automatycznego dzielenia filmu. Timeout w ustawieniach ogranicza całe oczekiwanie (1–3600 s); jeśli przed aplikacją działa proxy, jego limit musi pozwalać na takie oczekiwanie. Przerwanie oczekiwania nie gwarantuje zatrzymania pracy po stronie niezależnego serwera.
