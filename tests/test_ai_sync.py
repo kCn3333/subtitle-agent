@@ -237,3 +237,20 @@ def test_legacy_settings_default_reasoning_effort(tmp_path):
     assert ApiSettingsStore(store.db_path).get().reasoning_effort is None
     store.save(ApiSettings(reasoning_effort='none'))
     assert ApiSettingsStore(store.db_path).get().reasoning_effort=='none'
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('envelope,expected',[
+    ({'choices':[{'message':{'content':None,'reasoning_content':'private reasoning'},'finish_reason':'stop'}]},'pustą treść'),
+    ({'choices':[{'message':{'content':'I need to analyze private dialogue.'},'finish_reason':'stop'}]},'tekst zamiast'),
+    ({'choices':[{'message':{'content':'{"segments":['},'finish_reason':'stop'}]},'niepoprawny JSON'),
+    ({'choices':[]},'choices[0]'),
+    ({'choices':[{'message':{'content':[]}}]},'nie jest tekstem'),
+])
+async def test_format_errors_are_distinct_and_include_elapsed_without_content(envelope,expected):
+    with pytest.raises(AiSyncError) as failure:
+        await chat_request(ApiSettings(api_url='http://local/v1',model='test'),
+                           'Instruction',{},httpx.MockTransport(lambda request:httpx.Response(200,json=envelope)))
+    assert expected in str(failure.value)
+    assert 'Czas żądania:' in str(failure.value)
+    assert 'private' not in str(failure.value)
