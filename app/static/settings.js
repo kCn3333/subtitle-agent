@@ -25,7 +25,7 @@ async function saveAiSettings(test){
     const key=document.querySelector('#api-key').value;
     if(document.querySelector('#clear-key').checked)payload.api_key='';else if(key)payload.api_key=key;
     displaySettings(await settingsRequest('/api/settings/ai',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}));
-    if(test){const result=await settingsRequest('/api/settings/ai/test',{method:'POST'});settingsStatus.textContent=`Połączenie poprawne. Czas żądania: ${result.elapsed_seconds} s.`}
+    if(test){const result=await settingsRequest('/api/settings/ai/test',{method:'POST'});settingsStatus.textContent=`Połączenie poprawne. ${formatAiMetrics(result)}. ${formatAiCostSummary(result)}`}
     else settingsStatus.textContent='Ustawienia zapisane.';
   }catch(error){settingsStatus.textContent=error.message}finally{buttons.forEach(button=>button.disabled=false)}
 }

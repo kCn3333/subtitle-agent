@@ -1,4 +1,4 @@
-# Synchronizacja przez skonfigurowane API
+# Synchronizacja i tłumaczenie przez skonfigurowane API
 
 Aplikacja przygotowuje referencję EN i istniejące napisy PL, korzystając z dotychczasowej ekstrakcji i OCR. Wysyła jedno żądanie do niezależnego modelu, sprawdza odpowiedź i składa SRT z oryginalnym tekstem PL. Nie instaluje modeli, nie pobiera wag i nie zarządza CPU/GPU. Nie wymaga dodatkowej usługi w Compose.
 
@@ -11,15 +11,15 @@ Aplikacja przygotowuje referencję EN i istniejące napisy PL, korzystając z do
 5. Po przygotowaniu wybierz polski plik SRT i kliknij **Przekaż do AI**. Zmiana EN wymaga najpierw ponownego zbudowania workpacka. Aplikacja wyśle tekstowe segmenty EN i PL oraz czas trwania filmu do skonfigurowanego endpointu.
 6. Pobierz wynik SRT. Ekran pokazuje czas żądania oraz tokeny, jeśli API je zwraca. Sprawdź synchronizację w kilku miejscach filmu. Walidacja sprawdza strukturę i przedziały, a nie trafność dopasowania dialogów.
 
-Przycisk „Przekaż do AI” pojawia się obok pobierania ZIP-a. Pod kartą statusu można wybrać PL. Po kliknięciu konsola pokazuje trwające żądanie i licznik czasu oczekiwania; API nie dostarcza procentowego postępu.
+Przycisk „Przekaż do AI” znajduje się po prawej stronie panelu synchronizacji lub tłumaczenia, pod kartą statusu. W synchronizacji można wybrać PL. Po kliknięciu konsola pokazuje trwające żądanie i licznik czasu oczekiwania; API nie dostarcza procentowego postępu.
 
 Ustawienia zapisują się w SQLite w `/data` i pozostają po restarcie. Klucz jest przechowywany w bazie bez szyfrowania aplikacyjnego; nie trafia do odpowiedzi API ustawień, raportu ani SRT. Puste pole w formularzu zachowuje zapisany klucz; checkbox pozwala go usunąć. Nowe API nie dodaje mechanizmu logowania do aplikacji; dostęp do ustawień podlega temu samemu zabezpieczeniu dostępu co reszta panelu.
 
-Opcjonalne **Reasoning effort** domyślnie ma wartość **domyślne modelu**: pole `reasoning_effort` jest pomijane w żądaniu do modelu. **Wyłączone** dodaje `"reasoning_effort":"none"`. Ustawienie obowiązuje zarówno podczas testu połączenia, jak i synchronizacji. W API ustawień `null` oznacza pominięcie, a `"none"` wyłączenie. Istniejące konfiguracje bez tego pola zachowują domyślne zachowanie. Opcję wyłączenia wybieraj dla modelu i dostawcy obsługującego tę wartość.
+Opcjonalne **Reasoning effort** domyślnie ma wartość **domyślne modelu**: pole `reasoning_effort` jest pomijane w żądaniu do modelu. **Wyłączone** dodaje `"reasoning_effort":"none"`. Ustawienie obowiązuje zarówno podczas testu połączenia, synchronizacji i tłumaczenia. W API ustawień `null` oznacza pominięcie, a `"none"` wyłączenie. Istniejące konfiguracje bez tego pola zachowują domyślne zachowanie. Opcję wyłączenia wybieraj dla modelu i dostawcy obsługującego tę wartość.
 
 ## Kontrakt
 
-Opcjonalny **Format odpowiedzi → JSON** wysyła `response_format: {"type":"json_object"}` podczas testu i synchronizacji. Domyślna opcja **domyślne API** pomija pole, także dla konfiguracji zapisanych przed tą zmianą. Wybierz JSON tylko dla endpointu obsługującego ten parametr; [Ollama obsługuje `response_format` przez API zgodne z OpenAI](https://docs.ollama.com/capabilities/structured-outputs). Tryb JSON ogranicza format odpowiedzi, ale nie gwarantuje poprawnego schematu, kompletu ID ani trafności czasów — dotychczasowa walidacja nadal obowiązuje.
+Opcjonalny **Format odpowiedzi → JSON** wysyła `response_format: {"type":"json_object"}` podczas testu, synchronizacji i tłumaczenia. Domyślna opcja **domyślne API** pomija pole, także dla konfiguracji zapisanych przed tą zmianą. Wybierz JSON tylko dla endpointu obsługującego ten parametr; [Ollama obsługuje `response_format` przez API zgodne z OpenAI](https://docs.ollama.com/capabilities/structured-outputs). Tryb JSON ogranicza format odpowiedzi, ale nie gwarantuje poprawnego schematu, kompletu ID ani trafności czasów — dotychczasowa walidacja nadal obowiązuje.
 
 Dla dużych workpacków sprawdź też efektywny kontekst niezależnego serwera modelu. Liczba `prompt_tokens` sama nie potwierdza ucięcia danych. [W Ollama kontekst modelu dla Chat Completions ustawia się po stronie serwera/Modelfile, a nie standardowym polem żądania OpenAI](https://docs.ollama.com/api/openai-compatibility#setting-the-local-context-size). Kontekst musi pomieścić oba zestawy napisów, instrukcję i cały wynik; jego zwiększenie wymaga odpowiedniej pamięci. Aplikacja nie zmienia ustawień serwera.
 
@@ -65,8 +65,26 @@ API aplikacji:
 GET/PUT /api/settings/ai
 POST    /api/settings/ai/test
 POST    /api/tasks/{job_id}/ai-sync
+POST    /api/tasks/{job_id}/ai-translate
+GET     /api/tasks/{job_id}/ai-translate
+GET     /api/tasks/{job_id}/ai-translate/download
 GET     /api/tasks/{job_id}/ai-sync
 GET     /api/tasks/{job_id}/ai-sync/download
 ```
 
 POST synchronizacji wymaga `polish_file` (przygotowany `archiveName`) oraz `reference_source_id` (np. `embedded:4`). Równoległe żądanie dla tego samego zadania zwraca 409; podczas żądania nie można przebudować jego referencji. Po restarcie nie ponawiamy żądania automatycznie.
+
+
+## Tłumaczenie EN → PL
+
+Wybierz **Przygotuj do tłumaczenia**, poczekaj na gotowy workpack i kliknij **Przekaż do AI** w panelu **Tłumaczenie przez AI**. Nie są potrzebne istniejące PL. Referencja graficzna wymaga zakończonego OCR; zewnętrzna referencja EN nadal wymaga potwierdzenia. Aplikacja wysyła jedno żądanie z segmentami EN. Model zwraca `{"segments":[{"id":"en:1","text":"Polski tekst."}]}` — tekst dla każdego EN ID dokładnie raz, bez nowych czasów. Aplikacja zachowuje kolejność i czasy referencji EN, sprawdza kompletność ID i poprawność tekstu SRT. Walidacja nie ocenia jakości językowej tłumaczenia.
+
+POST `/api/tasks/{job_id}/ai-translate` wymaga tylko `reference_source_id`. Poprawny wynik zapisuje się jako `ai-translation.pl.srt`; metryki i hashe znajdują się w `ai-translation.json`. Wynik można pobrać z panelu oraz z Archiwum, gdzie ma oznaczenie tłumaczenia. Zmiana wejścia unieważnia wynik w panelu; wcześniej zarchiwizowana wersja pozostaje dostępna w ramach retencji 30 tytułów.
+
+## Koszt API i OpenRouter
+
+Dla OpenRouter ustaw **Adres API** na `https://openrouter.ai/api/v1`, nazwę modelu w formacie dostawcy oraz własny klucz API. Obsługa JSON i `reasoning_effort` zależy od wybranego modelu/dostawcy; domyślne opcje pomijają te pola.
+
+Aplikacja zachowuje numeryczne, nieujemne i skończone `usage.cost`, również zero. Obok czasu i tokenów konsola pokazuje koszt zgłoszony przez API, a na końcu podsumowanie kosztu całej operacji. Obecnie synchronizacja, tłumaczenie i test to osobne operacje po jednym żądaniu; wcześniejsze próby i test połączenia nie są doliczane do nowej próby. Koszt jest widoczny również przy odrzuceniu płatnej odpowiedzi (np. niepełnym JSON lub brakujących ID). Nie jest estymowany z cennika ani tokenów. Jeśli API nie podaje kosztu, podsumowanie wskazuje brak danych, a nie bezpłatną operację.
+
+OpenRouter podaje koszt obciążenia konta w USD. Dla innych endpointów, które zwracają `usage.cost`, aplikacja pokazuje wartość w jednostkach API bez zgadywania waluty. Nie wysyłamy dodatkowych pól ani żądań do pobrania kosztu: [OpenRouter Usage Accounting](https://openrouter.ai/docs/cookbook/administration/usage-accounting) zwraca go w standardowej odpowiedzi. Historia w ustawieniach obejmuje testy, synchronizację i tłumaczenie; podsumowanie kosztu jest zapisywane także w diagnostyce nieudanego żądania, jeśli koszt został odebrany.

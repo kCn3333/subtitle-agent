@@ -171,7 +171,8 @@ def test_changed_reference_and_unsafe_polish_are_rejected(client,prepared_job):
         assert response.status_code==422
 
 
-def test_pipeline_prepares_inputs_for_new_api(client,media_file,monkeypatch):
+@pytest.mark.parametrize("mode",["PREPARE_SYNC","PREPARE_TRANSLATION"])
+def test_pipeline_prepares_inputs_for_new_api(client,media_file,monkeypatch,mode):
     import time
     from app.services.subtitle_extraction import SubtitleExtractionResult
     async def probe(path,timeout):
@@ -183,21 +184,26 @@ def test_pipeline_prepares_inputs_for_new_api(client,media_file,monkeypatch):
         original=target/'selected.original.srt';original.write_bytes(prepared.read_bytes())
         return SubtitleExtractionResult([original,prepared],[])
     async def fake(settings,instruction,data):
+        if mode=='PREPARE_TRANSLATION':
+            assert 'polish' not in data
+            return {'segments':[{'id':cue['id'],'text':'Przetłumaczona kwestia.'} for cue in data['english']]},.2,None
         return {'segments':[{'id':cue['id'],'start_ms':3000,'end_ms':4500} for cue in data['polish']]},.2,None
     monkeypatch.setattr('app.services.job_manager.probe_media',probe)
     monkeypatch.setattr('app.services.job_manager.extract_embedded',extract)
     monkeypatch.setattr('app.api.ai_sync.chat_request',fake)
     cue_file(media_file.with_suffix('.pl.srt'))
-    job_id=client.post('/api/tasks',json={'mediaPath':str(media_file),'mode':'PREPARE_SYNC'}).json()['jobId']
+    job_id=client.post('/api/tasks',json={'mediaPath':str(media_file),'mode':mode}).json()['jobId']
     for _ in range(300):
         job=client.get(f'/api/tasks/{job_id}').json()
         if job['status'] in {'WORKPACK_READY','WORKPACK_INCOMPLETE','FAILED'}:break
         time.sleep(.01)
     assert job['status']=='WORKPACK_READY',job
-    polish=job['report']['polishCandidates'][0]['archiveName']
-    response=client.post(f'/api/tasks/{job_id}/ai-sync',json={'polish_file':polish,'reference_source_id':'embedded:4'})
+    payload={'reference_source_id':'embedded:4'}
+    endpoint='ai-translate' if mode=='PREPARE_TRANSLATION' else 'ai-sync'
+    if mode=='PREPARE_SYNC':payload['polish_file']=job['report']['polishCandidates'][0]['archiveName']
+    response=client.post(f'/api/tasks/{job_id}/{endpoint}',json=payload)
     assert response.status_code==200,response.text
-    assert client.get(f'/api/tasks/{job_id}/ai-sync/download').status_code==200
+    assert client.get(f'/api/tasks/{job_id}/{endpoint}/download').status_code==200
 
 
 @pytest.mark.parametrize('effort',[None,'none'])
@@ -275,11 +281,11 @@ def test_ai_console_preserves_invalid_model_reply(client,prepared_job,monkeypatc
     response=client.post(f'/api/tasks/{job_id}/ai-sync',json={'polish_file':'polish/original.pl.srt','reference_source_id':'embedded:4'})
     assert response.status_code==502
     entries=client.get('/api/settings/ai/console').json()['entries']
-    assert [entry['level'] for entry in entries]==['INFO','INFO','RESPONSE','ERROR']
+    assert [entry['level'] for entry in entries]==['INFO','INFO','RESPONSE','INFO','ERROR','INFO']
     assert all(entry['job_id']==job_id and entry['operation']=='SYNC' for entry in entries)
     assert reply in entries[2]['message'] and 'Model reasoning' in entries[2]['message']
     assert 'finish_reason' in entries[2]['message'] and '123' in entries[2]['message']
-    assert 'tekst zamiast' in entries[-1]['message']
+    assert 'tekst zamiast' in entries[-2]['message']
     assert client.delete('/api/settings/ai/console').json()=={'ok':True}
     assert client.get('/api/settings/ai/console').json()['entries']==[]
 

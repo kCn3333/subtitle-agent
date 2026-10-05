@@ -19,6 +19,7 @@ function setup(response){
   context.setInterval=callback=>{context.timerCallback=callback;return 1};
   context.clearInterval=()=>{context.timerCallback=null};
   const script=readFileSync('app/static/ai-sync.js','utf8');
+  runInNewContext(readFileSync('app/static/ai-metrics.js','utf8'),context);
   runInNewContext(script,context);
   context.renderAiSync({jobId:'job',status:'WORKPACK_READY',report:{pipeline:'PREPARE_SYNC',
     selectedEnglish:{streamIndex:4},polishCandidates:[{archiveName:'polish/a.srt',originalName:'A'},{archiveName:'polish/b.srt'}]}});
@@ -78,4 +79,35 @@ test('only clicking handoff starts console timer, which stops on completion',asy
   assert.equal(context.timerCallback,null);
   assert.equal(get('#console').options.length,0);
   assert.equal(get('#ai-sync-button-label').textContent,'Przekaż do AI');
+});
+
+test('translation handoff needs no PL and selects translation endpoint',async()=>{
+  const {get,context}=setup({ok:true,json:async()=>({cue_count:1,elapsed_seconds:2,inputs:[{name:'en.srt'}],
+    usage:{total_tokens:30,cost:0.00125,cost_currency:'USD'},total_cost:0.00125})});
+  let request;
+  context.fetch=(url,options)=>{request={url,options};return Promise.resolve({ok:true,json:async()=>({cue_count:1,elapsed_seconds:2,inputs:[{name:'en.srt'}],
+    usage:{total_tokens:30,cost:0.00125,cost_currency:'USD'},total_cost:0.00125})})};
+  context.renderAiSync({jobId:'job',status:'WORKPACK_READY',report:{pipeline:'PREPARE_TRANSLATION',selectedEnglish:{streamIndex:4}}});
+  assert.equal(get('#ai-polish-field').hidden,true);
+  assert.equal(get('#ai-panel-title').textContent,'Tłumaczenie przez AI');
+  assert.equal(get('#ai-sync-button').disabled,false);
+  await get('#ai-sync-button').handlers.click();
+  assert.equal(request.url,'/api/tasks/job/ai-translate');
+  assert.deepEqual(JSON.parse(request.options.body),{reference_source_id:'embedded:4'});
+  assert.equal(get('#ai-download').href,'/api/tasks/job/ai-translate/download');
+  assert.match(get('#ai-sync-status').textContent,/Koszt całej operacji: 0,00125 USD/);
+});
+test('zero cost is displayed and absent cost is not treated as free',()=>{
+  const {context}=setup();
+  assert.match(context.formatAiCostSummary({usage:{cost:0,cost_currency:'USD'}}),/0 USD/);
+  assert.match(context.formatAiCostSummary({usage:{total_tokens:3}}),/API nie podało kosztu/);
+  assert.match(context.aiCostText(1e-21,{cost_currency:'USD'}),/1e-21 USD/);
+});
+test('paid invalid response retains costs in the progress console message',async()=>{
+  const {get}=setup({ok:false,json:async()=>({detail:{message:'Niepełne tłumaczenie',elapsed_seconds:3,
+    usage:{total_tokens:20,cost:0.0001,cost_currency:'USD'}}})});
+  await get('#ai-sync-button').handlers.click();
+  assert.match(get('#ai-sync-status').textContent,/Niepełne tłumaczenie/);
+  assert.match(get('#ai-sync-status').textContent,/Koszt całej operacji: 0,0001 USD/);
+  assert.equal(get('#ai-download').hidden,true);
 });

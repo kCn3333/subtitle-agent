@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict
 
 from app.services.ai_sync import (ApiSettings, AiSyncError, SYNC_INSTRUCTION, chat_request,
-                                  read_cues, segments, validate_result)
+                                  read_cues, segments, validate_result, TRANSLATION_INSTRUCTION, validate_translation)
 from app.services.alignment import sha256, write_preview
 from app.services.ai_console import capture
 from app.services.artifact_retention import validated_job_directory
@@ -15,8 +15,14 @@ from app.services.artifact_retention import validated_job_directory
 router = APIRouter(tags=["ai-sync"])
 
 
-def error(message: str, status: int = 422):
-    return HTTPException(status, detail={"code": "AI_SYNC_ERROR", "message": message})
+def error(message: str, status: int = 422, elapsed_seconds=None, usage=None):
+    detail = {"code": "AI_SYNC_ERROR", "message": message}
+    if elapsed_seconds is not None:
+        detail['elapsed_seconds'] = elapsed_seconds
+    if usage is not None:
+        detail['usage'] = usage
+        detail['total_cost'] = usage.get('cost')
+    return HTTPException(status, detail=detail)
 
 
 @router.get("/api/settings/ai")
@@ -40,22 +46,23 @@ async def test_connection(request: Request):
                 raise AiSyncError("Model odpowiedział, ale nie zachował formatu testowego JSON")
             return {"ok": True, "elapsed_seconds": elapsed, "usage": usage}
     except AiSyncError as exc:
-        raise error(str(exc), 502) from exc
+        raise error(str(exc), 502, exc.elapsed_seconds, exc.usage) from exc
 
 
 class SyncRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    polish_file: str
+    polish_file: str | None = None
     reference_source_id: str
 
 
-def prepared(request: Request, job_id: str):
+def prepared(request: Request, job_id: str, pipeline: str | None = None):
     job = request.app.state.jobs.get(job_id)
     if not job or job.get("job_type") != "PREPARE_WORKPACK":
         raise error("Nie znaleziono zadania", 404)
     report = job.get("report") or {}
-    if job["status"] != "WORKPACK_READY" or report.get("pipeline") != "PREPARE_SYNC":
-        raise error("Najpierw przygotuj workpack do synchronizacji")
+    if (job["status"] != "WORKPACK_READY" or report.get("pipeline") not in {"PREPARE_SYNC", "PREPARE_TRANSLATION"}
+            or (pipeline and report.get("pipeline") != pipeline)):
+        raise error("Najpierw przygotuj workpack dla wybranego trybu AI")
     if report.get("externalReferenceConfirmationRequired") or report.get("requiresOcr"):
         raise error("Najpierw zatwierdź referencję EN i zakończ ekstrakcję/OCR")
     root = request.app.state.settings.data_root / "work" / "jobs"
@@ -84,8 +91,8 @@ def manifest(directory: Path):
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def saved_result(directory: Path):
-    path = directory / "ai-sync.json"
+def saved_result(directory: Path, stem="ai-sync"):
+    path = directory / f"{stem}.json"
     if not path.is_file() or path.is_symlink():
         return None
     result = json.loads(path.read_text(encoding="utf-8"))
@@ -93,7 +100,7 @@ def saved_result(directory: Path):
         return None
     for entry in result["inputs"]:
         input_file(directory, entry, "name")
-    output = directory / "ai-sync.pl.srt"
+    output = directory / f"{stem}.pl.srt"
     if not output.is_file() or output.is_symlink() or sha256(output) != result["sha256"]:
         return None
     return result
@@ -101,13 +108,24 @@ def saved_result(directory: Path):
 
 @router.post("/api/tasks/{job_id}/ai-sync")
 async def synchronize(job_id: str, payload: SyncRequest, request: Request):
-    prepared(request, job_id)
+    return await process(job_id, payload, request, "PREPARE_SYNC")
+
+
+@router.post("/api/tasks/{job_id}/ai-translate")
+async def translate(job_id: str, payload: SyncRequest, request: Request):
+    return await process(job_id, payload, request, "PREPARE_TRANSLATION")
+
+
+async def process(job_id, payload, request, pipeline):
+    prepared(request, job_id, pipeline)
+    translation = pipeline == "PREPARE_TRANSLATION"
+    stem = "ai-translation" if translation else "ai-sync"
     locks = request.app.state.ai_sync_locks
     lock = locks.setdefault(job_id, asyncio.Lock())
     if lock.locked():
-        raise error("Synchronizacja tego zadania już trwa", 409)
+        raise error("Operacja AI tego zadania już trwa", 409)
     async with lock:
-        directory, report = prepared(request, job_id)
+        directory, report = prepared(request, job_id, pipeline)
         data = manifest(directory)
         reference = data.get("reference") or {}
         selected = report.get("selectedEnglish") or {}
@@ -119,45 +137,58 @@ async def synchronize(job_id: str, payload: SyncRequest, request: Request):
                            if Path(entry.get("name", "")).name in {"selected.eng.srt", "selected.eng.ocr.srt"}]
         polish_entries = [entry for entry in data.get("polish_candidates", [])
                           if entry.get("archiveName") == payload.polish_file]
-        if len(english_entries) != 1 or len(polish_entries) != 1:
-            raise error("Wybierz przygotowaną referencję EN i polski plik SRT")
+        if len(english_entries) != 1:
+            raise error("Brak przygotowanej tekstowej referencji EN; zakończ ekstrakcję/OCR")
+        if not translation and len(polish_entries) != 1:
+            raise error("Wybierz przygotowany polski plik SRT")
         english_path = input_file(directory, english_entries[0], "name")
-        polish_path = input_file(directory, polish_entries[0], "archiveName")
+        polish_path = None if translation else input_file(directory, polish_entries[0], "archiveName")
+        inputs = [(english_entries[0], "name")]
+        if not translation:
+            inputs.append((polish_entries[0], "archiveName"))
         digest = sha256(directory / "manifest.json")
         duration = data.get("media", {}).get("duration_ms")
         if type(duration) is not int or duration <= 0:
             raise error("Brak poprawnego czasu trwania filmu")
         # Remove the previous result before a new attempt, including invalid responses.
-        for name in ("ai-sync.json", "ai-sync.pl.srt"):
+        for name in (f"{stem}.json", f"{stem}.pl.srt"):
             (directory / name).unlink(missing_ok=True)
         settings = request.app.state.ai_settings.get()
         request.app.state.jobs.artifact_users.add(job_id)
+        elapsed, usage = None, None
         try:
-            with capture(request.app.state.ai_console, settings, "SYNC", job_id):
-                english, polish = read_cues(english_path, "en"), read_cues(polish_path, "pl")
-                result, elapsed, usage = await chat_request(settings, SYNC_INSTRUCTION,
-                    {"duration_ms": duration, "english": segments(english), "polish": segments(polish)})
-                output = validate_result(result, polish, duration)
-                prepared(request, job_id)
+            with capture(request.app.state.ai_console, settings, "TRANSLATE" if translation else "SYNC", job_id):
+                english = read_cues(english_path, "en")
+                data = {"duration_ms": duration, "english": segments(english)}
+                polish = read_cues(polish_path, "pl") if polish_path else None
+                if polish is not None:
+                    data['polish'] = segments(polish)
+                result, elapsed, usage = await chat_request(settings,
+                    TRANSLATION_INSTRUCTION if translation else SYNC_INSTRUCTION, data)
+                output = (validate_translation(result, english, duration) if translation
+                          else validate_result(result, polish, duration))
+                prepared(request, job_id, pipeline)
                 if digest != sha256(directory / "manifest.json"):
                     raise AiSyncError("Referencja zmieniła się podczas żądania; przygotuj dane ponownie")
-                input_file(directory, english_entries[0], "name")
-                input_file(directory, polish_entries[0], "archiveName")
-                target = directory / "ai-sync.pl.srt"
+                for entry, name_key in inputs:
+                    input_file(directory, entry, name_key)
+                target = directory / f"{stem}.pl.srt"
                 write_preview(output, target)
                 summary = {"model": settings.model, "elapsed_seconds": elapsed, "usage": usage,
+                           "mode": "translation" if translation else "sync",
+                           "total_cost": (usage or {}).get("cost"),
                            "cue_count": len(output), "manifest_sha256": digest, "sha256": sha256(target),
                            "inputs": [{"name": entry[name_key], "sha256": entry["sha256"]}
-                                      for entry, name_key in ((english_entries[0], "name"),
-                                                              (polish_entries[0], "archiveName"))]}
-                temporary = directory / ".ai-sync.json.tmp"
+                                      for entry, name_key in inputs]}
+                temporary = directory / f".{stem}.json.tmp"
                 temporary.write_text(json.dumps(summary, ensure_ascii=False), encoding="utf-8")
-                temporary.replace(directory / "ai-sync.json")
+                temporary.replace(directory / f"{stem}.json")
                 with request.app.state.jobs._lock:
                     request.app.state.jobs.archive.capture(request.app.state.jobs.get(job_id))
                 return summary
         except AiSyncError as exc:
-            raise error(str(exc), 502) from exc
+            raise error(str(exc), 502, exc.elapsed_seconds if exc.elapsed_seconds is not None else elapsed,
+                        exc.usage if exc.usage is not None else usage) from exc
         finally:
             request.app.state.jobs.artifact_users.discard(job_id)
             request.app.state.jobs.cleanup_expired_artifacts()
@@ -165,17 +196,32 @@ async def synchronize(job_id: str, payload: SyncRequest, request: Request):
 
 @router.get("/api/tasks/{job_id}/ai-sync")
 async def result(job_id: str, request: Request):
-    directory, _ = prepared(request, job_id)
+    directory, _ = prepared(request, job_id, "PREPARE_SYNC")
     return {"result": saved_result(directory)}
 
 
 @router.get("/api/tasks/{job_id}/ai-sync/download")
 async def download(job_id: str, request: Request):
-    directory, _ = prepared(request, job_id)
+    directory, _ = prepared(request, job_id, "PREPARE_SYNC")
     if not saved_result(directory):
         raise error("Brak poprawnego wyniku synchronizacji", 404)
     return FileResponse(directory / "ai-sync.pl.srt", media_type="application/x-subrip",
                         filename="AI-Synced.pl.srt")
+
+
+@router.get("/api/tasks/{job_id}/ai-translate")
+async def translation_result(job_id: str, request: Request):
+    directory, _ = prepared(request, job_id, "PREPARE_TRANSLATION")
+    return {"result": saved_result(directory, "ai-translation")}
+
+
+@router.get("/api/tasks/{job_id}/ai-translate/download")
+async def translation_download(job_id: str, request: Request):
+    directory, _ = prepared(request, job_id, "PREPARE_TRANSLATION")
+    if not saved_result(directory, "ai-translation"):
+        raise error("Brak poprawnego wyniku tłumaczenia", 404)
+    return FileResponse(directory / "ai-translation.pl.srt", media_type="application/x-subrip",
+                        filename="AI-Translated.pl.srt")
 
 
 @router.get("/api/settings/ai/console")

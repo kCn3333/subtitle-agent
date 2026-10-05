@@ -79,15 +79,17 @@ class ArchiveStore:
         if alignment.get('previewPath') and alignment.get('previewSha256'):
             self.record(job, Path(alignment['previewPath']), 'synchronization', alignment['previewSha256'])
         directory = self.jobs_root / job['id']
-        summary = directory / 'ai-sync.json'
-        if validated_job_directory(self.jobs_root, directory) and summary.is_file() and not summary.is_symlink():
-            try:
-                result = json.loads(summary.read_text())
-                if result.get('sha256'):
-                    self.record(job, directory / 'ai-sync.pl.srt', 'synchronization', result['sha256'])
-            except (OSError, ValueError):
-                pass
-        # Translation workflows can register their validated SRT via record(..., 'translation').
+        if validated_job_directory(self.jobs_root, directory):
+            for stem, kind in [('ai-sync', 'synchronization'), ('ai-translation', 'translation')]:
+                summary = directory / (stem + '.json')
+                if not summary.is_file() or summary.is_symlink():
+                    continue
+                try:
+                    result = json.loads(summary.read_text())
+                    if result.get('sha256'):
+                        self.record(job, directory / (stem + '.pl.srt'), kind, result['sha256'])
+                except (OSError, ValueError):
+                    pass
 
     def prune(self, keys: set[str]):
         with self.connect() as db:
