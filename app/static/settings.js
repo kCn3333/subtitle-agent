@@ -55,11 +55,10 @@ async function refreshAiConsole(){
       aiConsole.scrollTop=atBottom?aiConsole.scrollHeight:scrollTop;
       consoleSignature=signature;
     }
-    aiConsoleState.textContent=entries.length?'Ostatnie 100 wpisów · odświeżanie co 2 s.':'Brak komunikatów. Wykonaj test połączenia lub synchronizację.';
+    aiConsoleState.textContent='';
   }catch(error){aiConsoleState.textContent=`Nie udało się odczytać konsoli: ${error.message}`}
   finally{consoleBusy=false}
 }
-document.querySelector('#refresh-ai-console').addEventListener('click',refreshAiConsole);
 document.querySelector('#clear-ai-console').addEventListener('click',async()=>{
   consoleGeneration++;
   try{

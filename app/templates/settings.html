@@ -1,26 +1,26 @@
 <!doctype html>
 <html lang="pl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Ustawienia AI · {{ app_name }}</title><link rel="stylesheet" href="/static/styles.css"><link rel="stylesheet" href="/static/fontawesome/css/fontawesome.min.css"><link rel="stylesheet" href="/static/fontawesome/css/solid.min.css"></head>
+<title>Ustawienia AI · {{ app_name }}</title><link rel="stylesheet" href="/static/styles.css?v=gui-compact-2"><link rel="stylesheet" href="/static/fontawesome/css/fontawesome.min.css"><link rel="stylesheet" href="/static/fontawesome/css/solid.min.css"></head>
 <body><main>{% include 'header.html' %}
 <section class="card"><h2><i class="fa-solid fa-gear" aria-hidden="true"></i> Ustawienia AI</h2><form id="ai-settings">
-<p>Model działa niezależnie. Podaj adres API zgodnego z Chat Completions.</p>
-<label>Adres API <input id="api-url" type="url" required placeholder="http://serwer-modelu:8000/v1" maxlength="2048"></label>
+<div class="settings-fields">
+<label class="field-wide">Adres API <input id="api-url" type="url" required placeholder="http://serwer-modelu:8000/v1" maxlength="2048"></label>
 <label>Nazwa modelu <input id="model" required maxlength="200"></label>
-<label>Klucz API (opcjonalny) <input id="api-key" type="password" autocomplete="new-password" placeholder="Puste pole zachowuje zapisany klucz"></label>
-<p id="key-status"></p><label><input id="clear-key" type="checkbox"> Usuń zapisany klucz</label>
 <label>Timeout (sekundy) <input id="timeout" type="number" min="1" max="3600" required value="120"></label>
+<label class="field-wide">Klucz API (opcjonalny) <input id="api-key" type="password" autocomplete="new-password" placeholder="Puste pole zachowuje zapisany klucz"></label>
+<div class="field-wide key-options"><span id="key-status"></span><label><input id="clear-key" type="checkbox"> Usuń zapisany klucz</label></div>
 <label>Reasoning effort <span class="select-wrap"><select id="reasoning-effort">
   <option value="">domyślne modelu</option><option value="none">wyłączone</option>
 </select></span></label>
 <label>Format odpowiedzi <span class="select-wrap"><select id="response-format">
   <option value="">domyślne API</option><option value="json_object">JSON</option>
 </select></span></label>
-<div class="row"><button type="submit"><i class="fa-solid fa-floppy-disk" aria-hidden="true"></i> Zapisz</button><button type="button" id="test-api"><i class="fa-solid fa-plug" aria-hidden="true"></i> Zapisz i testuj połączenie</button></div>
+</div><div class="row form-actions"><button type="submit"><i class="fa-solid fa-floppy-disk" aria-hidden="true"></i> Zapisz</button><button type="button" id="test-api"><i class="fa-solid fa-plug" aria-hidden="true"></i> Zapisz i testuj połączenie</button></div>
 <p id="settings-status" role="status"></p>
 </form></section>
-<section class="console-card"><div class="console-head"><span>Konsola AI</span><div>
-  <button id="refresh-ai-console" type="button"><i class="fa-solid fa-rotate" aria-hidden="true"></i> Odśwież</button>
-  <button id="clear-ai-console" type="button"><i class="fa-solid fa-trash-can" aria-hidden="true"></i> Wyczyść historię</button></div></div>
-  <p id="ai-console-state" role="status"></p>
+<section class="console-card" aria-label="Konsola AI"><div class="console-head">
+  <button id="clear-ai-console" type="button"><i class="fa-solid fa-trash-can" aria-hidden="true"></i> Wyczyść</button>
+  <button type="button" data-copy-console="ai-console"><i class="fa-solid fa-copy" aria-hidden="true"></i> Kopiuj</button></div>
+  <p id="ai-console-state" class="sr-only" role="status"></p>
   <div id="ai-console" class="console" tabindex="0" aria-label="Historia komunikatów i odpowiedzi modelu"></div>
-</section><footer>kCn &amp; Codex 2026</footer></main><script src="/static/header.js"></script><script src="/static/settings.js?v=ai-json-format-1"></script></body></html>
+</section><footer>kCn &amp; Codex 2026</footer></main><script src="/static/header.js"></script><script src="/static/settings.js?v=gui-compact-2"></script><script src="/static/console-tools.js?v=gui-compact-2"></script></body></html>

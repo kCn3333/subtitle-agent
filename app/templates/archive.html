@@ -1,10 +1,10 @@
 <!doctype html>
 <html lang="pl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Archiwum · {{ app_name }}</title><link rel="stylesheet" href="/static/styles.css">
+<title>Archiwum · {{ app_name }}</title><link rel="stylesheet" href="/static/styles.css?v=gui-compact-2">
 <link rel="stylesheet" href="/static/fontawesome/css/fontawesome.min.css"><link rel="stylesheet" href="/static/fontawesome/css/solid.min.css"></head>
 <body><main>{% include 'header.html' %}
 <section class="card"><h2><i class="fa-solid fa-box-archive" aria-hidden="true"></i> Archiwum</h2>
 <p id="archive-status" role="status">Wczytywanie…</p>
-<div class="table-scroll"><table class="archive-table"><thead><tr><th scope="col">Data</th><th scope="col">Tytuł filmu / odcinka</th><th scope="col">Workpacki</th><th scope="col">Wygenerowane napisy</th></tr></thead><tbody id="archive-rows"></tbody></table></div>
+<div class="table-scroll"><table class="archive-table" aria-label="Ostatnio opracowywane filmy i odcinki"><thead><tr><th scope="col">Tytuł filmu / odcinka</th><th scope="col">Workpacki</th><th scope="col">Wygenerowane napisy</th></tr></thead><tbody id="archive-rows"></tbody></table></div>
 </section><footer>kCn &amp; Codex 2026</footer></main>
-<script src="/static/header.js"></script><script src="/static/archive.js"></script></body></html>
+<script src="/static/header.js"></script><script src="/static/archive.js?v=gui-compact-2"></script></body></html>
