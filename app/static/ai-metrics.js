@@ -18,3 +18,7 @@ function formatAiCostSummary(result){
   const cost=result.total_cost??result.usage?.cost;
   return hasAiCost(cost)?`Koszt całej operacji: ${aiCostText(cost,result.usage)}.`:'Koszt całej operacji: API nie podało kosztu.';
 }
+
+function formatAiOperationSummary(result,label){
+  return `PODSUMOWANIE OPERACJI · ${label}\n${formatAiMetrics(result)}\n${formatAiCostSummary(result)}`;
+}

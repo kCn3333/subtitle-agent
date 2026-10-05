@@ -475,7 +475,7 @@ def test_gui_exposes_only_three_polish_modes_and_config_is_v2(client):
     assert "Struktura OCR poprawna — tekst wymaga korekty językowej" in javascript
     assert "requestAnimationFrame" in javascript
     assert "data.progress" in javascript
-    assert "Pobieranie pliku" in javascript
+    assert "Pobieranie workpacka · Film:" in javascript
 
 
 @pytest.mark.parametrize("mode, count", [("PREPARE_TRANSLATION", 2), ("PREPARE_SYNC", 1)])

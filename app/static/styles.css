@@ -147,3 +147,9 @@ button:focus-visible, a:focus-visible, .console:focus-visible { outline: 3px sol
 }
 
 .console-card:focus-within { border-color: var(--blue); }
+.console .operation-summary, .console .SUMMARY {
+  margin: 12px 0; padding: 12px 14px; border: 1px solid #355b75; border-left: 4px solid var(--blue);
+  border-radius: 6px; background: #15283a; color: var(--text); line-height: 1.8;
+}
+.console .operation-summary.ERROR { border-left-color: var(--red); }
+.console .operation-summary.SUCCESS { border-left-color: var(--green); }

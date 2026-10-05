@@ -13,15 +13,16 @@ function setup(response){
   const get=selector=>{if(!elements.has(selector))elements.set(selector,element());return elements.get(selector)};
   get('#reference-source').value='embedded:4';
   const context={output:get('#console'),now:0,document:{querySelector:get,createElement:element},activeJobId:'job',form:get('#job-form'),
-    referenceSelect:get('#reference-source'),sourceId:item=>`embedded:${item.streamIndex}`,line(){},
+    referenceSelect:get('#reference-source'),sourceId:item=>`embedded:${item.streamIndex}`,logs:[],line(...args){context.logs.push(args)},
     fetch:(url,options)=>options?.method==='POST'?Promise.resolve(response):new Promise(()=>{})};
   context.Date={now:()=>context.now};
   context.setInterval=callback=>{context.timerCallback=callback;return 1};
   context.clearInterval=()=>{context.timerCallback=null};
   const script=readFileSync('app/static/ai-sync.js','utf8');
   runInNewContext(readFileSync('app/static/ai-metrics.js','utf8'),context);
+  runInNewContext(readFileSync('app/static/media-title.js','utf8'),context);
   runInNewContext(script,context);
-  context.renderAiSync({jobId:'job',status:'WORKPACK_READY',report:{pipeline:'PREPARE_SYNC',
+  context.renderAiSync({jobId:'job',status:'WORKPACK_READY',displayTitle:'Come and See (1985)',report:{pipeline:'PREPARE_SYNC',
     selectedEnglish:{streamIndex:4},polishCandidates:[{archiveName:'polish/a.srt',originalName:'A'},{archiveName:'polish/b.srt'}]}});
   return {context,get};
 }
@@ -35,12 +36,15 @@ test('changed EN requires rebuild and disables submission',()=>{
   assert.match(get('#ai-sync-status').textContent,/Najpierw zbuduj/);
 });
 test('successful response shows measured time and tokens',async()=>{
-  const {get}=setup({ok:true,json:async()=>({cue_count:2,elapsed_seconds:1.25,
+  const {get,context}=setup({ok:true,json:async()=>({cue_count:2,elapsed_seconds:1.25,
     inputs:[{name:'reference/en.srt'},{name:'polish/a.srt'}],usage:{total_tokens:42}})});
   await get('#ai-sync-button').handlers.click();
   assert.equal(get('#ai-download').hidden,false);
-  assert.match(get('#ai-sync-status').textContent,/1.25 s/);
-  assert.match(get('#ai-sync-status').textContent,/42/);
+  assert.doesNotMatch(get('#ai-sync-status').textContent,/Tokeny|Koszt|1.25 s/);
+  assert.match(context.logs.at(-1)[2],/1.25 s/);
+  assert.match(context.logs[0][2],/Synchronizacja przez AI · Film: Come and See \(1985\)/);
+  assert.match(context.logs.at(-1)[2],/42/);
+  assert.equal(context.logs.at(-1)[1],'AI_SYNC_SUMMARY');
   get('#ai-polish').handlers.change();
   assert.equal(get('#ai-download').hidden,true);
 });
@@ -87,7 +91,7 @@ test('translation handoff needs no PL and selects translation endpoint',async()=
   let request;
   context.fetch=(url,options)=>{request={url,options};return Promise.resolve({ok:true,json:async()=>({cue_count:1,elapsed_seconds:2,inputs:[{name:'en.srt'}],
     usage:{total_tokens:30,cost:0.00125,cost_currency:'USD'},total_cost:0.00125})})};
-  context.renderAiSync({jobId:'job',status:'WORKPACK_READY',report:{pipeline:'PREPARE_TRANSLATION',selectedEnglish:{streamIndex:4}}});
+  context.renderAiSync({jobId:'job',status:'WORKPACK_READY',displayTitle:'Come and See (1985)',report:{pipeline:'PREPARE_TRANSLATION',selectedEnglish:{streamIndex:4}}});
   assert.equal(get('#ai-polish-field').hidden,true);
   assert.equal(get('#ai-panel-title').textContent,'Tłumaczenie przez AI');
   assert.equal(get('#ai-sync-button').disabled,false);
@@ -95,7 +99,8 @@ test('translation handoff needs no PL and selects translation endpoint',async()=
   assert.equal(request.url,'/api/tasks/job/ai-translate');
   assert.deepEqual(JSON.parse(request.options.body),{reference_source_id:'embedded:4'});
   assert.equal(get('#ai-download').href,'/api/tasks/job/ai-translate/download');
-  assert.match(get('#ai-sync-status').textContent,/Koszt całej operacji: 0,00125 USD/);
+  assert.doesNotMatch(get('#ai-sync-status').textContent,/Koszt|Tokeny/);
+  assert.match(context.logs.at(-1)[2],/Koszt całej operacji: 0,00125 USD/);
 });
 test('zero cost is displayed and absent cost is not treated as free',()=>{
   const {context}=setup();
@@ -104,10 +109,11 @@ test('zero cost is displayed and absent cost is not treated as free',()=>{
   assert.match(context.aiCostText(1e-21,{cost_currency:'USD'}),/1e-21 USD/);
 });
 test('paid invalid response retains costs in the progress console message',async()=>{
-  const {get}=setup({ok:false,json:async()=>({detail:{message:'Niepełne tłumaczenie',elapsed_seconds:3,
+  const {get,context}=setup({ok:false,json:async()=>({detail:{message:'Niepełne tłumaczenie',elapsed_seconds:3,
     usage:{total_tokens:20,cost:0.0001,cost_currency:'USD'}}})});
   await get('#ai-sync-button').handlers.click();
   assert.match(get('#ai-sync-status').textContent,/Niepełne tłumaczenie/);
-  assert.match(get('#ai-sync-status').textContent,/Koszt całej operacji: 0,0001 USD/);
+  assert.doesNotMatch(get('#ai-sync-status').textContent,/Koszt|Tokeny/);
+  assert.match(context.logs.at(-1)[2],/Koszt całej operacji: 0,0001 USD/);
   assert.equal(get('#ai-download').hidden,true);
 });

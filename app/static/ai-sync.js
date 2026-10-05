@@ -1,7 +1,7 @@
 const aiPanel=document.querySelector('#ai-sync-panel'),polishSelect=document.querySelector('#ai-polish');
 const aiButtonLabel=document.querySelector('#ai-sync-button-label');
 const aiButton=document.querySelector('#ai-sync-button'),aiMessage=document.querySelector('#ai-sync-status'),aiDownload=document.querySelector('#ai-download');
-let aiPreparedReference=null,aiRunning=false,aiJobId=null,aiMode='sync',aiRequestMode='sync';
+let aiPreparedReference=null,aiRunning=false,aiJobId=null,aiMode='sync',aiRequestMode='sync',aiMediaTitle='Nieznany tytuł';
 function aiEndpoint(mode=aiMode){return mode==='translation'?'ai-translate':'ai-sync'}
 function aiHasInputs(){return aiMode==='translation'||polishSelect.options.length>0}
 function aiStage(mode=aiMode){return mode==='translation'?'AI_TRANSLATE':'AI_SYNC'}
@@ -28,7 +28,7 @@ function showAiResult(result,jobId,mode=aiMode){
   aiDownload.hidden=!result;
   if(result){
     aiDownload.href=`/api/tasks/${jobId}/${aiEndpoint(mode)}/download`;
-    aiMessage.textContent=`Gotowe: ${result.cue_count} kwestii. ${formatAiMetrics(result)}. ${formatAiCostSummary(result)}`;
+    aiMessage.textContent=`Gotowe: ${result.cue_count} kwestii. Wynik SRT jest dostępny do pobrania.`;
   }
 }
 function renderAiSync(job){
@@ -36,6 +36,7 @@ function renderAiSync(job){
   aiPanel.hidden=!(job.status==='WORKPACK_READY'&&['PREPARE_SYNC','PREPARE_TRANSLATION'].includes(report.pipeline)&&!report.externalReferenceConfirmationRequired&&!report.requiresOcr);
   aiButton.hidden=aiPanel.hidden;
   if(aiPanel.hidden)return;
+  aiMediaTitle=job.displayTitle||readableMediaTitle(report.media?.name||report.mediaInspection?.name||'');
   aiMode=report.pipeline==='PREPARE_TRANSLATION'?'translation':'sync';
   document.querySelector('#ai-panel-title').textContent=aiMode==='translation'?'Tłumaczenie przez AI':'Synchronizacja przez AI';
   document.querySelector('#ai-polish-field').hidden=aiMode==='translation';
@@ -59,11 +60,12 @@ polishSelect.addEventListener('change',()=>{aiDownload.hidden=true;aiMessage.tex
 form.addEventListener('submit',hideAiHandoff);
 document.querySelector('#rebuild').addEventListener('click',hideAiHandoff);
 aiButton.addEventListener('click',async()=>{
-  const jobId=aiJobId,mode=aiMode;
+  const jobId=aiJobId,mode=aiMode,title=aiMediaTitle;
+  const operation=mode==='translation'?'Tłumaczenie przez AI':'Synchronizacja przez AI';
   if(!jobId||aiRunning)return;
   aiRunning=true;aiButton.disabled=true;polishSelect.disabled=true;aiDownload.hidden=true;
   aiButtonLabel.textContent='AI pracuje…';
-  line('INFO',aiStage(mode),mode==='translation'?'Wysyłanie referencji EN do tłumaczenia na polski':'Wysyłanie referencji EN i istniejących napisów PL do skonfigurowanego API');
+  line('INFO',aiStage(mode),`${operation} · Film: ${title}`);
   aiRequestMode=mode;
   aiRequestJobId=jobId;aiStartedAt=Date.now();updateAiElapsed();aiTimer=setInterval(updateAiElapsed,1000);
   try{
@@ -74,11 +76,13 @@ aiButton.addEventListener('click',async()=>{
     const body=await response.json();
     stopAiElapsed();
     if(!response.ok){const error=new Error(body.detail?.message||'Operacja AI nie powiodła się');error.metrics=body.detail;throw error}
-    if(jobId===activeJobId){showAiResult(body,jobId,mode);line('SUCCESS',aiStage(mode),`Zapisano SRT. ${formatAiMetrics(body)}. ${formatAiCostSummary(body)}`)}
+    if(jobId===activeJobId){showAiResult(body,jobId,mode);line('SUCCESS',`${aiStage(mode)}_SUMMARY`,formatAiOperationSummary(body,`${operation} · Film: ${title}`))}
   }catch(error){if(jobId===activeJobId){
     const metrics=error.metrics;
-    const message=error.message+(metrics?.usage?` · ${formatAiMetrics(metrics)}. ${formatAiCostSummary(metrics)}`:'');
-    aiMessage.textContent=message;line('ERROR',aiStage(mode),message);
+    aiMessage.textContent=error.message;line('ERROR',aiStage(mode),error.message);
+    line('ERROR',`${aiStage(mode)}_SUMMARY`,formatAiOperationSummary(metrics||{},`${operation} · Film: ${title}`));
   }}
   finally{stopAiElapsed();aiRunning=false;polishSelect.disabled=false;aiButtonLabel.textContent='Przekaż do AI';aiButton.disabled=!aiHasInputs()||referenceSelect.value!==aiPreparedReference}
 });
+
+aiDownload.addEventListener('click',()=>line('INFO','DOWNLOAD',`Pobieranie wyniku AI · Film: ${aiMediaTitle}`));

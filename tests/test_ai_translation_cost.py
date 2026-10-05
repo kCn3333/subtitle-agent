@@ -125,7 +125,7 @@ async def test_cost_summaries_are_isolated_between_concurrent_jobs(tmp_path):
             record_metrics(1,{'cost':cost,'cost_currency':'USD'})
             await asyncio.sleep(0)
     await asyncio.gather(operation('job-A',0),operation('job-B',0.002))
-    summary={row['job_id']:row['message'] for row in store.read() if 'Podsumowanie' in row['message']}
+    summary={row['job_id']:row['message'] for row in store.read() if row['level'] == 'SUMMARY'}
     assert summary['job-A'].endswith('0 USD') and summary['job-B'].endswith('0.002 USD')
 
 
@@ -145,5 +145,5 @@ def test_sync_and_connection_test_preserve_zero_cost(client,prepared_job,monkeyp
     response=client.post(f'/api/tasks/{job}/ai-sync',json={'reference_source_id':'embedded:4','polish_file':'polish/original.pl.srt'})
     assert response.status_code==200 and response.json()['total_cost']==0
     entries=client.get('/api/settings/ai/console').json()['entries']
-    summaries=[row for row in entries if 'Podsumowanie' in row['message']]
+    summaries=[row for row in entries if row['level'] == 'SUMMARY']
     assert len(summaries)==2 and all(row['message'].endswith('0 USD') for row in summaries)

@@ -107,6 +107,7 @@ GET  /api/tasks/{job_id}              status i raport
 GET  /api/tasks/{job_id}/download     pobranie ZIP
 GET  /api/jobs/{job_id}/events        zdarzenia SSE
 GET  /api/workpacks/ocr-health        dostępność workera OCR
+GET  /api/settings/ai/health          łączność z zapisanym API AI
 GET  /health                          stan aplikacji i narzędzi CLI
 ```
 
@@ -130,3 +131,9 @@ Strona `/archive` pokazuje 30 ostatnich filmów/odcinków według daty utworzeni
 W `DATA_ROOT` (np. katalog hosta `/dane` zamontowany jako `/data`) baza, raporty, zdarzenia, pliki robocze i archiwalne obejmują ostatnie 30 tytułów. Po przekroczeniu limitu usuwane są dane starszych tytułów i nieużywane pliki archiwalne. Aktywne zadania i żądania AI kończą pracę przed usunięciem swoich danych. Porządkowanie działa przy starcie, tworzeniu i zakończeniu zadania oraz okresowo. Dotychczasowy limit 72 godzin nie obowiązuje; `WORKPACK_RETENTION_HOURS` pozostaje akceptowany dla zgodności ze starszą konfiguracją.
 
 Przy pierwszym starcie archiwum przejmuje dostępne workpacki i poprawne wyniki synchronizacji. Wcześniej usuniętych artefaktów nie odtwarza. Pliki archiwum znajdują się w `archive/`, z nazwami według SHA-256; źródłowa biblioteka mediów pozostaje tylko do odczytu. Font Awesome Free jest dostarczany lokalnie w `app/static/fontawesome/` razem z licencją.
+
+### Komunikaty i łączność AI
+
+Każda operacja zaczyna się w konsoli nazwą czynności i czytelnym tytułem filmu lub odcinka. Czas żądań, tokeny i koszt API są pokazywane w konsolach; wyróżnione podsumowanie obejmuje również niepoprawne odpowiedzi modelu. Panele wyników pokazują dostępność SRT bez kosztów i tokenów.
+
+Wskaźnik API obok OCR odświeża się co 30 sekund na podstawie zapisanych ustawień. Sprawdza odczytowy endpoint `/models`, a jeśli jest niedostępny — odpowiedź na `HEAD /chat/completions`, bez uruchamiania modelu. Zielony wskaźnik potwierdza odpowiedź serwera, nie możliwość wykonania synchronizacji. Przycisk testu połączenia sprawdza skonfigurowany model rzeczywistym żądaniem.

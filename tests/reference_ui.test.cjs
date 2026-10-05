@@ -18,7 +18,9 @@ function renderReport(report) {
     createElement: element,
   };
   const script = readFileSync('app/static/app.js', 'utf8').split('async function load(')[0];
-  runInNewContext(script + '\nrender({jobId:"test",report});', {document, report});
+  const context={document,report};
+  runInNewContext(readFileSync('app/static/media-title.js','utf8'),context);
+  runInNewContext(script + '\nrender({jobId:"test",report});', context);
   return elements;
 }
 

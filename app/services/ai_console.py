@@ -58,12 +58,12 @@ def format_metrics(elapsed, usage):
 def record_metrics(elapsed, usage):
     metrics = _metrics.get()
     if metrics is not None:
-        metrics.append(usage or {})
+        metrics.append({**(usage or {}), "elapsed_seconds": elapsed})
     emit('INFO', format_metrics(elapsed, usage))
 
 
 @contextmanager
-def capture(store, settings, operation, job_id=None):
+def capture(store, settings, operation, job_id=None, media_title=None):
     key = settings.api_key.get_secret_value() if settings.api_key else ""
 
     def sink(level, value):
@@ -81,7 +81,9 @@ def capture(store, settings, operation, job_id=None):
     metrics = []
     metrics_token = _metrics.set(metrics)
     try:
-        emit("INFO", f"Wysyłanie żądania · model: {settings.model} · timeout: {settings.timeout_seconds} s")
+        label = {"TEST":"Test połączenia API", "SYNC":"Synchronizacja przez AI", "TRANSLATE":"Tłumaczenie przez AI"}.get(operation, operation)
+        film = f" · Film: {media_title}" if media_title else ""
+        emit("INFO", f"{label}{film} · model: {settings.model} · timeout: {settings.timeout_seconds} s")
         yield
     except AiSyncError as exc:
         emit("ERROR", str(exc))
@@ -90,12 +92,18 @@ def capture(store, settings, operation, job_id=None):
         emit("SUCCESS", "Zakończono poprawnie")
     finally:
         costs = [Decimal(str(item['cost'])) for item in metrics if 'cost' in item]
+        totals = {name: str(sum(item[name] for item in metrics))
+                  if metrics and all(name in item for item in metrics) else '—'
+                  for name in ('prompt_tokens', 'completion_tokens', 'total_tokens')}
+        summary = (f"PODSUMOWANIE OPERACJI · {label}{film}\n"
+                   f"Czas żądań: {sum(item['elapsed_seconds'] for item in metrics):g} s\n"
+                   f"Tokeny: wejście {totals['prompt_tokens']} · wyjście {totals['completion_tokens']} · razem {totals['total_tokens']}\n")
         if costs:
             currencies = {item.get('cost_currency', '(jednostki API)') for item in metrics if 'cost' in item}
             currency = next(iter(currencies)) if len(currencies) == 1 else '(jednostki API)'
             label = 'Koszt całej operacji' if len(costs) == len(metrics) else 'Koszt zgłoszony przez API (niepełny)'
-            emit('INFO', f"Podsumowanie · {label}: {format(sum(costs, Decimal('0')), 'f')} {currency}")
+            emit('SUMMARY', summary + f"{label}: {format(sum(costs, Decimal('0')), 'f')} {currency}")
         else:
-            emit('INFO', 'Podsumowanie · koszt całej operacji: API nie podało kosztu')
+            emit('SUMMARY', summary + 'Koszt całej operacji: API nie podało kosztu')
         _metrics.reset(metrics_token)
         _sink.reset(token)

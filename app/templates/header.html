@@ -1,5 +1,5 @@
 <header class="app-header">
-  <div class="brand-row"><h1>{{ app_name }}</h1><div class="health-group"><span class="health">● ONLINE</span><span id="ocr-health" class="health health-checking">● OCR SPRAWDZANIE</span></div></div>
+  <div class="brand-row"><h1>{{ app_name }}</h1><div class="health-group"><span class="health">● ONLINE</span><span id="ocr-health" class="health health-checking">● OCR SPRAWDZANIE</span><span id="api-health" class="health health-checking" aria-live="polite">● API SPRAWDZANIE</span></div></div>
   <nav class="app-nav" aria-label="Nawigacja aplikacji">
     {% if request.url.path != '/' %}<a href="/" class="button"><i class="fa-solid fa-house" aria-hidden="true"></i> Aplikacja</a>{% endif %}
     <a href="/settings" class="button" {% if request.url.path == '/settings' %}aria-current="page"{% endif %}><i class="fa-solid fa-gear" aria-hidden="true"></i> Ustawienia AI</a>

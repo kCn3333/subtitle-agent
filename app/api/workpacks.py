@@ -37,21 +37,21 @@ async def ocr_health(request: Request) -> dict:
 @router.post("", status_code=status.HTTP_202_ACCEPTED)
 async def create_workpack(payload: PrepareWorkpackRequest, request: Request) -> dict:
     job = await request.app.state.jobs.create_workpack(payload.media_path, payload.task_type)
-    return {"jobId": job["id"], "status": job["status"], "jobType": "PREPARE_WORKPACK", "taskType": payload.task_type}
+    return {"jobId": job["id"], "displayTitle": job["display_title"], "status": job["status"], "jobType": "PREPARE_WORKPACK", "taskType": payload.task_type}
 
 
 @tasks_router.post("", status_code=status.HTTP_202_ACCEPTED)
 async def create_task(payload: CreateTaskRequest, request: Request) -> dict:
     task_type = WorkpackTaskType(payload.mode.value)
     job = await request.app.state.jobs.create_workpack(payload.media_path, task_type)
-    return {"jobId": job["id"], "status": job["status"], "jobType": "PREPARE_WORKPACK", "mode": payload.mode}
+    return {"jobId": job["id"], "displayTitle": job["display_title"], "status": job["status"], "jobType": "PREPARE_WORKPACK", "mode": payload.mode}
 
 
 @router.get("/{job_id}")
 async def report(job_id: str, request: Request) -> dict:
     job = request.app.state.jobs.get(job_id)
     if not job or job.get("job_type") != "PREPARE_WORKPACK": raise missing()
-    return {"jobId": job["id"], "status": job["status"], "progress": job["progress"],
+    return {"jobId": job["id"], "displayTitle": job["display_title"], "status": job["status"], "progress": job["progress"],
             "taskType": job.get("task_type"), "createdAt": job["created_at"], "finishedAt": job["finished_at"],
             "report": job.get("report"), "errorMessage": job.get("error_message")}
 

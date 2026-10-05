@@ -25,7 +25,8 @@ async function saveAiSettings(test){
     const key=document.querySelector('#api-key').value;
     if(document.querySelector('#clear-key').checked)payload.api_key='';else if(key)payload.api_key=key;
     displaySettings(await settingsRequest('/api/settings/ai',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}));
-    if(test){const result=await settingsRequest('/api/settings/ai/test',{method:'POST'});settingsStatus.textContent=`Połączenie poprawne. ${formatAiMetrics(result)}. ${formatAiCostSummary(result)}`}
+    if(typeof refreshHeaderHealth==='function')refreshHeaderHealth();
+    if(test){await settingsRequest('/api/settings/ai/test',{method:'POST'});settingsStatus.textContent='Połączenie poprawne.'}
     else settingsStatus.textContent='Ustawienia zapisane.';
   }catch(error){settingsStatus.textContent=error.message}finally{buttons.forEach(button=>button.disabled=false)}
 }
@@ -48,7 +49,7 @@ async function refreshAiConsole(){
       aiConsole.replaceChildren();
       for(const entry of entries){
         const node=document.createElement('div');
-        node.className=`entry ${['INFO','SUCCESS','ERROR'].includes(entry.level)?entry.level:'INFO'}`;
+        node.className=`entry ${['INFO','SUCCESS','ERROR','SUMMARY'].includes(entry.level)?entry.level:'INFO'}`;
         node.textContent=`[${new Date(entry.timestamp).toLocaleString('pl-PL')}] [${entry.operation}] [${entry.level}]${entry.job_id?` [${entry.job_id}]`:''}\n${entry.message}\n`;
         aiConsole.append(node);
       }

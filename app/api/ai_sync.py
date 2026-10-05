@@ -30,6 +30,11 @@ async def get_settings(request: Request):
     return request.app.state.ai_settings.get().public()
 
 
+@router.get("/api/settings/ai/health")
+async def api_health(request: Request):
+    return await request.app.state.ai_health.check(request.app.state.ai_settings.get())
+
+
 @router.put("/api/settings/ai")
 async def save_settings(payload: ApiSettings, request: Request):
     return request.app.state.ai_settings.save(payload).public()
@@ -157,7 +162,8 @@ async def process(job_id, payload, request, pipeline):
         request.app.state.jobs.artifact_users.add(job_id)
         elapsed, usage = None, None
         try:
-            with capture(request.app.state.ai_console, settings, "TRANSLATE" if translation else "SYNC", job_id):
+            with capture(request.app.state.ai_console, settings, "TRANSLATE" if translation else "SYNC", job_id,
+                         request.app.state.jobs.get(job_id)["display_title"]):
                 english = read_cues(english_path, "en")
                 data = {"duration_ms": duration, "english": segments(english)}
                 polish = read_cues(polish_path, "pl") if polish_path else None

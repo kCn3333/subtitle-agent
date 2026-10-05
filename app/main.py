@@ -11,6 +11,7 @@ from app.api.archive import router as archive_router
 from app.api.ai_sync import router as ai_sync_router
 from app.services.ai_sync import ApiSettingsStore
 from app.services.ai_console import AiConsoleStore
+from app.services.ai_health import ApiHealth
 from app.api.workpacks import router as workpacks_router, tasks_router
 from app.core.config import Settings, get_settings
 from app.services.job_manager import JobManager
@@ -42,6 +43,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title=config.app_name, lifespan=lifespan)
     app.state.settings = config
     app.state.ai_sync_locks = {}
+    app.state.ai_health = ApiHealth()
     app.mount("/static", StaticFiles(directory="app/static"), name="static")
     templates = Jinja2Templates(directory="app/templates")
 

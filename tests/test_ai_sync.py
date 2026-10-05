@@ -281,7 +281,7 @@ def test_ai_console_preserves_invalid_model_reply(client,prepared_job,monkeypatc
     response=client.post(f'/api/tasks/{job_id}/ai-sync',json={'polish_file':'polish/original.pl.srt','reference_source_id':'embedded:4'})
     assert response.status_code==502
     entries=client.get('/api/settings/ai/console').json()['entries']
-    assert [entry['level'] for entry in entries]==['INFO','INFO','RESPONSE','INFO','ERROR','INFO']
+    assert [entry['level'] for entry in entries]==['INFO','INFO','RESPONSE','INFO','ERROR','SUMMARY']
     assert all(entry['job_id']==job_id and entry['operation']=='SYNC' for entry in entries)
     assert reply in entries[2]['message'] and 'Model reasoning' in entries[2]['message']
     assert 'finish_reason' in entries[2]['message'] and '123' in entries[2]['message']

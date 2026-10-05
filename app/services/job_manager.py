@@ -19,6 +19,7 @@ from app.services.media_analysis import (
 from app.services.inspection_service import InspectionService
 from app.services.artifact_retention import remove_job_directory, remove_previous_archives
 from app.services.archive import ArchiveStore, ARCHIVE_LIMIT, title_key
+from app.services.media_title import display_title, operation_label
 from app.services.synchronization_pack_service import SynchronizationPackService
 from app.services.translation_pack_service import TranslationPackService
 from app.services.workpack_pipeline import PipelineRequirements, WorkpackPipelineService
@@ -203,7 +204,7 @@ class JobManager:
                 (id,media_path,status,progress,created_at,started_at,finished_at,error_message,resolved_media_path,report_json)
                 VALUES (?,?,?,?,?,?,?,?,?,?)""",
                 (job_id, media_path, JobStatus.QUEUED, 0, stamp, None, None, None, None, None))
-            self._insert_event(db, job_id, "INFO", JobStatus.QUEUED, "Zadanie zostało utworzone", 0)
+            self._insert_event(db, job_id, "INFO", JobStatus.QUEUED, f"Analiza napisów · Film: {display_title(media_path)}", 0)
         self.cleanup_expired_artifacts()
         self._conditions[job_id] = asyncio.Condition()
         await self._queue.put(job_id)
@@ -217,7 +218,7 @@ class JobManager:
                  report_json,job_type,task_type) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (job_id, media_path, JobStatus.QUEUED, 0, stamp, None, None, None, None, None,
                  "PREPARE_WORKPACK", task_type.value))
-            self._insert_event(db, job_id, "INFO", JobStatus.QUEUED, "Zadanie przygotowania workpacka zostało utworzone", 0)
+            self._insert_event(db, job_id, "INFO", JobStatus.QUEUED, f"{operation_label(task_type.value)} · Film: {display_title(media_path)}", 0)
         self.cleanup_expired_artifacts()
         self._conditions[job_id] = asyncio.Condition(); await self._queue.put(job_id)
         return self.get(job_id)
@@ -232,7 +233,7 @@ class JobManager:
         if reference_source_id not in {subtitle_source_id(item) for item in detected}:
             raise UserInputError("Wybrana referencja nie została wykryta w analizie")
         after = max((event.sequence for event in self.events(job_id)), default=0)
-        await self._emit(job_id, "INFO", JobStatus.QUEUED, "Zatwierdzono referencję; przygotowanie paczki", 0)
+        await self._emit(job_id, "INFO", JobStatus.QUEUED, f"Przebudowa workpacka · Film: {display_title(job['media_path'])}", 0)
         async def run() -> None:
             try:
                 task_type = WorkpackTaskType(job.get("task_type") or WorkpackTaskType.SYNC_AND_LANGUAGE_REVIEW)
@@ -256,6 +257,7 @@ class JobManager:
         if not row:
             return None
         result = dict(row)
+        result["display_title"] = display_title(result["media_path"])
         result["report"] = json.loads(result.pop("report_json")) if result.get("report_json") else None
         return result
 
