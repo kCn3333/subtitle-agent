@@ -1,3 +1,4 @@
+from app.services.subtitle_languages import reference_prefix, normalize_language
 import asyncio
 import json
 import sqlite3
@@ -14,7 +15,7 @@ from app.models.job import AlignmentMode, JobEvent, JobStatus, WorkpackTaskType
 from app.models.media import MediaIdentity
 from app.services.media_analysis import (
     UserInputError, discover_external_subtitles, discover_external_subtitles_with_rejections, extract_reference,
-    parse_media_identity, probe_media, rank_english, rank_polish, reference_source_id as subtitle_source_id, validate_media_path,
+    parse_media_identity, probe_media, rank_english, rank_references, rank_polish, reference_source_id as subtitle_source_id, validate_media_path,
 )
 from app.services.inspection_service import InspectionService
 from app.services.artifact_retention import remove_job_directory, remove_previous_archives
@@ -230,7 +231,7 @@ class JobManager:
             raise UserInputError("Nie znaleziono danych workpacka")
         if job["status"] not in TERMINAL:
             raise UserInputError("Zadanie jest nadal przetwarzane")
-        detected = job["report"].get("englishRanking") or []
+        detected = rank_references(job["report"]["media"].get("embeddedSubtitles", []), job["report"].get("externalSubtitles", []))
         if reference_source_id not in {subtitle_source_id(item) for item in detected}:
             raise UserInputError("Wybrana referencja nie została wykryta w analizie")
         after = max((event.sequence for event in self.events(job_id)), default=0)
@@ -571,7 +572,7 @@ class JobManager:
             media = cached["media"]; external = cached["externalSubtitles"]
             rejected_external = cached.get("rejectedSubtitleCandidates", [])
             ignored_external = cached.get("ignoredUnrelatedSubtitleFiles", 0)
-            english_ranking = cached["englishRanking"]
+            english_ranking = rank_references(media.get("embeddedSubtitles", []), external)
             polish_ranking = rank_polish(media, external, media.get("embeddedSubtitles", []))
             await self._emit(job_id, "INFO", JobStatus.PROBING_MEDIA,
                              "Użyto zapisanej analizy ffprobe; źródło nie było ponownie sondowane", 15)
@@ -583,7 +584,7 @@ class JobManager:
             external, rejected_external, ignored_external = await asyncio.to_thread(
                 discover_external_subtitles_with_rejections, media_path,
                 MediaIdentity.model_validate(media["identity"]))
-            english_ranking = rank_english(media["embeddedSubtitles"], external)
+            english_ranking = rank_references(media["embeddedSubtitles"], external)
             polish_ranking = rank_polish(media, external, media["embeddedSubtitles"])
         await self._emit(
             job_id, "DEBUG", JobStatus.PROBING_MEDIA,
@@ -596,10 +597,10 @@ class JobManager:
         await self._emit(
             job_id, "DEBUG", JobStatus.DISCOVERING_SUBTITLES,
             f"Źródła napisów: zewnętrzne={len(external)}, odrzucone={len(rejected_external)}, "
-            f"pominięte_inne_media={ignored_external}, kandydaci_EN={len(english_ranking)}, kandydaci_PL={len(polish_ranking)}",
+            f"pominięte_inne_media={ignored_external}, referencje={len(english_ranking)}, kandydaci_PL={len(polish_ranking)}",
             30,
         )
-        await self._emit(job_id, "INFO", JobStatus.SELECTING_REFERENCE, "Ranking angielskich źródeł referencyjnych", 32)
+        await self._emit(job_id, "INFO", JobStatus.SELECTING_REFERENCE, "Ranking źródeł referencyjnych", 32)
         selected = None
         if requested_reference:
             selected = next((item for item in english_ranking
@@ -608,13 +609,13 @@ class JobManager:
             eligible_english = [item for item in english_ranking if
                                 item.get("sourceType") == "embedded" and
                                 (item.get("type") == "text" or requirements.accept_graphic_reference)]
-            if eligible_english and eligible_english[0].get("score", 0) > 0:
-                selected = eligible_english[0]
+            selected = next((item for item in eligible_english if item.get("score", 0) > 0), None)
         external_confirmation = bool(not selected and not requested_reference and any(
             item.get("sourceType") == "external" for item in english_ranking))
         margin = self.settings.workpack_reference_score_margin
         ambiguous = bool(selected and not requested_reference and len(english_ranking) > 1 and
                          english_ranking[1].get("sourceType") == "embedded" and
+                         selected.get("language") == english_ranking[1].get("language") and
                          selected.get("score", 0) - english_ranking[1].get("score", 0) < margin)
         alternatives = []
         if ambiguous and self.settings.workpack_include_reference_alternatives:
@@ -623,10 +624,10 @@ class JobManager:
             await self._emit(job_id, "WARNING", JobStatus.REFERENCE_AMBIGUOUS,
                              f"Wybór niejednoznaczny: różnica jest mniejsza niż {margin} punktów", 36)
         warnings: list[str] = []
-        if ambiguous: warnings.append("Wybór angielskiej referencji jest niejednoznaczny")
+        if ambiguous: warnings.append("Wybór referencji jest niejednoznaczny")
         if not selected:
-            warnings.append("Wykryto zewnętrzne napisy EN. Czy użyć wybranego pliku jako wzorca? Wymagane potwierdzenie."
-                            if external_confirmation else "Nie znaleziono wiarygodnej angielskiej referencji")
+            warnings.append("Wykryto zewnętrzne napisy. Czy użyć wybranego pliku jako wzorca? Wymagane potwierdzenie."
+                            if external_confirmation else "Nie znaleziono wiarygodnej referencji")
             await self._emit(job_id, "WARNING", JobStatus.NO_ENGLISH_REFERENCE, warnings[-1], 40)
         else:
             await self._emit(
@@ -688,8 +689,8 @@ class JobManager:
                     "Możliwa inna wersja odcinka lub dodatkowy materiał w napisach."
                 )
         await self._emit(job_id, "INFO", JobStatus.BUILDING_TIMELINES, "Budowanie technicznych timeline'ów", 68)
-        selected_srt = next((path for path in reference_files if path.name == "selected.eng.srt"), None)
-        selected_idx = next((path for path in reference_files if path.name == "selected.eng.idx"), None)
+        selected_srt = next((path for path in reference_files if path.name == f"{reference_prefix(selected)}.srt"), None)
+        selected_idx = next((path for path in reference_files if path.name == f"{reference_prefix(selected)}.idx"), None)
         reference_timeline = timeline(selected_srt, "reference") if selected_srt else None
         graphic_reference_timeline = None
         legacy_pgs_timeline = None
@@ -732,17 +733,25 @@ class JobManager:
             )
             if requirements.graphic_reference_requires_ocr and self.settings.ocr_worker_url:
                 await self._emit(job_id, "INFO", JobStatus.OCR_RUNNING,
-                                 "Rozpoznawanie angielskiej referencji przez CPU OCR", 72)
+                                 "Rozpoznawanie referencji przez CPU OCR", 72)
                 try:
+                    ocr_language = normalize_language(selected.get("language"))
+                    ocr_options = {"language": ocr_language} if ocr_language != "eng" else {}
                     ocr_result = await recognize_reference(
                         reference_files, self.settings.ocr_worker_url, self.settings.ocr_timeout_seconds,
                         self.settings.ocr_max_output_bytes,
+                        **ocr_options,
                     )
-                    normalized_content, normalization = normalize_ocr_text(ocr_result.content)
+                    if ocr_language == "eng":
+                        normalized_content, normalization = normalize_ocr_text(ocr_result.content)
+                    else:
+                        normalized_content = ocr_result.content
+                        normalization = {"applied": False, "reason": "Język referencji inny niż angielski"}
                     ocr_result = replace(ocr_result, content=normalized_content)
-                    ocr_quality = quality_report(ocr_result.content, graphic_reference_timeline)
+                    ocr_quality = quality_report(ocr_result.content, graphic_reference_timeline,
+                                                 language=ocr_language)
                     ocr_quality["normalization"] = normalization
-                    selected_srt = job_dir / "reference" / "selected" / "selected.eng.ocr.srt"
+                    selected_srt = job_dir / "reference" / "selected" / f"{reference_prefix(selected)}.ocr.srt"
                     selected_srt.write_bytes(ocr_result.content)
                     reference_files.append(selected_srt)
                     reference_timeline = timeline(selected_srt, "ocr-reference")
@@ -821,7 +830,7 @@ class JobManager:
                          and selected.get("type") == "graphic" and reference_files and not ocr_result)
         if needs_ocr:
             warnings.append(
-                "Angielska referencja jest graficzna i przed dalszą pracą wymaga OCR."
+                "Referencja jest graficzna i przed dalszą pracą wymaga OCR."
             )
         ocr_source = ({key: selected.get(key) for key in
                        ("sourceType", "streamIndex", "codec", "title", "hearingImpaired")}
@@ -895,7 +904,7 @@ class JobManager:
         else:
             package_files = common_files | {"analysis/inspection-report.json", "analysis/timing-comparison.json"}
             package_files |= {path.relative_to(job_dir).as_posix() for path in reference_files
-                              if selected and (selected.get("type") == "graphic" or path.name == "selected.eng.srt")}
+                              if selected and (selected.get("type") == "graphic" or path.name == f"{reference_prefix(selected)}.srt")}
             package_files |= {item["archiveName"] for item in polish}
             if requirements.name == "PREPARE_SYNC" and (ocr_quality or ocr_error):
                 package_files.add("analysis/ocr-quality-report.json")
@@ -931,7 +940,7 @@ class JobManager:
         if requirements.require_english and (
             not selected or (requirements.name == "PREPARE_TRANSLATION" and not reference_files)
         ):
-            blocking_requirements.append("Brak wymaganej angielskiej referencji")
+            blocking_requirements.append("Brak wymaganej referencji")
         if requirements.require_polish and not polish:
             blocking_requirements.append(
                 "Znaleziony polski plik prawdopodobnie pochodzi z innej wersji lub produkcji. "
@@ -941,14 +950,15 @@ class JobManager:
         report = {"reportVersion": 2, "pipeline": requirements.name,
                   "jobType": "PREPARE_WORKPACK", "taskType": task_type.value, "media": media,
                   "mediaInspection": media_summary(media),
-                  "externalSubtitles": external, "englishRanking": english_ranking, "polishRanking": polish_ranking,
+                  "externalSubtitles": external, "referenceRanking": english_ranking,
+                  "englishRanking": [item for item in english_ranking if normalize_language(item.get("language")) == "eng"], "polishRanking": polish_ranking,
                   "embeddedSubtitleTracks": media.get("embeddedSubtitles", []),
                   "polishCandidateInspection": inspection["polishCandidates"],
                   "rejectedSubtitleCandidates": rejected_external,
                   "rejectedPolishCandidates": [item for item in rejected_external
                                                 if item.get("languageHint") in {"pl", "pol", "polish"}],
                   "ignoredUnrelatedSubtitleFiles": ignored_external,
-                  "selectedEnglish": selected, "referenceAlternatives": alternatives,
+                  "selectedReference": selected, "selectedEnglish": selected, "referenceAlternatives": alternatives,
                   "externalReferenceConfirmationRequired": external_confirmation,
                   "polishCandidates": polish,
                   "incompatiblePolishCandidates": inspection["incompatiblePolishCandidates"],

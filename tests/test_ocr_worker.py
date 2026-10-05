@@ -110,3 +110,28 @@ async def test_seconv_exit_one_is_an_error(tmp_path, monkeypatch):
     monkeypatch.setattr("ocr_worker.main.asyncio.create_subprocess_exec", create)
     with pytest.raises(RuntimeError, match="kodem 1"):
         await _run_ocr(tmp_path / "selected.eng.sup", tmp_path / "output", "eng")
+
+
+def test_worker_uses_french_ocr_for_neutral_reference(monkeypatch):
+    async def command(*args):
+        return 'List of available languages (2):\neng\nfra\n'
+    async def run(source, output, language):
+        assert source.name == 'selected.ref.sup' and language == 'fra'
+        return '1\n00:00:01,000 --> 00:00:02,000\nBonjour.\n'.encode(), ''
+    monkeypatch.setattr('ocr_worker.main._command', command)
+    monkeypatch.setattr('ocr_worker.main._run_ocr', run)
+    with TestClient(app) as client:
+        response = client.post('/v1/ocr', content=_archive({'selected.ref.sup': b'sup'}),
+                               headers={'Content-Type': 'application/zip', 'X-OCR-Language': 'fra'})
+    assert response.status_code == 200, response.text
+
+
+def test_worker_reports_missing_language_data(monkeypatch):
+    async def command(*args):
+        return 'List of available languages (1):\neng\n'
+    monkeypatch.setattr('ocr_worker.main._command', command)
+    with TestClient(app) as client:
+        response = client.post('/v1/ocr', content=_archive({'selected.ref.sup': b'sup'}),
+                               headers={'Content-Type': 'application/zip', 'X-OCR-Language': 'fra'})
+    assert response.status_code == 422
+    assert 'nie ma danych języka fra' in response.json()['detail']

@@ -12,10 +12,10 @@ async def archive(request: Request):
 
 
 @router.get('/files/{name}')
-async def download(name: str, request: Request):
+async def download(name: str, request: Request, filename: str | None = None):
     manager = request.app.state.jobs
     with manager._lock:
-        result = manager.archive.download(name)
+        result = manager.archive.download(name, filename)
     if result is None:
         raise HTTPException(404, detail='Nie znaleziono pliku w archiwum')
     path, filename = result

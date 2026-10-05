@@ -56,7 +56,7 @@ def _reference_archive(paths: list[Path]) -> bytes:
 
 
 async def recognize_reference(paths: list[Path], worker_url: str, timeout: float,
-                              maximum_output_bytes: int) -> OcrResult:
+                              maximum_output_bytes: int, language: str = "eng") -> OcrResult:
     if not paths:
         raise OcrWorkerError("Brak plików referencji do OCR")
     try:
@@ -64,7 +64,7 @@ async def recognize_reference(paths: list[Path], worker_url: str, timeout: float
             response = await client.post(
                 f"{worker_url.rstrip('/')}/v1/ocr",
                 content=_reference_archive(paths),
-                headers={"Content-Type": "application/zip", "X-OCR-Language": "eng"},
+                headers={"Content-Type": "application/zip", "X-OCR-Language": language},
             )
     except httpx.HTTPError as exc:
         raise OcrWorkerError(f"Worker OCR jest niedostępny: {type(exc).__name__}") from exc

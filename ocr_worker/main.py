@@ -3,6 +3,7 @@ import base64
 import io
 import json
 import os
+import re
 import shutil
 import tempfile
 import zipfile
@@ -17,7 +18,7 @@ SECONV = os.getenv("SECONV_BIN", "/opt/seconv/seconv")
 MAX_INPUT_BYTES = int(os.getenv("OCR_MAX_INPUT_BYTES", str(100 * 1024 * 1024)))
 MAX_OUTPUT_BYTES = int(os.getenv("OCR_MAX_OUTPUT_BYTES", str(20 * 1024 * 1024)))
 TIMEOUT_SECONDS = float(os.getenv("OCR_TIMEOUT_SECONDS", "900"))
-ALLOWED_INPUTS = {"selected.eng.idx", "selected.eng.sub", "selected.eng.sup"}
+ALLOWED_INPUTS = {f"selected.{prefix}.{extension}" for prefix in ("eng", "ref") for extension in ("idx", "sub", "sup")}
 
 
 def _timestamp_ms(value: str) -> int:
@@ -65,7 +66,11 @@ def _extract_input(payload: bytes, target: Path) -> Path:
             archive.extractall(target)
     except zipfile.BadZipFile as exc:
         raise ValueError("Wejście nie jest prawidłowym ZIP-em") from exc
-    sub, index, sup = target / "selected.eng.sub", target / "selected.eng.idx", target / "selected.eng.sup"
+    prefixes = {name.rsplit(".", 1)[0] for name in names}
+    if len(prefixes) != 1:
+        raise ValueError("Archiwum zawiera więcej niż jedną referencję")
+    prefix = prefixes.pop()
+    sub, index, sup = (target / f"{prefix}.{extension}" for extension in ("sub", "idx", "sup"))
     if sub.exists() or index.exists():
         if not sub.is_file() or not index.is_file() or not sub.stat().st_size or not index.stat().st_size:
             raise ValueError("Referencja VobSub wymaga kompletnej pary IDX/SUB")
@@ -156,8 +161,12 @@ async def ocr(request: Request) -> dict:
     if request.headers.get("content-type", "").split(";", 1)[0].lower() != "application/zip":
         raise HTTPException(415, "Wymagany jest application/zip")
     language = request.headers.get("x-ocr-language", "eng").lower()
+    if not re.fullmatch(r"[a-z]{3}(?:_[a-z]+)?", language):
+        raise HTTPException(422, "Nieprawidłowy język OCR")
     if language != "eng":
-        raise HTTPException(422, "Worker obsługuje wyłącznie angielskie referencje")
+        languages = await _command("tesseract", "--list-langs")
+        if language not in {line.strip() for line in languages.splitlines()[1:]}:
+            raise HTTPException(422, f"Worker OCR nie ma danych języka {language}")
     chunks: list[bytes] = []
     received = 0
     async for chunk in request.stream():

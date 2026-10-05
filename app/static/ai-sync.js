@@ -86,6 +86,7 @@ function showAiResult(result,jobId,mode=aiMode){
   aiDownload.hidden=!result;
   if(result){
     aiDownload.href=`/api/tasks/${jobId}/${aiEndpoint(mode)}/download`;
+    if(result.filename)aiDownload.download=result.filename;
     aiMessage.textContent=`Gotowe: ${result.cue_count} kwestii. Wynik SRT jest dostępny do pobrania.`;
   }
 }
@@ -98,7 +99,7 @@ function renderAiSync(job){
   aiMode=report.pipeline==='PREPARE_TRANSLATION'?'translation':'sync';
   document.querySelector('#ai-panel-title').textContent=aiMode==='translation'?'Tłumaczenie przez AI':'Synchronizacja przez AI';
   document.querySelector('#ai-polish-field').hidden=aiMode==='translation';
-  aiJobId=job.jobId;aiPreparedReference=sourceId(report.selectedEnglish);
+  aiJobId=job.jobId;aiPreparedReference=sourceId((report.selectedReference||report.selectedEnglish));
   polishSelect.replaceChildren();
   for(const item of report.polishCandidates||[]){
     if(!item.archiveName?.toLowerCase().endsWith('.srt'))continue;
@@ -110,7 +111,7 @@ function renderAiSync(job){
 }
 referenceSelect.addEventListener('change',()=>{
   aiControls();
-  if(referenceSelect.value!==aiPreparedReference){aiMessage.textContent='Najpierw zbuduj workpack z wybraną referencją EN.';aiDownload.hidden=true}
+  if(referenceSelect.value!==aiPreparedReference){aiMessage.textContent='Najpierw zbuduj workpack z wybraną referencją.';aiDownload.hidden=true}
 });
 polishSelect.addEventListener('change',()=>{aiDownload.hidden=true;aiMessage.textContent=''});
 form.addEventListener('submit',hideAiHandoff);

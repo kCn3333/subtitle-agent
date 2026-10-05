@@ -236,12 +236,12 @@ def diagnostic_hypotheses(reference_path: Path | None, polish: list[dict], job_d
 
 REQUESTS = {
     WorkpackTaskType.INSPECT: "Oceń wykryte napisy: wskaż pełne dialogi, komentarz, SDH, forced i ścieżki częściowe. Uzasadnij wybór najlepszego źródła.",
-    WorkpackTaskType.PREPARE_SYNC: "Dopasuj polskie napisy znajdujące się w katalogu polish/ do angielskiej referencji z reference/selected/. Angielskie napisy są poprawnie zsynchronizowane z filmem. Zachowaj polską treść.",
-    WorkpackTaskType.PREPARE_TRANSLATION: "Wykonaj kompletne profesjonalne tłumaczenie angielskich napisów na język polski, zachowując ich synchronizację.",
-    WorkpackTaskType.SYNC_ONLY: "Dopasuj polskie napisy znajdujące się w katalogu polish/ do angielskiej referencji z reference/selected/. Angielskie napisy są poprawnie zsynchronizowane z filmem. Zachowaj polską treść, o ile nie zawiera oczywistych błędów technicznych.",
+    WorkpackTaskType.PREPARE_SYNC: "Dopasuj polskie napisy znajdujące się w katalogu polish/ do referencji z reference/selected/. Napisy referencyjne są poprawnie zsynchronizowane z filmem. Zachowaj polską treść.",
+    WorkpackTaskType.PREPARE_TRANSLATION: "Wykonaj kompletne profesjonalne tłumaczenie napisów referencyjnych na język polski, zachowując ich synchronizację.",
+    WorkpackTaskType.SYNC_ONLY: "Dopasuj polskie napisy znajdujące się w katalogu polish/ do referencji z reference/selected/. Napisy referencyjne są poprawnie zsynchronizowane z filmem. Zachowaj polską treść, o ile nie zawiera oczywistych błędów technicznych.",
     WorkpackTaskType.LANGUAGE_REVIEW: "Popraw polskie napisy pod względem gramatycznym, stylistycznym, ortograficznym i interpunkcyjnym. Zachowaj dokładnie synchronizację wskazanego polskiego pliku bazowego.",
-    WorkpackTaskType.SYNC_AND_LANGUAGE_REVIEW: "Dopasuj polskie napisy do poprawnie zsynchronizowanej angielskiej referencji, a następnie wykonaj profesjonalną korektę językową. Zachowaj znaczenie dialogów, naturalny język polski i czytelność napisów.",
-    WorkpackTaskType.TRANSLATE_TO_POLISH: "Wykonaj kompletne profesjonalne tłumaczenie angielskich napisów na język polski, zachowując ich synchronizację.",
+    WorkpackTaskType.SYNC_AND_LANGUAGE_REVIEW: "Dopasuj polskie napisy do poprawnie zsynchronizowanej referencji, a następnie wykonaj profesjonalną korektę językową. Zachowaj znaczenie dialogów, naturalny język polski i czytelność napisów.",
+    WorkpackTaskType.TRANSLATE_TO_POLISH: "Wykonaj kompletne profesjonalne tłumaczenie napisów referencyjnych na język polski, zachowując ich synchronizację.",
     WorkpackTaskType.INSPECT_SUBTITLES: "Oceń wykryte napisy: wskaż pełne dialogi, komentarz, SDH, forced i ścieżki częściowe. Uzasadnij wybór najlepszego źródła.",
 }
 
@@ -259,23 +259,24 @@ def request_text(task: WorkpackTaskType, manifest: dict) -> str:
                 "Opisz ustalenia na podstawie plików analysis/ i manifest.json.\n\n"
                 f"## Ostrzeżenia\n{warnings}\n")
     reference = manifest.get("reference") or {}
+    prefix = "selected.eng" if reference.get("language", "eng") in {"eng", "en", "english"} else "selected.ref"
     if task == WorkpackTaskType.PREPARE_SYNC and reference.get("requiresOcr"):
         return (f"# Zadanie: {task.value}\n\n"
-                "Brak poprawnej angielskiej referencji tekstowej. Najpierw wykonaj OCR wybranej ścieżki "
+                "Brak poprawnej referencji tekstowej. Najpierw wykonaj OCR wybranej ścieżki "
                 "graficznej; nie synchronizuj na podstawie technicznych pakietów napisów. "
                 "Oryginały graficzne są dołączane tylko przy INCLUDE_GRAPHIC_REFERENCE=true.\n\n"
                 f"## Ostrzeżenia\n{warnings}\n")
     if task == WorkpackTaskType.PREPARE_SYNC and reference.get("ocr"):
         return (f"# Zadanie: {task.value}\n\n{REQUESTS[task]}\n\n"
-                "Użyj angielskiej referencji `reference/selected/selected.eng.ocr.srt`. "
+                f"Użyj referencji `reference/selected/{prefix}.ocr.srt`. "
                 "Uwzględnij raport `analysis/ocr-quality-report.json` i możliwe błędy rozpoznania tekstu. "
                 "Zachowaj polski tekst i skoryguj timing; techniczna oś pakietów graficznych nie jest wzorcem.\n\n"
                 f"Zapisz kompletny UTF-8 SRT jako `{manifest['expected_output']['filename']}`.\n\n"
                 f"## Polskie materiały\n{polish}\n\n## Ostrzeżenia\n{warnings}\n")
     if task == WorkpackTaskType.PREPARE_TRANSLATION and reference.get("ocr"):
         return (f"# Zadanie: {task.value}\n\n"
-                "Angielska referencja graficzna została rozpoznana lokalnie przez OCR i zapisana jako "
-                "`reference/selected/selected.eng.ocr.srt`. Sprawdź oraz popraw błędy OCR, a następnie "
+                "Referencja graficzna została rozpoznana lokalnie przez OCR i zapisana jako "
+                f"`reference/selected/{prefix}.ocr.srt`. Sprawdź oraz popraw błędy OCR, a następnie "
                 "wykonaj kompletne profesjonalne tłumaczenie na język polski. Zachowaj timestampy "
                 "rozpoznanej referencji.\n\n"
                 f"Zapisz wynik jako `{manifest['expected_output']['filename']}`.\n\n"
@@ -283,13 +284,13 @@ def request_text(task: WorkpackTaskType, manifest: dict) -> str:
     if task == WorkpackTaskType.PREPARE_TRANSLATION and reference.get("requiresOcr"):
         codec = reference.get("codec")
         if codec == "dvd_subtitle":
-            source_note = ("Angielska referencja jest zapisana jako graficzne napisy VobSub.\n"
-                           "Pliki selected.eng.idx i selected.eng.sub tworzą jedną nierozłączną parę.\n\n")
+            source_note = ("Referencja jest zapisana jako graficzne napisy VobSub.\n"
+                           f"Pliki {prefix}.idx i {prefix}.sub tworzą jedną nierozłączną parę.\n\n")
         else:
-            source_note = ("Angielska referencja jest zapisana jako graficzne napisy PGS.\n"
-                           "Plik selected.eng.sup zawiera obrazy napisów w kolejności ich występowania.\n\n")
+            source_note = ("Referencja jest zapisana jako graficzne napisy PGS.\n"
+                           f"Plik {prefix}.sup zawiera obrazy napisów w kolejności ich występowania.\n\n")
         return (f"# Zadanie: {task.value}\n\n{source_note}"
-                "Wykonaj OCR angielskich napisów w kolejności ich występowania, zweryfikuj błędy "
+                "Wykonaj OCR napisów referencyjnych w kolejności ich występowania, zweryfikuj błędy "
                 "rozpoznawania, a następnie przygotuj kompletne polskie tłumaczenie w formacie SRT.\n\n"
                 "Zachowaj synchronizację wynikającą z referencji graficznej. Nie tłumacz na podstawie "
                 "innych wersji serialu i nie używaj polskich napisów z remake'u HBO.\n\n"

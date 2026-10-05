@@ -6,6 +6,7 @@ import re
 import shutil
 import sqlite3
 from pathlib import Path
+from urllib.parse import urlencode
 
 from app.services.artifact_retention import validated_job_directory
 from app.services.ai_usage import UsageStore
@@ -31,11 +32,34 @@ class ArchiveStore:
                 title_key TEXT NOT NULL, sha256 TEXT NOT NULL, kind TEXT NOT NULL,
                 filename TEXT NOT NULL, suffix TEXT NOT NULL, created_at TEXT NOT NULL,
                 PRIMARY KEY(title_key,sha256,kind))''')
+            # Rename existing SRT metadata without changing content-addressed files.
+            for row in db.execute("SELECT * FROM archive_files WHERE kind IN ('synchronization','translation') ORDER BY created_at,sha256").fetchall():
+                name = self._result_filename(db, row['title_key'], row['kind'], row['sha256'])
+                db.execute('UPDATE archive_files SET filename=? WHERE title_key=? AND sha256=? AND kind=?',
+                           (name,row['title_key'],row['sha256'],row['kind']))
 
     def connect(self):
         db = sqlite3.connect(self.db_path, timeout=30)
         db.row_factory = sqlite3.Row
         return db
+
+    @staticmethod
+    def _result_filename(db, key, kind, digest):
+        label = 'AI-Translated' if kind == 'translation' else 'AI-Synced'
+        prefix = Path(key).stem + '.' + label + '-v'
+        pattern = re.compile(re.escape(prefix) + r'(\d{3,})\.pl\.srt')
+        version = 0
+        for row in db.execute('SELECT sha256,filename FROM archive_files WHERE title_key=? AND kind=?', (key,kind)):
+            match = pattern.fullmatch(row['filename'])
+            if match:
+                if row['sha256'] == digest:
+                    return row['filename']
+                version = max(version, int(match[1]))
+        return f'{prefix}{version+1:03d}.pl.srt'
+
+    def result_filename(self, job, kind, digest):
+        with self.connect() as db:
+            return self._result_filename(db, title_key(job), kind, digest)
 
     def record(self, job: dict, source: Path, kind: str, expected_sha: str | None = None):
         directory = validated_job_directory(self.jobs_root, self.jobs_root / job['id'])
@@ -48,11 +72,11 @@ class ArchiveStore:
             return
         if expected_sha and re.fullmatch(r'[a-f0-9]{64}', expected_sha):
             with self.connect() as db:
-                known = db.execute('SELECT 1 FROM archive_files WHERE title_key=? AND sha256=? AND kind=?',
+                known = db.execute('SELECT filename FROM archive_files WHERE title_key=? AND sha256=? AND kind=?',
                                    (title_key(job), expected_sha, kind)).fetchone()
             saved = self.root / (expected_sha + suffix)
             if known and saved.is_file() and not saved.is_symlink():
-                return
+                return known['filename']
         digest = hashlib.sha256(source.read_bytes()).hexdigest()
         if expected_sha and digest != expected_sha:
             return
@@ -69,8 +93,12 @@ class ArchiveStore:
                 raise ValueError('Artifact changed during archival')
             temporary.replace(target)
         with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            name = (self._result_filename(db, title_key(job), kind, digest)
+                    if kind in {'synchronization','translation'} else source.name)
             db.execute('INSERT OR IGNORE INTO archive_files VALUES (?,?,?,?,?,?)',
-                       (title_key(job), digest, kind, source.name, suffix, job['created_at']))
+                       (title_key(job), digest, kind, name, suffix, job['created_at']))
+        return name
 
     def capture(self, job: dict):
         report = job.get('report') or {}
@@ -121,18 +149,21 @@ class ArchiveStore:
                     continue
                 item = {k: file[k] for k in ('filename', 'sha256', 'kind')}
                 item['url'] = '/api/archive/files/' + file['sha256'] + file['suffix']
+                if file['suffix'] == '.srt':
+                    item['url'] += '?' + urlencode({'filename': file['filename']})
                 titles[file['title_key']]['workpacks' if file['kind'] == 'workpack' else 'subtitles'].append(item)
         usage = self.usage.totals()
         for key, title in titles.items():
             title["cost"] = usage.get(key)
         return list(titles.values())
 
-    def download(self, name: str):
+    def download(self, name: str, filename: str | None = None):
         if not re.fullmatch(r'[a-f0-9]{64}\.(zip|srt)', name):
             return None
         with self.connect() as db:
-            row = db.execute('SELECT filename FROM archive_files WHERE sha256=? AND suffix=? LIMIT 1',
-                             (name[:64], name[64:])).fetchone()
+            row = db.execute('''SELECT filename FROM archive_files WHERE sha256=? AND suffix=?
+                                AND (? IS NULL OR filename=?) LIMIT 1''',
+                             (name[:64], name[64:], filename, filename)).fetchone()
         path = self.root / name
         if row is None or not path.is_file() or path.is_symlink():
             return None

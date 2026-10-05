@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import FileResponse
 
 from app.models.job import CreateTaskRequest, PrepareWorkpackRequest, RebuildWorkpackRequest, WorkpackTaskType
-from app.services.media_analysis import UserInputError
+from app.services.media_analysis import UserInputError, rank_references
 from app.services.ocr_client import worker_available
 from app.services.workpack import sha256_file
 
@@ -51,9 +51,14 @@ async def create_task(payload: CreateTaskRequest, request: Request) -> dict:
 async def report(job_id: str, request: Request) -> dict:
     job = request.app.state.jobs.get(job_id)
     if not job or job.get("job_type") != "PREPARE_WORKPACK": raise missing()
+    report_data = job.get("report")
+    if report_data and "referenceRanking" not in report_data:
+        report_data = {**report_data, "referenceRanking": rank_references(
+            report_data.get("media", {}).get("embeddedSubtitles", []), report_data.get("externalSubtitles", [])),
+            "selectedReference": report_data.get("selectedEnglish")}
     return {"jobId": job["id"], "displayTitle": job["display_title"], "status": job["status"], "progress": job["progress"],
             "taskType": job.get("task_type"), "createdAt": job["created_at"], "finishedAt": job["finished_at"],
-            "report": job.get("report"), "errorMessage": job.get("error_message")}
+            "report": report_data, "errorMessage": job.get("error_message")}
 
 
 @tasks_router.get("/{job_id}")

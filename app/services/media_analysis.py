@@ -7,6 +7,7 @@ from app.models.media import MediaIdentity, MediaKind, MediaMatch
 from app.services.process_runner import run_process
 from app.services.subtitle_extraction import extract_subtitle
 from app.services.srt_parser import parse_srt
+from app.services.subtitle_languages import ALIASES, normalize_language
 
 SUPPORTED_MEDIA = {".mkv", ".mp4", ".m4v", ".avi", ".mov", ".ts", ".m2ts"}
 SUPPORTED_EXTERNAL = {".srt", ".ass", ".ssa", ".vtt"}
@@ -126,6 +127,9 @@ def _normalize_title(value: str) -> str:
 
 def parse_media_identity(filename: str, supplemental_values: list[str] | None = None) -> MediaIdentity:
     stem = Path(filename).stem
+    if Path(filename).suffix.casefold() in SUPPORTED_EXTERNAL:
+        language_tags = "|".join(re.escape(alias) for aliases in ALIASES.values() for alias in aliases)
+        stem = re.sub(rf"(?i)[._ -]+(?:{language_tags})(?:[._ -]+(?:sdh|cc|forced))*$", "", stem)
     year_match = YEAR.search(stem)
     if not year_match:
         year_match = next((match for value in supplemental_values or [] if (match := YEAR.search(value))), None)
@@ -193,8 +197,12 @@ def match_media_identity(media: MediaIdentity, candidate: MediaIdentity) -> Medi
 def _flags(name: str) -> dict:
     lowered = name.casefold()
     tokens = set(re.split(r"[. _\-\[\]()]+", lowered))
+    language_tags = "|".join(re.escape(alias) for aliases in ALIASES.values() for alias in aliases)
+    suffix = re.search(rf"[._ -]({language_tags})(?:[._ -]+(?:sdh|cc|forced))*$", Path(lowered).stem)
+    suffix_hint = next((aliases[0] for aliases in ALIASES.values() if suffix and suffix[1] in aliases), None)
     return {
-        "languageHint": "pl" if tokens & {"pl", "pol", "polish"} else "en" if tokens & {"en", "eng", "english"} else None,
+        "languageHint": suffix_hint or ("pl" if tokens & {"pl", "pol", "polish"}
+                                       else "en" if tokens & {"en", "eng", "english"} else None),
         "forced": "forced" in tokens, "sdh": "sdh" in tokens, "cc": "cc" in tokens,
         "commentary": "commentary" in tokens or "director" in tokens, "aiSync": "ai-sync" in lowered,
     }
@@ -262,11 +270,17 @@ def rank_english(embedded: list[dict], external: list[dict]) -> list[dict]:
         if language in {"en", "eng", "english"} and not item.get("aiSync"):
             candidates.append({**item, "sourceType": "external", "type": "text",
                                "language": "eng", "codec": item.get("format")})
+    return _rank_reference_candidates(candidates)
+
+
+def _rank_reference_candidates(candidates: list[dict]) -> list[dict]:
     ranked = []
     for item in candidates:
         score, reasons, text = 0, [], _penalty_text(item)
-        language = (item.get("language") or item.get("languageHint") or "").casefold()
-        if language in {"eng", "en", "english"}: score += 60; reasons.append("+60 język angielski")
+        language = normalize_language(item.get("language") or item.get("languageHint"))
+        if language not in {"und", "unknown", ""}:
+            score += 60
+            reasons.append("+60 język angielski" if language == "eng" else f"+60 język {language}")
         if "full dialogue" in text: score += 20; reasons.append("+20 pełne dialogi")
         if item.get("default"): score += 12; reasons.append("+12 ścieżka domyślna")
         # Prefer the embedded Blu-ray reference over a text conversion. This is
@@ -282,6 +296,22 @@ def rank_english(embedded: list[dict], external: list[dict]) -> list[dict]:
         if item.get("hearingImpaired"): score -= 18; reasons.append("-18 hearing impaired")
         ranked.append({**item, "score": score, "reasons": reasons})
     return sorted(ranked, key=lambda item: (item["sourceType"] != "embedded", -item["score"], str(item.get("name") or item.get("streamIndex"))))
+
+
+def rank_references(embedded: list[dict], external: list[dict]) -> list[dict]:
+    candidates = [{**item, "sourceType": "embedded"} for item in embedded
+                  if item.get("type") in {"text", "graphic"}]
+    candidates += [{**item, "sourceType": "external", "type": "text", "codec": item.get("format"),
+                    "language": item.get("languageHint") or (item.get("analysis") or {}).get("detected_language") or "und"}
+                   for item in external if not item.get("aiSync") and "ai-translated" not in item.get("name", "").casefold()]
+    ranked = []
+    for item in candidates:
+        language = normalize_language(item.get("language"))
+        if language in {"und", "unknown"} and "english" in _penalty_text(item):
+            language = "eng"
+        ranked.extend(_rank_reference_candidates([{**item, "language": language}]))
+    return sorted(ranked, key=lambda item: (item["sourceType"] != "embedded", item["language"] != "eng",
+                                          -item["score"], str(item.get("name") or item.get("streamIndex"))))
 
 
 def rank_polish(media: dict, external: list[dict], embedded: list[dict]) -> list[dict]:

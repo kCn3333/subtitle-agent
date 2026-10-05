@@ -52,3 +52,15 @@ test('single external reference still requires explicit confirmation', () => {
   assert.equal(ui.get('#reference-question').hidden, false);
   assert.equal(ui.get('#reference-source').options[0].value, 'external:movie.en.srt');
 });
+
+test('French reference is selectable alongside English and shown with its language', () => {
+  const french = {...srt, streamIndex: 7, language:'fra', title:'French'};
+  const ui = renderReport({jobType:'PREPARE_WORKPACK', referenceRanking:[pgs,french],
+    englishRanking:[pgs], selectedReference:french, workpack:{referenceAmbiguous:false}});
+  const options = ui.get('#reference-source').options;
+  assert.equal(options.length, 2);
+  assert.equal(options[1].value, 'embedded:7');
+  assert.equal(options[1].selected, true);
+  assert.match(options[1].textContent, /FRA · French/);
+  assert.match(ui.get('#result-content').innerHTML, /Wybrana referencja/);
+});

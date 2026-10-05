@@ -9,7 +9,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     XDG_CACHE_HOME=/tmp/.cache
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates curl libfontconfig1 libfreetype6 tesseract-ocr tesseract-ocr-eng \
+        ca-certificates curl libfontconfig1 libfreetype6 tesseract-ocr tesseract-ocr-eng tesseract-ocr-fra tesseract-ocr-deu \
+        tesseract-ocr-spa tesseract-ocr-ita tesseract-ocr-por tesseract-ocr-pol \
     && curl -fsSL -o /tmp/seconv.tar.gz \
         "https://github.com/SubtitleEdit/subtitleedit/releases/download/${SECONV_VERSION}/SeConv-Linux-x64.tar.gz" \
     && echo "${SECONV_SHA256}  /tmp/seconv.tar.gz" | sha256sum -c - \

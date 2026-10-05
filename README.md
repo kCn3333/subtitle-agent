@@ -7,9 +7,9 @@ Gotowy workpack do synchronizacji można przekazać do niezależnego modelu prze
 ## Co potrafi
 
 - sprawdza parametry materiału i dostępne ścieżki napisów;
-- wybiera wbudowaną angielską referencję; ranking preferuje PGS, uwzględniając kary za ścieżki częściowe, komentarze i SDH;
-- przy kilku źródłach EN pozwala ręcznie wybrać wzorzec i ponownie przygotować paczkę;
-- przy braku wbudowanej referencji proponuje zewnętrzne napisy EN i wymaga potwierdzenia użytkownika (język SRT rozpoznaje także z treści, bez oznaczenia w nazwie);
+- wybiera wbudowaną referencję (preferuje język angielski, a przy jego braku inne języki); ranking preferuje PGS, uwzględniając kary za ścieżki częściowe, komentarze i SDH;
+- przy kilku źródłach, także w innych językach, pozwala ręcznie wybrać wzorzec i ponownie przygotować paczkę;
+- przy braku wbudowanej referencji proponuje zewnętrzne napisy i wymaga potwierdzenia użytkownika (język SRT rozpoznaje także z treści, bez oznaczenia w nazwie);
 - wykrywa niezgodne polskie napisy i inne wersje materiału;
 - eksportuje napisy tekstowe, PGS oraz DVD/VobSub;
 - opcjonalnie wykonuje OCR napisów graficznych na CPU;
@@ -18,8 +18,8 @@ Gotowy workpack do synchronizacji można przekazać do niezależnego modelu prze
 Tryby w GUI:
 
 - **Sprawdź napisy** — raport bez ZIP-a;
-- **Przygotuj do synchronizacji** — wymaga zgodnej referencji EN i kandydata PL;
-- **Przygotuj do tłumaczenia** — wymaga referencji EN, ale nie napisów PL.
+- **Przygotuj do synchronizacji** — wymaga zgodnej referencji źródłowej i kandydata PL;
+- **Przygotuj do tłumaczenia** — wymaga referencji źródłowej, ale nie napisów PL.
 
 ## Uruchomienie w Portainerze
 
@@ -79,7 +79,7 @@ OCR może wymagać korekty językowej. Gdy worker jest niedostępny lub wynik je
 manifest.json          opis zadania i oczekiwanego wyniku
 REQUEST.md             instrukcja dla agenta AI
 checksums.sha256       sumy kontrolne
-reference/selected/    wybrana referencja angielska
+reference/selected/    wybrana referencja źródłowa
 polish/                zakwalifikowane napisy PL
 analysis/              raporty techniczne
 ```
@@ -143,3 +143,7 @@ Kolumna „Koszt AI” w archiwum sumuje tokeny i koszty USD wszystkich zapisany
 Stan pracy AI jest dostępny pod `/api/tasks/{job_id}/ai-status`. Strona główna odczytuje go co 2 sekundy, odtwarzając animowany wskaźnik w konsoli, fazę i czas oczekiwania również po powrocie z ustawień lub odświeżeniu strony. Podczas aktywnej operacji przycisk przekazania, wybór PL i zmiana referencji są zablokowane. Po zakończeniu GUI pokazuje wynik lub błąd i podsumowanie; przy utracie łączności blokuje wysyłanie do czasu potwierdzenia stanu serwera. Wskaźnik oznacza trwające żądanie, a nie procentowy postęp generowania modelu.
 
 Ustawienie reasoning oferuje domyślne zachowanie (pominięcie parametru), `none`, `minimal`, `low`, `medium`, `high`, `xhigh` i `max`. Nie każdy model obsługuje wszystkie poziomy; Gemini 3.8 Flash obsługuje `low`, `medium`, `high` i wymaga reasoning. Dla OpenRouter aplikacja wysyła `reasoning.effort`, a do innych endpointów `reasoning_effort`. Opcjonalny limit wyjścia wysyłany jest jako `max_tokens`; puste pole pomija parametr. Budżet obejmuje reasoning i finalny wynik, nie może przekroczyć limitu modelu lub dostawcy. Te ustawienia obowiązują w teście połączenia, synchronizacji i tłumaczeniu.
+
+Wyniki AI są pobierane jako `<nazwa pliku filmu bez rozszerzenia>.AI-Synced-v001.pl.srt` (synchronizacja) lub `.AI-Translated-v001.pl.srt` (tłumaczenie). Prefiks zachowuje nazwę materiału dla dopasowania napisów w Jellyfin. Każdy nowy wynik o innym SHA otrzymuje kolejną wersję w obrębie tytułu i trybu; identyczny wynik zachowuje dotychczasową nazwę. Numeracja obejmuje kolejne zadania i restarty. Pobieranie z archiwum używa tej samej nazwy; istniejące wpisy SRT otrzymują ją przy starcie aplikacji, bez zmiany treści plików.
+
+Referencją synchronizacji lub tłumaczenia mogą być także napisy francuskie i inne wykryte języki. Wybierz ścieżkę w polu „Wybierz wykrytą referencję” i użyj „Zbuduj ponownie z tą referencją”, a następnie „Przekaż do AI”. Napisy zewnętrzne wymagają potwierdzenia. Worker OCR zawiera dane eng, fra, deu, spa, ita, por i pol; brak danych wybranego języka daje czytelny błąd zamiast OCR po angielsku. Zmiana języków OCR wymaga przebudowania obrazu workera.

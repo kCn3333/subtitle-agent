@@ -1,14 +1,14 @@
 # Synchronizacja i tłumaczenie przez skonfigurowane API
 
-Aplikacja przygotowuje referencję EN i istniejące napisy PL, korzystając z dotychczasowej ekstrakcji i OCR. Wysyła jedno żądanie do niezależnego modelu, sprawdza odpowiedź i składa SRT z oryginalnym tekstem PL. Nie instaluje modeli, nie pobiera wag i nie zarządza CPU/GPU. Nie wymaga dodatkowej usługi w Compose.
+Aplikacja przygotowuje referencję źródłową i istniejące napisy PL, korzystając z dotychczasowej ekstrakcji i OCR. Wysyła jedno żądanie do niezależnego modelu, sprawdza odpowiedź i składa SRT z oryginalnym tekstem PL. Nie instaluje modeli, nie pobiera wag i nie zarządza CPU/GPU. Nie wymaga dodatkowej usługi w Compose.
 
 ## Ustawienia i pierwszy test
 
 1. Wdróż obraz aplikacji zawierający tę zmianę, zachowując obecny stack, wolumen danych i mounty mediów. Konfiguracja OCR pozostaje dotychczasowa.
 2. Otwórz **Ustawienia AI** (`/settings`). Podaj adres bazowy API, np. `http://serwer-modelu:8000/v1`, nazwę modelu, opcjonalny klucz i timeout. Możesz również podać pełny URL kończący się `/chat/completions`. Adres dotyczy połączenia z kontenera aplikacji; `localhost` oznacza ten kontener.
 3. Kliknij **Zapisz i testuj połączenie**. Test wykonuje małe żądanie Chat Completions do wybranego modelu i oczekuje `{"ok":true}`. Sprawdza uwierzytelnienie, model, odpowiedź i prostą instrukcję JSON; nie potwierdza jakości synchronizacji ani pojemności kontekstu dla całego filmu.
-4. Wróć na ekran główny, wybierz **Przygotuj do synchronizacji** i uruchom przygotowanie filmu/odcinka. Wybór referencji EN i potwierdzenie zewnętrznego EN działają jak dotychczas. PGS/VobSub najpierw przechodzi przez skonfigurowany OCR.
-5. Po przygotowaniu wybierz polski plik SRT i kliknij **Przekaż do AI**. Zmiana EN wymaga najpierw ponownego zbudowania workpacka. Aplikacja wyśle tekstowe segmenty EN i PL oraz czas trwania filmu do skonfigurowanego endpointu.
+4. Wróć na ekran główny, wybierz **Przygotuj do synchronizacji** i uruchom przygotowanie filmu/odcinka. Wybór referencji i potwierdzenie zewnętrznych napisów działają jak dotychczas. PGS/VobSub najpierw przechodzi przez skonfigurowany OCR.
+5. Po przygotowaniu wybierz polski plik SRT i kliknij **Przekaż do AI**. Zmiana referencji wymaga najpierw ponownego zbudowania workpacka. Aplikacja wyśle tekstowe segmenty referencji i PL oraz czas trwania filmu do skonfigurowanego endpointu.
 6. Pobierz wynik SRT. Ekran pokazuje czas żądania oraz tokeny, jeśli API je zwraca. Sprawdź synchronizację w kilku miejscach filmu. Walidacja sprawdza strukturę i przedziały, a nie trafność dopasowania dialogów.
 
 Przycisk „Przekaż do AI” znajduje się po prawej stronie panelu synchronizacji lub tłumaczenia, pod kartą statusu. W synchronizacji można wybrać PL. Po kliknięciu konsola pokazuje trwające żądanie i licznik czasu oczekiwania; API nie dostarcza procentowego postępu.
@@ -75,9 +75,9 @@ GET     /api/tasks/{job_id}/ai-sync/download
 POST synchronizacji wymaga `polish_file` (przygotowany `archiveName`) oraz `reference_source_id` (np. `embedded:4`). Równoległe żądanie dla tego samego zadania zwraca 409; podczas żądania nie można przebudować jego referencji. Po restarcie nie ponawiamy żądania automatycznie.
 
 
-## Tłumaczenie EN → PL
+## Tłumaczenie na PL
 
-Wybierz **Przygotuj do tłumaczenia**, poczekaj na gotowy workpack i kliknij **Przekaż do AI** w panelu **Tłumaczenie przez AI**. Nie są potrzebne istniejące PL. Referencja graficzna wymaga zakończonego OCR; zewnętrzna referencja EN nadal wymaga potwierdzenia. Aplikacja wysyła jedno żądanie z segmentami EN. Model zwraca `{"segments":[{"id":"en:1","text":"Polski tekst."}]}` — tekst dla każdego EN ID dokładnie raz, bez nowych czasów. Aplikacja zachowuje kolejność i czasy referencji EN, sprawdza kompletność ID i poprawność tekstu SRT. Walidacja nie ocenia jakości językowej tłumaczenia.
+Wybierz **Przygotuj do tłumaczenia**, poczekaj na gotowy workpack i kliknij **Przekaż do AI** w panelu **Tłumaczenie przez AI**. Nie są potrzebne istniejące PL. Referencja graficzna wymaga zakończonego OCR; zewnętrzna referencja źródłowa nadal wymaga potwierdzenia. Aplikacja wysyła jedno żądanie z segmentami referencji. Model zwraca `{"segments":[{"id":"ref:1","text":"Polski tekst."}]}` (starsze referencje EN używają ID `en:1`) — tekst dla każdego ID referencji dokładnie raz, bez nowych czasów. Aplikacja zachowuje kolejność i czasy referencji, sprawdza kompletność ID i poprawność tekstu SRT. Walidacja nie ocenia jakości językowej tłumaczenia.
 
 POST `/api/tasks/{job_id}/ai-translate` wymaga tylko `reference_source_id`. Poprawny wynik zapisuje się jako `ai-translation.pl.srt`; metryki i hashe znajdują się w `ai-translation.json`. Wynik można pobrać z panelu oraz z Archiwum, gdzie ma oznaczenie tłumaczenia. Zmiana wejścia unieważnia wynik w panelu; wcześniej zarchiwizowana wersja pozostaje dostępna w ramach retencji 30 tytułów.
 
@@ -88,3 +88,9 @@ Dla OpenRouter ustaw **Adres API** na `https://openrouter.ai/api/v1`, nazwę mod
 Aplikacja zachowuje numeryczne, nieujemne i skończone `usage.cost`, również zero. Obok czasu i tokenów konsola pokazuje koszt zgłoszony przez API, a na końcu podsumowanie kosztu całej operacji. Obecnie synchronizacja, tłumaczenie i test to osobne operacje po jednym żądaniu; wcześniejsze próby i test połączenia nie są doliczane do nowej próby. Koszt jest widoczny również przy odrzuceniu płatnej odpowiedzi (np. niepełnym JSON lub brakujących ID). Nie jest estymowany z cennika ani tokenów. Jeśli API nie podaje kosztu, podsumowanie wskazuje brak danych, a nie bezpłatną operację.
 
 OpenRouter podaje koszt obciążenia konta w USD. Dla innych endpointów, które zwracają `usage.cost`, aplikacja pokazuje wartość w jednostkach API bez zgadywania waluty. Nie wysyłamy dodatkowych pól ani żądań do pobrania kosztu: [OpenRouter Usage Accounting](https://openrouter.ai/docs/cookbook/administration/usage-accounting) zwraca go w standardowej odpowiedzi. Historia w ustawieniach obejmuje testy, synchronizację i tłumaczenie; podsumowanie kosztu jest zapisywane także w diagnostyce nieudanego żądania, jeśli koszt został odebrany.
+
+## Referencja w innym języku
+
+Możesz użyć francuskich lub innych wykrytych napisów zamiast angielskich, zarówno do synchronizacji istniejących PL, jak i tłumaczenia na PL. Wybierz je w polu **Wybierz wykrytą referencję**, kliknij **Zbuduj ponownie z tą referencją**, a po przygotowaniu **Przekaż do AI**. Napisy osadzone wybierane są automatycznie z preferencją EN; zewnętrzne wymagają potwierdzenia. Język wynika z metadanych ścieżki lub oznaczenia w nazwie, np. `Film.fr.srt`.
+
+Dla graficznej referencji OCR używa jej języka. Obraz workera zawiera dane angielskie, francuskie, niemieckie, hiszpańskie, włoskie, portugalskie i polskie. Starszy obraz workera wymaga aktualizacji. Brak danych języka blokuje OCR z czytelnym błędem.

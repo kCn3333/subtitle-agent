@@ -3,6 +3,7 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
+from app.services.subtitle_languages import reference_prefix
 from app.services.process_runner import ProcessExecutionError, run_process, safe_process_detail
 
 
@@ -48,7 +49,7 @@ async def extract_subtitle(reference: dict, media_path: Path, target: Path, time
             raise RuntimeError("Nieobsługiwany format zewnętrznej referencji")
         original = target / f"{basename}.original.{extension}"
         shutil.copyfile(source, original)
-        converted = target / f"{basename}.eng.srt"
+        converted = target / f"{reference_prefix(reference) if basename == 'selected' else basename}.srt"
         if extension == "srt":
             shutil.copyfile(original, converted)
         else:
@@ -59,7 +60,7 @@ async def extract_subtitle(reference: dict, media_path: Path, target: Path, time
         return SubtitleExtractionResult(outputs, [])
     index, codec = int(reference["streamIndex"]), reference.get("codec")
     subtitle_type = reference.get("type")
-    prefix = f"{basename}.eng" if basename == "selected" else basename
+    prefix = reference_prefix(reference) if basename == "selected" else basename
     warnings: list[str] = []
 
     if subtitle_type == "text":

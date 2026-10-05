@@ -76,7 +76,7 @@ def normalize_ocr_text(content: bytes) -> tuple[bytes, dict]:
 
 
 def quality_report(content: bytes, graphic_timeline: dict | None,
-                   dictionary: frozenset[str] | set[str] | None = None) -> dict:
+                   dictionary: frozenset[str] | set[str] | None = None, language: str = "eng") -> dict:
     try:
         text = content.decode("utf-8-sig", errors="strict")
     except UnicodeDecodeError as exc:
@@ -142,7 +142,7 @@ def quality_report(content: bytes, graphic_timeline: dict | None,
                           or (last_delta is not None and abs(last_delta) > 5_000))
     structural_quality = "POOR" if structural_poor else "WARNING" if structural_warning else "GOOD"
 
-    effective_dictionary = dictionary if dictionary is not None else _english_dictionary()
+    effective_dictionary = (dictionary if dictionary is not None else _english_dictionary()) if language == "eng" else None
     words = [match.group(0) for match in WORD.finditer(dialogue)]
     normalized_words = [word.casefold().replace("’", "'") for word in words]
     dictionary_words = [word for word in normalized_words if len(word) > 1 or word in {"a", "i"}]
@@ -157,7 +157,7 @@ def quality_report(content: bytes, graphic_timeline: dict | None,
         any(character.isupper() for character in word[1:]) and not word.isupper()
         for word in words
     )
-    missing_apostrophes = sum(word in MISSING_APOSTROPHE for word in normalized_words)
+    missing_apostrophes = sum(word in MISSING_APOSTROPHE for word in normalized_words) if language == "eng" else 0
     unknown_proper_names: list[str] = []
     if effective_dictionary is not None:
         for cue in cues:

@@ -76,7 +76,7 @@ def test_sync_requires_english_and_a_valid_polish_candidate(client, media_file):
     body = _wait(client, response.json()["jobId"])
     assert body["status"] == "WORKPACK_INCOMPLETE"
     assert set(body["report"]["incompleteReasons"]) == {
-        "Brak wymaganej angielskiej referencji", "Brak prawidłowo dopasowanego kandydata polskiego"}
+        "Brak wymaganej referencji", "Brak prawidłowo dopasowanego kandydata polskiego"}
 
 
 def test_sync_is_ready_with_english_and_matched_polish(client, media_file, monkeypatch):
@@ -402,7 +402,7 @@ def test_translation_without_english_reference_is_incomplete(client, media_file)
     body = _wait(client, response.json()["jobId"])
     assert body["status"] == "WORKPACK_INCOMPLETE"
     assert body["report"]["workpack"] is not None
-    assert body["report"]["incompleteReasons"] == ["Brak wymaganej angielskiej referencji"]
+    assert body["report"]["incompleteReasons"] == ["Brak wymaganej referencji"]
 
 
 def test_translation_incomplete_vobsub_pair_fails_without_zip(client, media_file, settings, monkeypatch):

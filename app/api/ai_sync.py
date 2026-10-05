@@ -169,17 +169,17 @@ async def execute(job_id, payload, request, pipeline):
     directory, report = prepared(request, job_id, pipeline)
     data = manifest(directory)
     reference = data.get("reference") or {}
-    selected = report.get("selectedEnglish") or {}
+    selected = report.get("selectedReference") or report.get("selectedEnglish") or {}
     selected_id = (f"external:{selected.get('name')}" if selected.get("sourceType") == "external"
                    else f"embedded:{selected.get('streamIndex')}")
     if payload.reference_source_id != selected_id:
-        raise error("Wybrano inne EN; najpierw zbuduj ponownie workpack z tą referencją")
+        raise error("Wybrano inną referencję; najpierw zbuduj ponownie workpack z tą referencją")
     english_entries = [entry for entry in reference.get("files", [])
-                       if Path(entry.get("name", "")).name in {"selected.eng.srt", "selected.eng.ocr.srt"}]
+                       if Path(entry.get("name", "")).name in {"selected.eng.srt", "selected.eng.ocr.srt", "selected.ref.srt", "selected.ref.ocr.srt"}]
     polish_entries = [entry for entry in data.get("polish_candidates", [])
                       if entry.get("archiveName") == payload.polish_file]
     if len(english_entries) != 1:
-        raise error("Brak przygotowanej tekstowej referencji EN; zakończ ekstrakcję/OCR")
+        raise error("Brak przygotowanej tekstowej referencji; zakończ ekstrakcję/OCR")
     if not translation and len(polish_entries) != 1:
         raise error("Wybierz przygotowany polski plik SRT")
     english_path = input_file(directory, english_entries[0], "name")
@@ -200,8 +200,10 @@ async def execute(job_id, payload, request, pipeline):
     try:
         with capture(request.app.state.ai_console, settings, "TRANSLATE" if translation else "SYNC", job_id,
                      request.app.state.jobs.get(job_id)["display_title"]):
-            english = read_cues(english_path, "en")
-            data = {"duration_ms": duration, "english": segments(english)}
+            language = reference.get("language") or selected.get("language") or "eng"
+            english = read_cues(english_path, "en" if language in {"eng", "en", "english"} else "ref")
+            data = {"duration_ms": duration, "reference_language": language,
+                    "english" if english[0].cue_id.startswith("en:") else "reference": segments(english)}
             polish = read_cues(polish_path, "pl") if polish_path else None
             if polish is not None:
                 data['polish'] = segments(polish)
@@ -219,10 +221,17 @@ async def execute(job_id, payload, request, pipeline):
             request.app.state.ai_operations[job_id]["phase"] = "Zapisywanie napisów SRT"
             target = directory / f"{stem}.pl.srt"
             write_preview(output, target)
+            output_digest = sha256(target)
+            with request.app.state.jobs._lock:
+                filename = request.app.state.jobs.archive.record(request.app.state.jobs.get(job_id), target,
+                    'translation' if translation else 'synchronization', output_digest)
+            if filename is None:
+                raise AiSyncError("Nie udało się zarchiwizować wyniku SRT")
             summary = {"model": settings.model, "elapsed_seconds": elapsed, "usage": usage,
                        "mode": "translation" if translation else "sync",
                        "total_cost": (usage or {}).get("cost"),
-                       "cue_count": len(output), "manifest_sha256": digest, "sha256": sha256(target),
+                       "cue_count": len(output), "manifest_sha256": digest, "sha256": output_digest,
+                       "filename": filename,
                        "inputs": [{"name": entry[name_key], "sha256": entry["sha256"]}
                                   for entry, name_key in inputs]}
             temporary = directory / f".{stem}.json.tmp"
@@ -241,31 +250,42 @@ async def execute(job_id, payload, request, pipeline):
 @router.get("/api/tasks/{job_id}/ai-sync")
 async def result(job_id: str, request: Request):
     directory, _ = prepared(request, job_id, "PREPARE_SYNC")
-    return {"result": saved_result(directory)}
+    return {"result": named_result(request, job_id, directory)}
+
+
+def named_result(request, job_id, directory, stem='ai-sync'):
+    result = saved_result(directory, stem)
+    if result and not result.get('filename'):
+        kind = 'translation' if stem == 'ai-translation' else 'synchronization'
+        result['filename'] = request.app.state.jobs.archive.result_filename(
+            request.app.state.jobs.get(job_id), kind, result['sha256'])
+    return result
 
 
 @router.get("/api/tasks/{job_id}/ai-sync/download")
 async def download(job_id: str, request: Request):
     directory, _ = prepared(request, job_id, "PREPARE_SYNC")
-    if not saved_result(directory):
+    result = named_result(request, job_id, directory)
+    if not result:
         raise error("Brak poprawnego wyniku synchronizacji", 404)
     return FileResponse(directory / "ai-sync.pl.srt", media_type="application/x-subrip",
-                        filename="AI-Synced.pl.srt")
+                        filename=result['filename'])
 
 
 @router.get("/api/tasks/{job_id}/ai-translate")
 async def translation_result(job_id: str, request: Request):
     directory, _ = prepared(request, job_id, "PREPARE_TRANSLATION")
-    return {"result": saved_result(directory, "ai-translation")}
+    return {"result": named_result(request, job_id, directory, "ai-translation")}
 
 
 @router.get("/api/tasks/{job_id}/ai-translate/download")
 async def translation_download(job_id: str, request: Request):
     directory, _ = prepared(request, job_id, "PREPARE_TRANSLATION")
-    if not saved_result(directory, "ai-translation"):
+    result = named_result(request, job_id, directory, "ai-translation")
+    if not result:
         raise error("Brak poprawnego wyniku tłumaczenia", 404)
     return FileResponse(directory / "ai-translation.pl.srt", media_type="application/x-subrip",
-                        filename="AI-Translated.pl.srt")
+                        filename=result['filename'])
 
 
 @router.get("/api/settings/ai/console")

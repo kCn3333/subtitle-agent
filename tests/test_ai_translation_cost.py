@@ -77,6 +77,7 @@ def test_translation_cost_console_download_archive_and_restoration(client,prepar
     assert response.json()['total_cost']==0.00123456
     assert response.json()['usage']['cost_currency']=='USD'
     assert response.json()['mode']=='translation'
+    assert response.json()['filename']=='unused.AI-Translated-v001.pl.srt'
     assert read_cues(directory/'ai-translation.pl.srt','pl')[0].raw_text=='Polskie tłumaczenie.'
     assert client.get(f'/api/tasks/{job}/ai-translate/download').status_code==200
     assert client.get(f'/api/tasks/{job}/ai-translate').json()['result']['usage']['cost']==0.00123456

@@ -37,12 +37,13 @@ test('changed EN requires rebuild and disables submission',async()=>{
   assert.match(get('#ai-sync-status').textContent,/Najpierw zbuduj/);
 });
 test('successful response shows measured time and tokens',async()=>{
-  const {get,context}=await setup({ok:true,json:async()=>({cue_count:2,elapsed_seconds:1.25,
+  const {get,context}=await setup({ok:true,json:async()=>({cue_count:2,elapsed_seconds:1.25,filename:'Film.AI-Synced-v001.pl.srt',
     inputs:[{name:'reference/en.srt'},{name:'polish/a.srt'}],usage:{total_tokens:42}})});
   await get('#ai-sync-button').handlers.click();
   assert.equal(get('#ai-download').hidden,false);
   assert.doesNotMatch(get('#ai-sync-status').textContent,/Tokeny|Koszt|1.25 s/);
   assert.match(context.logs.at(-1)[2],/1.25 s/);
+  assert.equal(get('#ai-download').download,'Film.AI-Synced-v001.pl.srt');
   assert.match(context.logs[0][2],/Synchronizacja przez AI · Film: Come and See \(1985\)/);
   assert.match(context.logs.at(-1)[2],/42/);
   assert.equal(context.logs.at(-1)[1],'AI_SYNC_SUMMARY');
