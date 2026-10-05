@@ -338,3 +338,24 @@ def test_rejects_invalid_output_limit(client,value):
 
 def test_rejects_unknown_reasoning_effort(client):
     assert client.put('/api/settings/ai',json={'reasoning_effort':'automatic'}).status_code==422
+
+
+@pytest.mark.parametrize('reply,accepted', [
+    ({'ok':True},True),
+    ({'ok':True,'message':'Connection successful!','status':'🟢 Online'},True),
+    ({'ok':False},False),
+    ({'ok':1},False),
+    ({'ok':'true'},False),
+    ({'status':'Online'},False),
+])
+def test_connection_accepts_extra_fields_but_requires_boolean_true(client,monkeypatch,reply,accepted):
+    async def fake(settings,instruction,data):
+        return reply,2.752,{'total_tokens':81,'cost':0.00001876,'cost_currency':'USD'}
+    monkeypatch.setattr('app.api.ai_sync.chat_request',fake)
+    response=client.post('/api/settings/ai/test')
+    assert response.status_code==(200 if accepted else 502)
+    body=response.json() if accepted else response.json()['detail']
+    assert body['elapsed_seconds']==2.752
+    assert body['usage']['cost']==0.00001876
+    if accepted:
+        assert body['ok'] is True

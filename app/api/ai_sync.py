@@ -49,8 +49,8 @@ async def test_connection(request: Request):
         with capture(request.app.state.ai_console, settings, "TEST"):
             result, elapsed, usage = await chat_request(settings,
                 'Return only this JSON object: {"ok":true}', {"test": "connection"})
-            if result != {"ok": True}:
-                raise AiSyncError("Model odpowiedział, ale nie zachował formatu testowego JSON")
+            if result.get("ok") is not True:
+                raise AiSyncError("Model odpowiedział, ale JSON testowy nie zawiera ok: true", elapsed, usage)
             return {"ok": True, "elapsed_seconds": elapsed, "usage": usage}
     except AiSyncError as exc:
         raise error(str(exc), 502, exc.elapsed_seconds, exc.usage) from exc
