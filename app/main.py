@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from app.api.jobs import router as jobs_router
+from app.api.archive import router as archive_router
 from app.api.ai_sync import router as ai_sync_router
 from app.services.ai_sync import ApiSettingsStore
 from app.services.ai_console import AiConsoleStore
@@ -64,6 +65,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def ai_settings(request: Request):
         return templates.TemplateResponse(request=request, name="settings.html", context={"app_name": config.app_name})
 
+    @app.get("/archive")
+    async def archive(request: Request):
+        return templates.TemplateResponse(request=request, name="archive.html", context={"app_name": config.app_name})
+
+    app.include_router(archive_router)
     app.include_router(jobs_router)
     app.include_router(workpacks_router)
     app.include_router(tasks_router)

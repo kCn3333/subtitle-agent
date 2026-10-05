@@ -4,7 +4,7 @@ import sqlite3
 import threading
 import uuid
 from contextlib import suppress
-from datetime import datetime, timedelta
+from datetime import datetime
 from dataclasses import replace
 from pathlib import Path
 from typing import AsyncIterator
@@ -18,6 +18,7 @@ from app.services.media_analysis import (
 )
 from app.services.inspection_service import InspectionService
 from app.services.artifact_retention import remove_job_directory, remove_previous_archives
+from app.services.archive import ArchiveStore, ARCHIVE_LIMIT, title_key
 from app.services.synchronization_pack_service import SynchronizationPackService
 from app.services.translation_pack_service import TranslationPackService
 from app.services.workpack_pipeline import PipelineRequirements, WorkpackPipelineService
@@ -89,6 +90,8 @@ class JobManager:
         self._maintenance_task: asyncio.Task[None] | None = None
         self._closed = False
         self._init_db()
+        self.archive = ArchiveStore(db_path, settings.data_root)
+        self.artifact_users: set[str] = set()
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.db_path, timeout=30)
@@ -162,36 +165,35 @@ class JobManager:
             await asyncio.to_thread(self.cleanup_expired_artifacts)
 
     def cleanup_expired_artifacts(self) -> int:
-        cutoff = now() - timedelta(hours=self.settings.workpack_retention_hours)
-        jobs_root = self.settings.data_root / "work" / "jobs"
-        if not jobs_root.exists() or jobs_root.is_symlink():
-            return 0
-        with self._lock, self._connect() as db:
-            rows = db.execute("""SELECT id,finished_at,report_json FROM jobs
-                               WHERE job_type='PREPARE_WORKPACK' AND finished_at IS NOT NULL""").fetchall()
-        removed = 0
-        for row in rows:
-            try:
-                finished = datetime.fromisoformat(row["finished_at"])
-            except (TypeError, ValueError):
-                continue
-            if finished.tzinfo is None:
-                finished = finished.astimezone()
-            if finished >= cutoff:
-                continue
-            report = json.loads(row["report_json"]) if row["report_json"] else {}
-            if not report.get("workpack"):
-                continue
-            job_dir = jobs_root / row["id"]
-            if job_dir.exists() and not remove_job_directory(jobs_root, job_dir):
-                continue
-            report["workpack"]["artifactExpired"] = True
-            report["workpack"]["path"] = None
-            with self._lock, self._connect() as db:
-                db.execute("UPDATE jobs SET report_json=? WHERE id=?",
-                           (json.dumps(report, ensure_ascii=False), row["id"]))
-            removed += 1
-        return removed
+        """Retain thirty distinct media paths, including all versions of each title."""
+        with self._lock:
+            jobs = self.list_jobs(limit=None)
+            keys = list(dict.fromkeys(title_key(job) for job in jobs))[:ARCHIVE_LIMIT]
+            retained = set(keys)
+            # Running work and AI requests must finish before their files can be removed.
+            retained.update(title_key(job) for job in jobs
+                            if job['status'] not in TERMINAL or job['id'] in self.artifact_users)
+            removed = 0
+            jobs_root = self.settings.data_root / 'work' / 'jobs'
+            for job in jobs:
+                if title_key(job) in retained:
+                    self.archive.capture(job)
+                    continue
+                directory = jobs_root / job['id']
+                if directory.exists() or directory.is_symlink():
+                    if not remove_job_directory(jobs_root, directory):
+                        continue
+                with self._connect() as db:
+                    db.execute('DELETE FROM events WHERE job_id=?', (job['id'],))
+                    db.execute('DELETE FROM publication_attempts WHERE job_id=?', (job['id'],))
+                    if db.execute("SELECT 1 FROM sqlite_master WHERE name='ai_console'").fetchone():
+                        db.execute('DELETE FROM ai_console WHERE job_id=?', (job['id'],))
+                    db.execute('DELETE FROM jobs WHERE id=?', (job['id'],))
+                self._conditions.pop(job['id'], None)
+                self._publish_locks.pop(job['id'], None)
+                removed += 1
+            self.archive.prune(retained)
+            return removed
 
     async def create(self, media_path: str) -> dict:
         job_id = str(uuid.uuid4())
@@ -202,6 +204,7 @@ class JobManager:
                 VALUES (?,?,?,?,?,?,?,?,?,?)""",
                 (job_id, media_path, JobStatus.QUEUED, 0, stamp, None, None, None, None, None))
             self._insert_event(db, job_id, "INFO", JobStatus.QUEUED, "Zadanie zostało utworzone", 0)
+        self.cleanup_expired_artifacts()
         self._conditions[job_id] = asyncio.Condition()
         await self._queue.put(job_id)
         return self.get(job_id)
@@ -215,6 +218,7 @@ class JobManager:
                 (job_id, media_path, JobStatus.QUEUED, 0, stamp, None, None, None, None, None,
                  "PREPARE_WORKPACK", task_type.value))
             self._insert_event(db, job_id, "INFO", JobStatus.QUEUED, "Zadanie przygotowania workpacka zostało utworzone", 0)
+        self.cleanup_expired_artifacts()
         self._conditions[job_id] = asyncio.Condition(); await self._queue.put(job_id)
         return self.get(job_id)
 
@@ -241,6 +245,8 @@ class JobManager:
                 message = f"Ponowne budowanie workpacka nie powiodło się ({type(exc).__name__})"
                 with self._lock, self._connect() as db: db.execute("UPDATE jobs SET error_message=? WHERE id=?", (message, job_id))
                 await self._emit(job_id, "ERROR", JobStatus.FAILED, message, 100)
+            finally:
+                await asyncio.to_thread(self.cleanup_expired_artifacts)
         asyncio.create_task(run())
         return after
 
@@ -253,9 +259,9 @@ class JobManager:
         result["report"] = json.loads(result.pop("report_json")) if result.get("report_json") else None
         return result
 
-    def list_jobs(self, limit: int = 100) -> list[dict]:
+    def list_jobs(self, limit: int | None = 100) -> list[dict]:
         with self._lock, self._connect() as db:
-            rows = db.execute("SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?", (min(max(limit, 1), 500),)).fetchall()
+            rows = db.execute("SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?", (-1 if limit is None else min(max(limit, 1), 500),)).fetchall()
         results = []
         for row in rows:
             item = dict(row)
@@ -290,9 +296,11 @@ class JobManager:
             condition.notify_all()
 
     def _save_report(self, job_id: str, report: dict, resolved_path: str) -> None:
-        with self._lock, self._connect() as db:
-            db.execute("UPDATE jobs SET report_json=?, resolved_media_path=? WHERE id=?",
-                       (json.dumps(report, ensure_ascii=False), resolved_path, job_id))
+        with self._lock:
+            with self._connect() as db:
+                db.execute("UPDATE jobs SET report_json=?, resolved_media_path=? WHERE id=?",
+                           (json.dumps(report, ensure_ascii=False), resolved_path, job_id))
+            self.archive.capture(self.get(job_id))
 
     def _audit_publication(self, job_id: str, mode: str, result: str, quality: str | None,
                            automatic: bool, details: dict | None = None, error: str | None = None) -> None:
@@ -897,6 +905,8 @@ class JobManager:
         version = 0
         omitted_files: list[str] = []
         if requirements.name != "INSPECT":
+            with self._lock:
+                self.archive.capture(self.get(job_id))
             await asyncio.to_thread(remove_previous_archives, self.settings.data_root / "work" / "jobs", job_dir)
             await self._emit(job_id, "INFO", JobStatus.BUILDING_WORKPACK, "Pakowanie ZIP i obliczanie SHA-256", 90)
             archive, version, archive_hash, omitted_files = await asyncio.to_thread(

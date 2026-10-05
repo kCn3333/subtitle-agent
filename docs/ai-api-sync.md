@@ -55,7 +55,7 @@ Czas to okres od rozpoczęcia wysyłania pojedynczego żądania do odebrania ca�
 
 Wszystkie napisy trafiają do jednego żądania. Model musi mieć wystarczający kontekst i limit wyjścia dla kompletnego wyniku. Przekroczenie tych limitów daje błąd API albo odrzucenie niepełnej odpowiedzi. Nie dodano automatycznego dzielenia filmu. Timeout w ustawieniach ogranicza całe oczekiwanie (1–3600 s); jeśli przed aplikacją działa proxy, jego limit musi pozwalać na takie oczekiwanie. Przerwanie oczekiwania nie gwarantuje zatrzymania pracy po stronie niezależnego serwera.
 
-Błędy HTTP pokazują status bez treści odpowiedzi dostawcy. Odpowiedź ma limit 8 MiB. Redirecty nie są śledzone. Niepoprawna odpowiedź nie tworzy częściowego SRT; nowa próba usuwa poprzedni wynik zadania. Wynik zapisuje się w katalogu zadania i podlega dotychczasowej retencji workpacków.
+Błędy HTTP pokazują status bez treści odpowiedzi dostawcy. Odpowiedź ma limit 8 MiB. Redirecty nie są śledzone. Niepoprawna odpowiedź nie tworzy częściowego SRT; nowa próba usuwa poprzedni wynik zadania. Wynik zapisuje się w katalogu zadania i jest kopiowany do archiwum ostatnich 30 tytułów.
 
 Poprawny test połączenia potwierdza tylko małe żądanie testowe. Jeśli pełna synchronizacja nie zwróci JSON, komunikat rozróżnia pustą treść, tekst zamiast JSON, niepoprawny JSON oraz błędny format odpowiedzi HTTP. Podaje też czas żądania i dla błędnego JSON pozycję błędu oraz długość treści, bez ujawniania odpowiedzi modelu. Przyczynę sprawdź w odpowiedzi serwera modelu: `choices[0].message.content` i `finish_reason`. Bez tego nie można odróżnić ograniczeń modelu od niezgodnego formatu generowanej odpowiedzi.
 

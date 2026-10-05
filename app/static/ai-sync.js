@@ -1,4 +1,5 @@
 const aiPanel=document.querySelector('#ai-sync-panel'),polishSelect=document.querySelector('#ai-polish');
+const aiButtonLabel=document.querySelector('#ai-sync-button-label');
 const aiButton=document.querySelector('#ai-sync-button'),aiMessage=document.querySelector('#ai-sync-status'),aiDownload=document.querySelector('#ai-download');
 let aiPreparedReference=null,aiRunning=false,aiJobId=null;
 let aiStartedAt=null,aiTimer=null,aiRequestJobId=null;
@@ -39,7 +40,7 @@ function renderAiSync(job){
     const option=document.createElement('option');option.value=item.archiveName;option.textContent=item.originalName||item.archiveName;polishSelect.append(option);
   }
   aiButton.disabled=aiRunning||!polishSelect.options.length||referenceSelect.value!==aiPreparedReference;
-  aiMessage.textContent=aiRunning?(aiRequestJobId===job.jobId?'AI przetwarza żądanie…':'Poczekaj na zakończenie żądania AI poprzedniego zadania.'):'Workpack gotowy. Wybierz PL i kliknij „Przekaż do AI”.';aiDownload.hidden=true;
+  aiMessage.textContent=aiRunning?(aiRequestJobId===job.jobId?'AI przetwarza żądanie…':'Poczekaj na zakończenie żądania AI poprzedniego zadania.'):'';aiDownload.hidden=true;
   fetch(`/api/tasks/${job.jobId}/ai-sync`).then(response=>response.ok?response.json():null)
     .then(body=>{if(!aiRunning)showAiResult(body?.result,job.jobId)}).catch(()=>{});
 }
@@ -54,7 +55,7 @@ aiButton.addEventListener('click',async()=>{
   const jobId=aiJobId;
   if(!jobId||aiRunning)return;
   aiRunning=true;aiButton.disabled=true;polishSelect.disabled=true;aiDownload.hidden=true;
-  aiButton.textContent='AI pracuje…';
+  aiButtonLabel.textContent='AI pracuje…';
   line('INFO','AI_SYNC','Wysyłanie referencji EN i istniejących napisów PL do skonfigurowanego API');
   aiRequestJobId=jobId;aiStartedAt=Date.now();updateAiElapsed();aiTimer=setInterval(updateAiElapsed,1000);
   try{
@@ -65,5 +66,5 @@ aiButton.addEventListener('click',async()=>{
     if(!response.ok)throw new Error(body.detail?.message||'Synchronizacja AI nie powiodła się');
     if(jobId===activeJobId){showAiResult(body,jobId);line('SUCCESS','AI_SYNC',`Zapisano SRT. Czas żądania: ${body.elapsed_seconds} s.`)}
   }catch(error){if(jobId===activeJobId){aiMessage.textContent=error.message;line('ERROR','AI_SYNC',error.message)}}
-  finally{stopAiElapsed();aiRunning=false;polishSelect.disabled=false;aiButton.textContent='Przekaż do AI';aiButton.disabled=!polishSelect.options.length||referenceSelect.value!==aiPreparedReference}
+  finally{stopAiElapsed();aiRunning=false;polishSelect.disabled=false;aiButtonLabel.textContent='Przekaż do AI';aiButton.disabled=!polishSelect.options.length||referenceSelect.value!==aiPreparedReference}
 });

@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>{{ app_name }}</title><link rel="stylesheet" href="/static/styles.css">
-</head>
+<link rel="stylesheet" href="/static/fontawesome/css/fontawesome.min.css"><link rel="stylesheet" href="/static/fontawesome/css/solid.min.css"></head>
 <body data-app-mode="{{ app_mode }}"><main>
-  <header><h1>{{ app_name }}</h1><div class="health-group"><a href="/settings" class="button">Ustawienia AI</a><span class="health">● ONLINE</span><span id="ocr-health" class="health health-checking">● OCR SPRAWDZANIE</span></div></header>
+  {% include 'header.html' %}
   <section class="card"><form id="job-form">
     <label for="media-path">Pełna ścieżka do filmu lub odcinka</label>
     <div class="row"><input id="media-path" required placeholder="/media/shows/Example/Season 1/example.mkv">
@@ -14,27 +14,26 @@
           <option value="PREPARE_SYNC">Przygotuj do synchronizacji</option>
           <option value="PREPARE_TRANSLATION">Przygotuj do tłumaczenia</option>
         </select></span>
-      <button>Uruchom</button></div></form></section>
+      <button><i class="fa-solid fa-play" aria-hidden="true"></i> Uruchom</button></div></form></section>
   <section class="status card" aria-labelledby="job-status-title">
     <div class="status-content">
       <div class="status-head"><div><span id="job-status-title">Status zadania</span><strong id="status">BRAK ZADANIA</strong></div><strong id="progress">0%</strong></div>
       <div class="progress-track" role="progressbar" aria-label="Postęp zadania" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="progress-bar"></span></div>
       <div class="current"><span>Aktualnie</span><strong id="current-activity">Oczekiwanie</strong></div>
     </div>
-    <div class="status-actions"><a id="download" class="button download-button" aria-disabled="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 5-5m-5 5-5-5M5 19h14"/></svg><span id="download-label">Pobierz pakiet ZIP</span></a>
-      <button id="ai-sync-button" type="button" hidden disabled>Przekaż do AI</button></div>
+    <div class="status-actions"><a id="download" class="button download-button" aria-disabled="true"><i class="fa-solid fa-file-zipper" aria-hidden="true"></i><span id="download-label">Pobierz pakiet ZIP</span></a></div>
   </section>
-  <section id="ai-sync-panel" class="card" hidden><h2>Synchronizacja przez AI</h2>
+  <section id="ai-sync-panel" class="card" hidden><h2><i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i> Synchronizacja przez AI</h2>
     <label>Istniejące napisy PL <span class="select-wrap"><select id="ai-polish"></select></span></label>
-    <p id="ai-sync-status" role="status"></p><a id="ai-download" class="button" hidden>Pobierz wynik SRT</a>
-    <p>Wybierz PL i kliknij „Przekaż do AI” powyżej. AI zwraca czasy; tekst PL pozostaje oryginalny.</p>
+    <div class="row ai-actions"><button id="ai-sync-button" type="button" hidden disabled><i class="fa-solid fa-paper-plane" aria-hidden="true"></i> <span id="ai-sync-button-label">Przekaż do AI</span></button><a id="ai-download" class="button" hidden><i class="fa-solid fa-download" aria-hidden="true"></i> Pobierz wynik SRT</a></div>
+    <p id="ai-sync-status" role="status"></p>
   </section>
-  <section class="console-card"><div class="console-head"><span>Konsola postępu</span><button id="clear" type="button">Wyczyść widok konsoli</button></div>
+  <section class="console-card"><div class="console-head"><span>Konsola postępu</span><button id="clear" type="button"><i class="fa-solid fa-eraser" aria-hidden="true"></i> Wyczyść widok konsoli</button></div>
     <div id="console" class="console" aria-live="polite"></div></section>
   <section id="results" class="card results" hidden><h2>Wynik analizy</h2><div id="result-content"></div>
     <div id="reference-choice" hidden><p id="reference-question" hidden>Brak wbudowanej referencji EN. Czy użyć wybranych zewnętrznych napisów angielskich jako wzorca?</p><label>Wybierz wykrytą referencję<span class="select-wrap"><select id="reference-source"></select></span></label>
-      <button id="rebuild" type="button">Zbuduj ponownie z tą referencją</button></div>
+      <button id="rebuild" type="button"><i class="fa-solid fa-rotate" aria-hidden="true"></i> Zbuduj ponownie z tą referencją</button></div>
     <p class="safe-note">Film i biblioteka mediów pozostają tylko do odczytu. Paczka powstaje wyłącznie w /data.</p></section>
   {% if app_mode == "ADVANCED" %}<section class="card"><h2>Tryb ADVANCED</h2><p>Historyczne endpointy analizy, semantyki i publikacji są aktywne. Podstawowy ekran nadal tworzy workpack.</p></section>{% endif %}
   <footer>kCn &amp; Codex 2026</footer>
-</main><script src="/static/app.js?v=ai-handoff-2"></script><script src="/static/ai-sync.js?v=ai-handoff-2"></script></body></html>
+</main><script src="/static/app.js?v=archive-1"></script><script src="/static/ai-sync.js?v=archive-1"></script></body></html>

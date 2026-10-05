@@ -15,7 +15,11 @@ def test_index_is_html(client):
     assert 'id="download"' in response.text
     assert 'id="download-label"' in response.text
     assert 'aria-disabled="true"' in response.text
-    assert '<svg viewBox="0 0 24 24"' in response.text
+    assert 'fa-solid fa-file-zipper' in response.text
+    assert 'fontawesome.min.css' in response.text
+    assert 'href="/archive"' in response.text
+    assert response.text.index('id="ai-sync-panel"') < response.text.index('id="ai-sync-button"')
+    assert 'powyżej. AI zwraca czasy' not in response.text
     assert 'id="ocr-health"' in response.text
     assert 'id="ai-sync-button"' in response.text
     assert "Przekaż do AI" in response.text

@@ -303,7 +303,7 @@ def test_download_rejects_recorded_path_outside_job(client, settings):
     assert client.get(f'/api/workpacks/{job_id}/download').status_code == 404
 
 
-def test_expired_artifact_returns_410_and_report_remains(client, settings):
+def test_old_artifact_remains_available_with_count_retention(client, settings):
     manager = client.app.state.jobs
     job_id = str(uuid.uuid4())
     job_dir = settings.data_root / "work" / "jobs" / job_id
@@ -317,28 +317,20 @@ def test_expired_artifact_returns_410_and_report_remains(client, settings):
                     VALUES (?,?,?,?,?,?,?,?,?)""", (job_id, "/media/x.mkv", "WORKPACK_READY", 100, finished,
                     finished, json.dumps(report), "PREPARE_WORKPACK", "PREPARE_SYNC"))
     response = client.get(f"/api/workpacks/{job_id}/download")
-    assert response.status_code == 410 and response.json()["detail"]["code"] == "ARTIFACT_EXPIRED"
+    assert response.status_code == 200
     assert client.get(f"/api/workpacks/{job_id}").status_code == 200
 
 
-def test_cleanup_removes_only_expired_uuid_directories_and_refuses_symlinks(tmp_path):
+def test_cleanup_keeps_old_titles_and_refuses_symlinks(tmp_path):
     from app.services.job_manager import JobManager
     root = tmp_path / "data"; root.mkdir()
     settings = Settings(data_root=root, media_roots=[tmp_path], workpack_retention_hours=1)
     manager = JobManager(root / "subtitle-agent.db", settings)
     jobs_root = root / "work" / "jobs"; jobs_root.mkdir(parents=True)
-    expired_id = str(uuid.uuid4()); expired_dir = jobs_root / expired_id; expired_dir.mkdir(); (expired_dir / "pack.zip").write_bytes(b"x")
-    unsafe_id = str(uuid.uuid4()); unsafe_dir = jobs_root / unsafe_id; unsafe_dir.mkdir(); (unsafe_dir / "link").symlink_to(tmp_path)
-    finished = (datetime.now().astimezone() - timedelta(hours=2)).isoformat()
-    with manager._lock, manager._connect() as db:
-        for job_id, directory in ((expired_id, expired_dir), (unsafe_id, unsafe_dir)):
-            report = {"workpack": {"path": str(directory / "pack.zip"), "filename": "pack.zip", "sha256": "x"}}
-            db.execute("""INSERT INTO jobs (id,media_path,status,progress,created_at,finished_at,report_json,job_type,task_type)
-                        VALUES (?,?,?,?,?,?,?,?,?)""", (job_id, "/media/x", "WORKPACK_READY", 100, finished,
-                        finished, json.dumps(report), "PREPARE_WORKPACK", "PREPARE_SYNC"))
-    assert manager.cleanup_expired_artifacts() == 1
-    assert not expired_dir.exists() and unsafe_dir.exists()
+    unsafe_dir = jobs_root / str(uuid.uuid4()); unsafe_dir.mkdir()
+    (unsafe_dir / "link").symlink_to(tmp_path)
     assert remove_job_directory(jobs_root, unsafe_dir) is False
+
 
 
 def test_compose_has_no_openai_publish_or_rw_mount():

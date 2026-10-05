@@ -48,7 +48,7 @@ Worker OCR nie potrzebuje portu hostowego ani dostępu do `/media` i `/data`. Ot
 | `OCR_WORKER_URL` | brak | Np. `http://subtitle-ocr-worker:8090` |
 | `OCR_TIMEOUT_SECONDS` | `900` | Limit czasu OCR |
 | `WORKPACK_MAX_ARCHIVE_BYTES` | `104857600` | Maksymalny rozmiar ZIP |
-| `WORKPACK_RETENTION_HOURS` | `72` | Czas dostępności ZIP-a |
+| `WORKPACK_CLEANUP_INTERVAL_HOURS` | `6` | Okresowe porządkowanie danych (także przy starcie i tworzeniu zadania) |
 
 Pełny zestaw bezpiecznych wartości znajduje się w `.env.example` i `compose.example.yml`.
 
@@ -122,3 +122,11 @@ pytest -q
 node --test tests/*.test.cjs
 docker build --target test -t subtitle-agent:test .
 ```
+
+### Archiwum i retencja
+
+Strona `/archive` pokazuje 30 ostatnich filmów/odcinków według daty utworzenia zadania. Tytuł identyfikuje ścieżka materiału; kolejne zadania tego samego pliku zajmują jeden wiersz. Workpacki są deduplikowane według SHA-256, a poprawne wyniki SRT pozostają dostępne również po ponownym uruchomieniu synchronizacji. Tabela rozróżnia synchronizację i tłumaczenie; paczka do tłumaczenia sama nie jest wygenerowanym SRT.
+
+W `DATA_ROOT` (np. katalog hosta `/dane` zamontowany jako `/data`) baza, raporty, zdarzenia, pliki robocze i archiwalne obejmują ostatnie 30 tytułów. Po przekroczeniu limitu usuwane są dane starszych tytułów i nieużywane pliki archiwalne. Aktywne zadania i żądania AI kończą pracę przed usunięciem swoich danych. Porządkowanie działa przy starcie, tworzeniu i zakończeniu zadania oraz okresowo. Dotychczasowy limit 72 godzin nie obowiązuje; `WORKPACK_RETENTION_HOURS` pozostaje akceptowany dla zgodności ze starszą konfiguracją.
+
+Przy pierwszym starcie archiwum przejmuje dostępne workpacki i poprawne wyniki synchronizacji. Wcześniej usuniętych artefaktów nie odtwarza. Pliki archiwum znajdują się w `archive/`, z nazwami według SHA-256; źródłowa biblioteka mediów pozostaje tylko do odczytu. Font Awesome Free jest dostarczany lokalnie w `app/static/fontawesome/` razem z licencją.

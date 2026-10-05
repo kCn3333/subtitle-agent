@@ -63,7 +63,7 @@ test('only clicking handoff starts console timer, which stops on completion',asy
   assert.equal(context.timerCallback,undefined);
   assert.equal(get('#console').options.length,0);
   const operation=get('#ai-sync-button').handlers.click();
-  assert.equal(get('#ai-sync-button').textContent,'AI pracuje…');
+  assert.equal(get('#ai-sync-button-label').textContent,'AI pracuje…');
   context.now=65000;context.timerCallback();
   assert.match(get('#console').options[0].textContent,/1 min 05 s/);
   assert.match(get('#ai-sync-status').textContent,/65 s/);
@@ -77,5 +77,5 @@ test('only clicking handoff starts console timer, which stops on completion',asy
   await operation;
   assert.equal(context.timerCallback,null);
   assert.equal(get('#console').options.length,0);
-  assert.equal(get('#ai-sync-button').textContent,'Przekaż do AI');
+  assert.equal(get('#ai-sync-button-label').textContent,'Przekaż do AI');
 });

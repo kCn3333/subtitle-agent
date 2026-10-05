@@ -131,6 +131,7 @@ async def synchronize(job_id: str, payload: SyncRequest, request: Request):
         for name in ("ai-sync.json", "ai-sync.pl.srt"):
             (directory / name).unlink(missing_ok=True)
         settings = request.app.state.ai_settings.get()
+        request.app.state.jobs.artifact_users.add(job_id)
         try:
             with capture(request.app.state.ai_console, settings, "SYNC", job_id):
                 english, polish = read_cues(english_path, "en"), read_cues(polish_path, "pl")
@@ -152,9 +153,14 @@ async def synchronize(job_id: str, payload: SyncRequest, request: Request):
                 temporary = directory / ".ai-sync.json.tmp"
                 temporary.write_text(json.dumps(summary, ensure_ascii=False), encoding="utf-8")
                 temporary.replace(directory / "ai-sync.json")
+                with request.app.state.jobs._lock:
+                    request.app.state.jobs.archive.capture(request.app.state.jobs.get(job_id))
                 return summary
         except AiSyncError as exc:
             raise error(str(exc), 502) from exc
+        finally:
+            request.app.state.jobs.artifact_users.discard(job_id)
+            request.app.state.jobs.cleanup_expired_artifacts()
 
 
 @router.get("/api/tasks/{job_id}/ai-sync")
