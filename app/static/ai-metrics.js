@@ -4,13 +4,13 @@ function aiCostText(cost,usage){
   return `${amount} ${usage?.cost_currency||'(jednostki API)'}`;
 }
 function hasAiCost(cost){return typeof cost==='number'&&Number.isFinite(cost)&&cost>=0}
-function formatAiMetrics(result){
+function formatAiMetrics(result,includeCost=true){
   const parts=[];
   if(typeof result.elapsed_seconds==='number')parts.push(`Czas żądania: ${result.elapsed_seconds} s`);
   const usage=result.usage;
   if(usage){
     parts.push(`Tokeny: wejście ${usage.prompt_tokens??'—'}, wyjście ${usage.completion_tokens??'—'}, razem ${usage.total_tokens??'—'}`);
-    if(hasAiCost(usage.cost))parts.push(`Koszt żądania: ${aiCostText(usage.cost,usage)}`);
+    if(includeCost&&hasAiCost(usage.cost))parts.push(`Koszt żądania: ${aiCostText(usage.cost,usage)}`);
   }
   return parts.join(' · ');
 }
@@ -20,5 +20,6 @@ function formatAiCostSummary(result){
 }
 
 function formatAiOperationSummary(result,label){
-  return `PODSUMOWANIE OPERACJI · ${label}\n${formatAiMetrics(result)}\n${formatAiCostSummary(result)}`;
+  const ready=Number.isInteger(result.cue_count)?`\nWygenerowano gotowy plik SRT (${result.cue_count} kwestii). Pobierz przyciskiem „Pobierz wynik SRT”.`:'';
+  return `PODSUMOWANIE OPERACJI · ${label}\n${formatAiMetrics(result,false)}\n${formatAiCostSummary(result)}${ready}`;
 }

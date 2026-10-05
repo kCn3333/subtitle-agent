@@ -16,9 +16,9 @@ function updateAiElapsed(){
   if(aiStartedAt===null)return;
   if(aiRequestJobId!==activeJobId){aiActivity.remove();return}
   const elapsed=Math.max(0,Math.floor((Date.now()-aiStartedAt)/1000));
-  aiActivityText.textContent=`[${aiStage(aiRequestMode)}] ${aiPhase} · Film: ${aiMediaTitle} · oczekiwanie: ${Math.floor(elapsed/60)} min ${String(elapsed%60).padStart(2,'0')} s · API nie podaje procentowego postępu`;
+  aiActivityText.textContent=`[${aiStage(aiRequestMode)}] ${aiPhase} · Film: ${aiMediaTitle} · oczekiwanie: ${Math.floor(elapsed/60)} min ${String(elapsed%60).padStart(2,'0')} s`;
   if(!output.contains(aiActivity))output.append(aiActivity);
-  aiMessage.textContent=`AI przetwarza żądanie. Czas oczekiwania: ${elapsed} s.`;
+  aiMessage.textContent=`AI przetwarza żądanie${'.'.repeat(elapsed%3+1)} Czas oczekiwania: ${elapsed} s.`;
 }
 function stopAiElapsed(){
   if(aiTimer!==null)clearInterval(aiTimer);

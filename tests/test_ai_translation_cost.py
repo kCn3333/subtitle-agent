@@ -145,5 +145,7 @@ def test_sync_and_connection_test_preserve_zero_cost(client,prepared_job,monkeyp
     response=client.post(f'/api/tasks/{job}/ai-sync',json={'reference_source_id':'embedded:4','polish_file':'polish/original.pl.srt'})
     assert response.status_code==200 and response.json()['total_cost']==0
     entries=client.get('/api/settings/ai/console').json()['entries']
+    sync_success=[row for row in entries if row['operation']=='SYNC' and row['level']=='SUCCESS']
+    assert len(sync_success)==1 and 'gotowy plik SRT do pobrania' in sync_success[0]['message']
     summaries=[row for row in entries if row['level'] == 'SUMMARY']
     assert len(summaries)==2 and all(row['message'].endswith('0 USD') for row in summaries)

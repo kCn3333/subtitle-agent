@@ -46,6 +46,7 @@ test('successful response shows measured time and tokens',async()=>{
   assert.match(context.logs[0][2],/Synchronizacja przez AI · Film: Come and See \(1985\)/);
   assert.match(context.logs.at(-1)[2],/42/);
   assert.equal(context.logs.at(-1)[1],'AI_SYNC_SUMMARY');
+  assert.match(context.logs.at(-1)[2],/Wygenerowano gotowy plik SRT \(2 kwestii\)/);
   get('#ai-polish').handlers.change();
   assert.equal(get('#ai-download').hidden,true);
 });
@@ -73,6 +74,11 @@ test('only clicking handoff starts console timer, which stops on completion',asy
   context.now=65000;context.timerCallback();
   assert.match(get('#console').options[0].options[1].textContent,/1 min 05 s/);
   assert.match(get('#ai-sync-status').textContent,/65 s/);
+  const previous=get('#ai-sync-status').textContent;
+  context.now=66000;context.timerCallback();
+  assert.match(previous,/żądanie\.\.\./);
+  assert.match(get('#ai-sync-status').textContent,/żądanie\. Czas/);
+  assert.doesNotMatch(get('#console').options[0].options[1].textContent,/procentowego postępu/);
   get('#console').replaceChildren();context.updateAiElapsed();
   assert.equal(get('#console').options.length,1);
   context.activeJobId='other';context.timerCallback();
@@ -103,6 +109,9 @@ test('translation handoff needs no PL and selects translation endpoint',async()=
   assert.equal(get('#ai-download').href,'/api/tasks/job/ai-translate/download');
   assert.doesNotMatch(get('#ai-sync-status').textContent,/Koszt|Tokeny/);
   assert.match(context.logs.at(-1)[2],/Koszt całej operacji: 0,00125 USD/);
+  assert.equal((context.logs.at(-1)[2].match(/0,00125 USD/g)||[]).length,1);
+  assert.doesNotMatch(context.logs.at(-1)[2],/Koszt żądania/);
+  assert.match(context.logs.at(-1)[2],/gotowy plik SRT/);
 });
 test('zero cost is displayed and absent cost is not treated as free',async()=>{
   const {context}=await setup();
@@ -117,6 +126,8 @@ test('paid invalid response retains costs in the progress console message',async
   assert.match(get('#ai-sync-status').textContent,/Niepełne tłumaczenie/);
   assert.doesNotMatch(get('#ai-sync-status').textContent,/Koszt|Tokeny/);
   assert.match(context.logs.at(-1)[2],/Koszt całej operacji: 0,0001 USD/);
+  assert.equal((context.logs.at(-1)[2].match(/0,0001 USD/g)||[]).length,1);
+  assert.doesNotMatch(context.logs.at(-1)[2],/gotowy plik SRT/);
   assert.equal(get('#ai-download').hidden,true);
 });
 test('returning to page restores running indicator, elapsed time and disabled controls',async()=>{

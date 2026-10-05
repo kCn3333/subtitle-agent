@@ -97,7 +97,7 @@ def capture(store, settings, operation, job_id=None, media_title=None):
         emit("ERROR", str(exc))
         raise
     else:
-        emit("SUCCESS", "Zakończono poprawnie")
+        emit("SUCCESS", "Wygenerowano gotowy plik SRT do pobrania" if operation in {"SYNC", "TRANSLATE"} else "Zakończono poprawnie")
     finally:
         costs = [Decimal(str(item['cost'])) for item in metrics if 'cost' in item]
         totals = {name: str(sum(item[name] for item in metrics))
