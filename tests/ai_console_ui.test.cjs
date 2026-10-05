@@ -50,3 +50,23 @@ test('connection test metrics remain only in console, with highlighted summary',
   assert.match(get('#ai-console').children[0].textContent,/42.*0.05 USD/);
   assert.match(get('#ai-console').children[0].className,/SUMMARY/);
 });
+test('settings preserve selected reasoning and optional output limit in save payload',async()=>{
+  const elements=new Map();
+  const get=id=>{if(!elements.has(id))elements.set(id,{value:'',checked:false,children:[],addEventListener(){},querySelectorAll(){return []},append(node){this.children.push(node)},replaceChildren(){this.children=[]}});return elements.get(id)};
+  let saved;
+  const context={document:{querySelector:get,createElement:()=>({}),hidden:false},setInterval(){},
+    fetch:async(url,options)=>({ok:true,json:async()=>{
+      if(options?.method==='PUT'){saved=JSON.parse(options.body);return saved}
+      if(url.endsWith('/console'))return {entries:[]};
+      return {api_url:'http://test/v1',model:'test',timeout_seconds:600,reasoning_effort:'low',max_output_tokens:131072};
+    }})};
+  runInNewContext(readFileSync('app/static/settings.js','utf8'),context);
+  await new Promise(setImmediate);
+  assert.equal(get('#reasoning-effort').value,'low');
+  assert.equal(get('#max-output-tokens').value,131072);
+  await context.saveAiSettings(false);
+  assert.equal(saved.reasoning_effort,'low');assert.equal(saved.max_output_tokens,131072);
+  get('#reasoning-effort').value='';get('#max-output-tokens').value='';
+  await context.saveAiSettings(false);
+  assert.equal(saved.reasoning_effort,null);assert.equal(saved.max_output_tokens,null);
+});

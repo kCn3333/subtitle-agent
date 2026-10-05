@@ -4,6 +4,7 @@ function displaySettings(settings){
   document.querySelector('#model').value=settings.model;
   document.querySelector('#timeout').value=settings.timeout_seconds;
   document.querySelector('#reasoning-effort').value=settings.reasoning_effort??'';
+  document.querySelector('#max-output-tokens').value=settings.max_output_tokens??'';
   document.querySelector('#response-format').value=settings.response_format??'';
   document.querySelector('#api-key').value='';
   document.querySelector('#clear-key').checked=false;
@@ -21,6 +22,7 @@ async function saveAiSettings(test){
     const payload={api_url:document.querySelector('#api-url').value,model:document.querySelector('#model').value,
       timeout_seconds:Number(document.querySelector('#timeout').value),
       reasoning_effort:document.querySelector('#reasoning-effort').value||null,
+      max_output_tokens:document.querySelector('#max-output-tokens').value?Number(document.querySelector('#max-output-tokens').value):null,
       response_format:document.querySelector('#response-format').value||null};
     const key=document.querySelector('#api-key').value;
     if(document.querySelector('#clear-key').checked)payload.api_key='';else if(key)payload.api_key=key;

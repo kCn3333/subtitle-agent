@@ -1,5 +1,7 @@
 import asyncio
 import json
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
@@ -121,84 +123,120 @@ async def translate(job_id: str, payload: SyncRequest, request: Request):
     return await process(job_id, payload, request, "PREPARE_TRANSLATION")
 
 
+@router.get("/api/tasks/{job_id}/ai-status")
+async def operation_status(job_id: str, request: Request):
+    if not request.app.state.jobs.get(job_id):
+        raise error("Nie znaleziono zadania", 404)
+    return request.app.state.ai_operations.get(job_id, {"status":"idle"})
+
+
 async def process(job_id, payload, request, pipeline):
     prepared(request, job_id, pipeline)
+    lock = request.app.state.ai_sync_locks.setdefault(job_id, asyncio.Lock())
+    if lock.locked():
+        exc = error("Operacja AI tego zadania już trwa", 409)
+        exc.detail['code'] = 'AI_OPERATION_RUNNING'
+        raise exc
+    async with lock:
+        states = request.app.state.ai_operations
+        for expired in list(states):
+            if not request.app.state.jobs.get(expired):
+                states.pop(expired, None)
+        state = {"status":"running", "operation_id":str(uuid.uuid4()),
+                 "started_at":datetime.now(timezone.utc).isoformat(),
+                 "mode":"translation" if pipeline == "PREPARE_TRANSLATION" else "sync",
+                 "title":request.app.state.jobs.get(job_id)['display_title'],
+                 "polish_file":payload.polish_file, "phase":"Przygotowanie danych dla modelu"}
+        states[job_id] = state
+        try:
+            result = await execute(job_id, payload, request, pipeline)
+            result = {**result, "operation_id":state['operation_id']}
+            state.update(status="completed", result=result, phase="Gotowe")
+            return result
+        except HTTPException as exc:
+            if isinstance(exc.detail, dict):
+                exc.detail['operation_id'] = state['operation_id']
+            state.update(status="failed", error=exc.detail, phase="Operacja zakończona błędem")
+            raise
+        except BaseException:
+            state.update(status="failed", error={"message":"Operacja AI została przerwana"}, phase="Operacja przerwana")
+            raise
+
+
+async def execute(job_id, payload, request, pipeline):
     translation = pipeline == "PREPARE_TRANSLATION"
     stem = "ai-translation" if translation else "ai-sync"
-    locks = request.app.state.ai_sync_locks
-    lock = locks.setdefault(job_id, asyncio.Lock())
-    if lock.locked():
-        raise error("Operacja AI tego zadania już trwa", 409)
-    async with lock:
-        directory, report = prepared(request, job_id, pipeline)
-        data = manifest(directory)
-        reference = data.get("reference") or {}
-        selected = report.get("selectedEnglish") or {}
-        selected_id = (f"external:{selected.get('name')}" if selected.get("sourceType") == "external"
-                       else f"embedded:{selected.get('streamIndex')}")
-        if payload.reference_source_id != selected_id:
-            raise error("Wybrano inne EN; najpierw zbuduj ponownie workpack z tą referencją")
-        english_entries = [entry for entry in reference.get("files", [])
-                           if Path(entry.get("name", "")).name in {"selected.eng.srt", "selected.eng.ocr.srt"}]
-        polish_entries = [entry for entry in data.get("polish_candidates", [])
-                          if entry.get("archiveName") == payload.polish_file]
-        if len(english_entries) != 1:
-            raise error("Brak przygotowanej tekstowej referencji EN; zakończ ekstrakcję/OCR")
-        if not translation and len(polish_entries) != 1:
-            raise error("Wybierz przygotowany polski plik SRT")
-        english_path = input_file(directory, english_entries[0], "name")
-        polish_path = None if translation else input_file(directory, polish_entries[0], "archiveName")
-        inputs = [(english_entries[0], "name")]
-        if not translation:
-            inputs.append((polish_entries[0], "archiveName"))
-        digest = sha256(directory / "manifest.json")
-        duration = data.get("media", {}).get("duration_ms")
-        if type(duration) is not int or duration <= 0:
-            raise error("Brak poprawnego czasu trwania filmu")
-        # Remove the previous result before a new attempt, including invalid responses.
-        for name in (f"{stem}.json", f"{stem}.pl.srt"):
-            (directory / name).unlink(missing_ok=True)
-        settings = request.app.state.ai_settings.get()
-        request.app.state.jobs.artifact_users.add(job_id)
-        elapsed, usage = None, None
-        try:
-            with capture(request.app.state.ai_console, settings, "TRANSLATE" if translation else "SYNC", job_id,
-                         request.app.state.jobs.get(job_id)["display_title"]):
-                english = read_cues(english_path, "en")
-                data = {"duration_ms": duration, "english": segments(english)}
-                polish = read_cues(polish_path, "pl") if polish_path else None
-                if polish is not None:
-                    data['polish'] = segments(polish)
-                result, elapsed, usage = await chat_request(settings,
-                    TRANSLATION_INSTRUCTION if translation else SYNC_INSTRUCTION, data)
-                output = (validate_translation(result, english, duration) if translation
-                          else validate_result(result, polish, duration))
-                prepared(request, job_id, pipeline)
-                if digest != sha256(directory / "manifest.json"):
-                    raise AiSyncError("Referencja zmieniła się podczas żądania; przygotuj dane ponownie")
-                for entry, name_key in inputs:
-                    input_file(directory, entry, name_key)
-                target = directory / f"{stem}.pl.srt"
-                write_preview(output, target)
-                summary = {"model": settings.model, "elapsed_seconds": elapsed, "usage": usage,
-                           "mode": "translation" if translation else "sync",
-                           "total_cost": (usage or {}).get("cost"),
-                           "cue_count": len(output), "manifest_sha256": digest, "sha256": sha256(target),
-                           "inputs": [{"name": entry[name_key], "sha256": entry["sha256"]}
-                                      for entry, name_key in inputs]}
-                temporary = directory / f".{stem}.json.tmp"
-                temporary.write_text(json.dumps(summary, ensure_ascii=False), encoding="utf-8")
-                temporary.replace(directory / f"{stem}.json")
-                with request.app.state.jobs._lock:
-                    request.app.state.jobs.archive.capture(request.app.state.jobs.get(job_id))
-                return summary
-        except AiSyncError as exc:
-            raise error(str(exc), 502, exc.elapsed_seconds if exc.elapsed_seconds is not None else elapsed,
-                        exc.usage if exc.usage is not None else usage) from exc
-        finally:
-            request.app.state.jobs.artifact_users.discard(job_id)
-            request.app.state.jobs.cleanup_expired_artifacts()
-
+    directory, report = prepared(request, job_id, pipeline)
+    data = manifest(directory)
+    reference = data.get("reference") or {}
+    selected = report.get("selectedEnglish") or {}
+    selected_id = (f"external:{selected.get('name')}" if selected.get("sourceType") == "external"
+                   else f"embedded:{selected.get('streamIndex')}")
+    if payload.reference_source_id != selected_id:
+        raise error("Wybrano inne EN; najpierw zbuduj ponownie workpack z tą referencją")
+    english_entries = [entry for entry in reference.get("files", [])
+                       if Path(entry.get("name", "")).name in {"selected.eng.srt", "selected.eng.ocr.srt"}]
+    polish_entries = [entry for entry in data.get("polish_candidates", [])
+                      if entry.get("archiveName") == payload.polish_file]
+    if len(english_entries) != 1:
+        raise error("Brak przygotowanej tekstowej referencji EN; zakończ ekstrakcję/OCR")
+    if not translation and len(polish_entries) != 1:
+        raise error("Wybierz przygotowany polski plik SRT")
+    english_path = input_file(directory, english_entries[0], "name")
+    polish_path = None if translation else input_file(directory, polish_entries[0], "archiveName")
+    inputs = [(english_entries[0], "name")]
+    if not translation:
+        inputs.append((polish_entries[0], "archiveName"))
+    digest = sha256(directory / "manifest.json")
+    duration = data.get("media", {}).get("duration_ms")
+    if type(duration) is not int or duration <= 0:
+        raise error("Brak poprawnego czasu trwania filmu")
+    # Remove the previous result before a new attempt, including invalid responses.
+    for name in (f"{stem}.json", f"{stem}.pl.srt"):
+        (directory / name).unlink(missing_ok=True)
+    settings = request.app.state.ai_settings.get()
+    request.app.state.jobs.artifact_users.add(job_id)
+    elapsed, usage = None, None
+    try:
+        with capture(request.app.state.ai_console, settings, "TRANSLATE" if translation else "SYNC", job_id,
+                     request.app.state.jobs.get(job_id)["display_title"]):
+            english = read_cues(english_path, "en")
+            data = {"duration_ms": duration, "english": segments(english)}
+            polish = read_cues(polish_path, "pl") if polish_path else None
+            if polish is not None:
+                data['polish'] = segments(polish)
+            request.app.state.ai_operations[job_id]["phase"] = "Oczekiwanie na odpowiedź modelu"
+            result, elapsed, usage = await chat_request(settings,
+                TRANSLATION_INSTRUCTION if translation else SYNC_INSTRUCTION, data)
+            request.app.state.ai_operations[job_id]["phase"] = "Sprawdzanie odpowiedzi modelu"
+            output = (validate_translation(result, english, duration) if translation
+                      else validate_result(result, polish, duration))
+            prepared(request, job_id, pipeline)
+            if digest != sha256(directory / "manifest.json"):
+                raise AiSyncError("Referencja zmieniła się podczas żądania; przygotuj dane ponownie")
+            for entry, name_key in inputs:
+                input_file(directory, entry, name_key)
+            request.app.state.ai_operations[job_id]["phase"] = "Zapisywanie napisów SRT"
+            target = directory / f"{stem}.pl.srt"
+            write_preview(output, target)
+            summary = {"model": settings.model, "elapsed_seconds": elapsed, "usage": usage,
+                       "mode": "translation" if translation else "sync",
+                       "total_cost": (usage or {}).get("cost"),
+                       "cue_count": len(output), "manifest_sha256": digest, "sha256": sha256(target),
+                       "inputs": [{"name": entry[name_key], "sha256": entry["sha256"]}
+                                  for entry, name_key in inputs]}
+            temporary = directory / f".{stem}.json.tmp"
+            temporary.write_text(json.dumps(summary, ensure_ascii=False), encoding="utf-8")
+            temporary.replace(directory / f"{stem}.json")
+            with request.app.state.jobs._lock:
+                request.app.state.jobs.archive.capture(request.app.state.jobs.get(job_id))
+            return summary
+    except AiSyncError as exc:
+        raise error(str(exc), 502, exc.elapsed_seconds if exc.elapsed_seconds is not None else elapsed,
+                    exc.usage if exc.usage is not None else usage) from exc
+    finally:
+        request.app.state.jobs.artifact_users.discard(job_id)
+        request.app.state.jobs.cleanup_expired_artifacts()
 
 @router.get("/api/tasks/{job_id}/ai-sync")
 async def result(job_id: str, request: Request):

@@ -48,7 +48,8 @@ class ApiSettings(BaseModel):
     model: str = Field(default="", max_length=200)
     api_key: SecretStr | None = None  # None preserves saved key; empty clears it.
     timeout_seconds: int = Field(default=120, ge=1, le=3600)
-    reasoning_effort: Literal["none"] | None = None
+    reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"] | None = None
+    max_output_tokens: int | None = Field(default=None, ge=1, le=2000000, strict=True)
     response_format: Literal["json_object"] | None = None
 
     @field_validator("api_url")
@@ -115,7 +116,12 @@ async def chat_request(settings: ApiSettings, instruction: str, data: dict,
         {"role": "system", "content": instruction},
         {"role": "user", "content": json.dumps(data, ensure_ascii=False)}]}
     if settings.reasoning_effort is not None:
-        payload["reasoning_effort"] = settings.reasoning_effort
+        if urlsplit(settings.api_url).hostname == "openrouter.ai":
+            payload["reasoning"] = {"effort": settings.reasoning_effort}
+        else:
+            payload["reasoning_effort"] = settings.reasoning_effort
+    if settings.max_output_tokens is not None:
+        payload["max_tokens"] = settings.max_output_tokens
     if settings.response_format is not None:
         payload["response_format"] = {"type": settings.response_format}
     async with httpx.AsyncClient(timeout=settings.timeout_seconds, follow_redirects=False,

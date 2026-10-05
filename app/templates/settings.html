@@ -10,8 +10,12 @@
 <label class="field-wide">Klucz API (opcjonalny) <input id="api-key" type="password" autocomplete="new-password" placeholder="Puste pole zachowuje zapisany klucz"></label>
 <div class="field-wide key-options"><span id="key-status"></span><label><input id="clear-key" type="checkbox"> Usuń zapisany klucz</label></div>
 <label>Reasoning effort <span class="select-wrap"><select id="reasoning-effort">
-  <option value="">domyślne modelu</option><option value="none">wyłączone</option>
-</select></span></label>
+  <option value="">domyślne modelu</option><option value="none">wyłączone (none)</option>
+  <option value="minimal">minimalne (minimal)</option><option value="low">niskie (low)</option>
+  <option value="medium">średnie (medium)</option><option value="high">wysokie (high)</option>
+  <option value="xhigh">bardzo wysokie (xhigh)</option><option value="max">maksymalne (max)</option>
+</select></span><small>Obsługa poziomów i wyłączenia zależy od wybranego modelu.</small></label>
+<label>Limit tokenów wyjścia (opcjonalny) <input id="max-output-tokens" type="number" min="1" max="2000000" step="1" placeholder="domyślne API"><small>Obejmuje reasoning i wynik. Nie zwiększa maksimum modelu.</small></label>
 <label>Format odpowiedzi <span class="select-wrap"><select id="response-format">
   <option value="">domyślne API</option><option value="json_object">JSON</option>
 </select></span></label>
@@ -23,4 +27,4 @@
   <button type="button" data-copy-console="ai-console"><i class="fa-solid fa-copy" aria-hidden="true"></i> Kopiuj</button></div>
   <p id="ai-console-state" class="sr-only" role="status"></p>
   <div id="ai-console" class="console" tabindex="0" aria-label="Historia komunikatów i odpowiedzi modelu"></div>
-</section><footer>kCn &amp; Codex 2026</footer></main><script src="/static/header.js?v=console-health-1"></script><script src="/static/ai-metrics.js?v=console-health-1"></script><script src="/static/settings.js?v=console-health-1"></script><script src="/static/console-tools.js?v=gui-compact-2"></script></body></html>
+</section><footer>kCn &amp; Codex 2026</footer></main><script src="/static/header.js?v=console-health-1"></script><script src="/static/ai-metrics.js?v=console-health-1"></script><script src="/static/settings.js?v=reasoning-control-1"></script><script src="/static/console-tools.js?v=gui-compact-2"></script></body></html>

@@ -45,6 +45,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title=config.app_name, lifespan=lifespan)
     app.state.settings = config
     app.state.ai_sync_locks = {}
+    app.state.ai_operations = {}
     app.state.ai_health = ApiHealth()
     app.mount("/static", StaticFiles(directory="app/static"), name="static")
     templates = Jinja2Templates(directory="app/templates")

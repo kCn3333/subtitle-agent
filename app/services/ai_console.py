@@ -91,7 +91,7 @@ def capture(store, settings, operation, job_id=None, media_title=None):
     try:
         label = {"TEST":"Test połączenia API", "SYNC":"Synchronizacja przez AI", "TRANSLATE":"Tłumaczenie przez AI"}.get(operation, operation)
         film = f" · Film: {media_title}" if media_title else ""
-        emit("INFO", f"{label}{film} · model: {settings.model} · timeout: {settings.timeout_seconds} s")
+        emit("INFO", f"{label}{film} · model: {settings.model} · timeout: {settings.timeout_seconds} s · reasoning: {settings.reasoning_effort or 'domyślne modelu'} · limit wyjścia: {settings.max_output_tokens or 'domyślne API'}")
         yield
     except AiSyncError as exc:
         emit("ERROR", str(exc))

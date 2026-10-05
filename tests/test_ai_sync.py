@@ -206,17 +206,27 @@ def test_pipeline_prepares_inputs_for_new_api(client,media_file,monkeypatch,mode
     assert client.get(f'/api/tasks/{job_id}/{endpoint}/download').status_code==200
 
 
-@pytest.mark.parametrize('effort',[None,'none'])
+@pytest.mark.parametrize('effort',[None,'none','minimal','low','medium','high','xhigh','max'])
 @pytest.mark.parametrize('response_format',[None,'json_object'])
-def test_reasoning_effort_in_connection_test_and_sync(client,prepared_job,monkeypatch,effort,response_format):
+@pytest.mark.parametrize('api_url',['http://local/v1','https://openrouter.ai/api/v1'])
+@pytest.mark.parametrize('output_limit',[None,131072])
+def test_reasoning_effort_in_connection_test_and_sync(client,prepared_job,monkeypatch,effort,response_format,api_url,output_limit):
     job_id,_=prepared_job
     calls=[]
     def respond(request):
         body=json.loads(request.content)
         if effort is None:
+            assert 'reasoning_effort' not in body and 'reasoning' not in body
+        elif api_url.startswith('https://openrouter.ai/'):
+            assert body['reasoning']=={'effort':effort}
             assert 'reasoning_effort' not in body
         else:
-            assert body['reasoning_effort']=='none'
+            assert body['reasoning_effort']==effort
+            assert 'reasoning' not in body
+        if output_limit is None:
+            assert 'max_tokens' not in body
+        else:
+            assert body['max_tokens']==output_limit
         if response_format is None:
             assert 'response_format' not in body
         else:
@@ -228,7 +238,7 @@ def test_reasoning_effort_in_connection_test_and_sync(client,prepared_job,monkey
     async def request_with_transport(settings,instruction,data):
         return await chat_request(settings,instruction,data,httpx.MockTransport(respond))
     monkeypatch.setattr('app.api.ai_sync.chat_request',request_with_transport)
-    settings={'api_url':'http://local/v1','model':'test','reasoning_effort':effort,'response_format':response_format}
+    settings={'api_url':api_url,'model':'test','reasoning_effort':effort,'response_format':response_format,'max_output_tokens':output_limit}
     assert client.put('/api/settings/ai',json=settings).json()['reasoning_effort']==effort
     assert client.get('/api/settings/ai').json()['reasoning_effort']==effort
     assert client.get('/api/settings/ai').json()['response_format']==response_format
@@ -237,8 +247,9 @@ def test_reasoning_effort_in_connection_test_and_sync(client,prepared_job,monkey
     assert response.status_code==200,response.text
     assert len(calls)==2
     # Switching back must stop sending the optional parameter.
-    assert client.put('/api/settings/ai',json={**settings,'reasoning_effort':None}).status_code==200
+    assert client.put('/api/settings/ai',json={**settings,'reasoning_effort':None,'max_output_tokens':None}).status_code==200
     assert client.get('/api/settings/ai').json()['reasoning_effort'] is None
+    assert client.get('/api/settings/ai').json()['max_output_tokens'] is None
 
 
 def test_legacy_settings_default_reasoning_effort(tmp_path):
@@ -319,3 +330,11 @@ def test_ai_console_is_bounded_and_persistent(tmp_path):
     for index in range(110):store.append('TEST',None,'INFO',str(index))
     entries=AiConsoleStore(path).read()
     assert len(entries)==100 and entries[0]['message']=='10' and entries[-1]['message']=='109'
+
+
+@pytest.mark.parametrize('value',[0,-1,2000001,1.5,True,'100'])
+def test_rejects_invalid_output_limit(client,value):
+    assert client.put('/api/settings/ai',json={'max_output_tokens':value}).status_code==422
+
+def test_rejects_unknown_reasoning_effort(client):
+    assert client.put('/api/settings/ai',json={'reasoning_effort':'automatic'}).status_code==422

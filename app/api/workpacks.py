@@ -69,6 +69,7 @@ async def rebuild(job_id: str, payload: RebuildWorkpackRequest, request: Request
             "message": "Poczekaj na zakończenie synchronizacji AI przed zmianą referencji"})
     try:
         after = await request.app.state.jobs.rebuild_workpack(job_id, payload.reference_source_id)
+        request.app.state.ai_operations.pop(job_id, None)
     except UserInputError as exc:
         raise HTTPException(status_code=422, detail={"code": "INVALID_REFERENCE", "message": str(exc)}) from exc
     return {"jobId": job_id, "status": "BUILDING_WORKPACK", "afterSequence": after}
