@@ -34,6 +34,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.jobs = JobManager(config.data_root / "subtitle-agent.db", config)
         app.state.ai_settings = ApiSettingsStore(config.data_root / "subtitle-agent.db")
         app.state.ai_console = AiConsoleStore(config.data_root / "subtitle-agent.db")
+        app.state.ai_console.usage.backfill(app.state.jobs.list_jobs(limit=None),
+                                           config.data_root / "work" / "jobs")
         await app.state.jobs.start()
         try:
             yield

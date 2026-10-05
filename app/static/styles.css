@@ -153,3 +153,8 @@ button:focus-visible, a:focus-visible, .console:focus-visible { outline: 3px sol
 }
 .console .operation-summary.ERROR { border-left-color: var(--red); }
 .console .operation-summary.SUCCESS { border-left-color: var(--green); }
+
+.archive-cost { min-width: 130px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.archive-cost-usd, .archive-cost-tokens { display: block; }
+.archive-cost-usd { font-weight: 600; }
+.archive-cost-tokens { color: var(--muted); font-size: 12px; margin-top: 3px; }

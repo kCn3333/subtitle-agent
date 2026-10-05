@@ -13,6 +13,17 @@ function archiveLinks(cell,files){
   }
   cell.append(list);
 }
+function archiveCost(cell,cost){
+  cell.className='archive-cost';
+  if(!cost){cell.textContent='—';cell.title='Brak zapisanych metryk AI';return}
+  const usd=document.createElement('span'),tokens=document.createElement('span');
+  usd.className='archive-cost-usd';tokens.className='archive-cost-tokens';
+  const amount=cost.usd===null?'—':String(cost.usd).replace('.',',');
+  usd.textContent=`${cost.usd_partial&&cost.usd!==null?'≥ ':''}${amount} USD`;
+  tokens.textContent=`${cost.tokens_partial&&cost.total_tokens!==null?'≥ ':''}${cost.total_tokens===null?'—':cost.total_tokens.toLocaleString('pl-PL')} tokenów`;
+  cell.title=`Zapisane żądania AI: ${cost.requests}. ${cost.usd_partial||cost.tokens_partial?'Suma niepełna: API nie podało wszystkich metryk w USD lub tokenach. ':''}Suma obejmuje dostępne zapisy; starsze usunięte metryki nie są odtwarzane.`;
+  cell.append(usd,tokens);
+}
 async function loadArchive(){
   try{
     const response=await fetch('/api/archive');if(!response.ok)throw new Error('Nie udało się wczytać archiwum');
@@ -22,9 +33,10 @@ async function loadArchive(){
       const cell=archiveCell(row),date=document.createElement('time'),name=document.createElement('span');
       date.className='archive-date';date.dateTime=title.date;date.textContent=new Date(title.date).toLocaleString('pl-PL');
       name.className='archive-title';name.textContent=title.title;cell.append(date,name);
-      archiveLinks(archiveCell(row),title.workpacks);archiveLinks(archiveCell(row),title.subtitles);archiveRows.append(row);
+      archiveLinks(archiveCell(row),title.workpacks);archiveLinks(archiveCell(row),title.subtitles);archiveCost(archiveCell(row),title.cost);archiveRows.append(row);
     }
-    archiveStatus.textContent=titles.length?`Ostatnie tytuły: ${titles.length} / 30`:'Archiwum jest puste.';
-  }catch(error){archiveStatus.textContent=error.message}
+    archiveStatus.textContent=titles.length?'':'Archiwum jest puste.';
+    archiveStatus.hidden=!!titles.length;
+  }catch(error){archiveStatus.hidden=false;archiveStatus.textContent=error.message}
 }
 loadArchive();

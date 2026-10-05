@@ -8,8 +8,10 @@ from decimal import Decimal
 from pathlib import Path
 
 from app.services.ai_sync import AiSyncError
+from app.services.ai_usage import UsageStore
 
 _sink = ContextVar("ai_console_sink", default=None)
+_usage_sink = ContextVar("ai_usage_sink", default=None)
 _metrics = ContextVar("ai_console_metrics", default=None)
 MAX_CHARS = 131072
 MAX_ENTRIES = 100
@@ -18,6 +20,7 @@ MAX_ENTRIES = 100
 class AiConsoleStore:
     def __init__(self, path: Path):
         self.path = path
+        self.usage = UsageStore(path)
         with sqlite3.connect(path) as db:
             db.execute('''CREATE TABLE IF NOT EXISTS ai_console (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT NOT NULL,
@@ -59,6 +62,10 @@ def record_metrics(elapsed, usage):
     metrics = _metrics.get()
     if metrics is not None:
         metrics.append({**(usage or {}), "elapsed_seconds": elapsed})
+    accounting = _usage_sink.get()
+    if accounting is not None:
+        store, job_id, operation = accounting
+        store.record(job_id, operation, usage)
     emit('INFO', format_metrics(elapsed, usage))
 
 
@@ -80,6 +87,7 @@ def capture(store, settings, operation, job_id=None, media_title=None):
     token = _sink.set(sink)
     metrics = []
     metrics_token = _metrics.set(metrics)
+    usage_token = _usage_sink.set((store.usage, job_id, operation))
     try:
         label = {"TEST":"Test połączenia API", "SYNC":"Synchronizacja przez AI", "TRANSLATE":"Tłumaczenie przez AI"}.get(operation, operation)
         film = f" · Film: {media_title}" if media_title else ""
@@ -105,5 +113,6 @@ def capture(store, settings, operation, job_id=None, media_title=None):
             emit('SUMMARY', summary + f"{label}: {format(sum(costs, Decimal('0')), 'f')} {currency}")
         else:
             emit('SUMMARY', summary + 'Koszt całej operacji: API nie podało kosztu')
+        _usage_sink.reset(usage_token)
         _metrics.reset(metrics_token)
         _sink.reset(token)

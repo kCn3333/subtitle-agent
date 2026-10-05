@@ -189,6 +189,7 @@ class JobManager:
                     db.execute('DELETE FROM publication_attempts WHERE job_id=?', (job['id'],))
                     if db.execute("SELECT 1 FROM sqlite_master WHERE name='ai_console'").fetchone():
                         db.execute('DELETE FROM ai_console WHERE job_id=?', (job['id'],))
+                    db.execute('DELETE FROM ai_usage WHERE job_id=?', (job['id'],))
                     db.execute('DELETE FROM jobs WHERE id=?', (job['id'],))
                 self._conditions.pop(job['id'], None)
                 self._publish_locks.pop(job['id'], None)

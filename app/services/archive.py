@@ -8,6 +8,7 @@ import sqlite3
 from pathlib import Path
 
 from app.services.artifact_retention import validated_job_directory
+from app.services.ai_usage import UsageStore
 
 ARCHIVE_LIMIT = 30
 
@@ -19,6 +20,7 @@ def title_key(job: dict) -> str:
 class ArchiveStore:
     def __init__(self, db_path: Path, data_root: Path):
         self.db_path = db_path
+        self.usage = UsageStore(db_path)
         self.root = data_root / 'archive'
         self.jobs_root = data_root / 'work' / 'jobs'
         self.root.mkdir(parents=True, exist_ok=True)
@@ -120,6 +122,9 @@ class ArchiveStore:
                 item = {k: file[k] for k in ('filename', 'sha256', 'kind')}
                 item['url'] = '/api/archive/files/' + file['sha256'] + file['suffix']
                 titles[file['title_key']]['workpacks' if file['kind'] == 'workpack' else 'subtitles'].append(item)
+        usage = self.usage.totals()
+        for key, title in titles.items():
+            title["cost"] = usage.get(key)
         return list(titles.values())
 
     def download(self, name: str):
