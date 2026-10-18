@@ -31,6 +31,11 @@ for (const workpack of [null, {referenceAmbiguous:false}]) {
   test(`multiple embedded sources can be chosen with ${workpack ? 'unambiguous pack' : 'no pack'}`, () => {
     const ui = renderReport({jobType:'PREPARE_WORKPACK', englishRanking:[pgs,srt], selectedEnglish:pgs, workpack});
     assert.equal(ui.get('#reference-choice').hidden, false);
+    assert.equal(ui.get('#current-status').hidden, true);
+    assert.equal(ui.get('#reference-field').hidden, false);
+    assert.equal(ui.get('#reference-actions').hidden, false);
+    assert.equal(ui.get('#reference-question').hidden, true);
+    assert.match(ui.get('#reference-summary').textContent, /Wybrana referencja: #4/);
     const options = ui.get('#reference-source').options;
     assert.equal(options[0].value, 'embedded:4');
     assert.equal(options[0].selected, true);
@@ -40,9 +45,14 @@ for (const workpack of [null, {referenceAmbiguous:false}]) {
   });
 }
 
-test('single embedded reference needs no selector', () => {
+test('single embedded reference is shown in status without redundant change controls', () => {
   const ui = renderReport({jobType:'PREPARE_WORKPACK', englishRanking:[pgs], selectedEnglish:pgs});
-  assert.equal(ui.get('#reference-choice').hidden, true);
+  assert.equal(ui.get('#reference-choice').hidden, false);
+  assert.equal(ui.get('#current-status').hidden, true);
+  assert.equal(ui.get('#reference-summary').hidden, false);
+  assert.match(ui.get('#reference-summary').textContent, /Wybrana referencja: #4/);
+  assert.equal(ui.get('#reference-field').hidden, true);
+  assert.equal(ui.get('#reference-actions').hidden, true);
 });
 
 test('single external reference still requires explicit confirmation', () => {
@@ -50,6 +60,11 @@ test('single external reference still requires explicit confirmation', () => {
     englishRanking:[{sourceType:'external', name:'movie.en.srt', score:70}]});
   assert.equal(ui.get('#reference-choice').hidden, false);
   assert.equal(ui.get('#reference-question').hidden, false);
+  assert.equal(ui.get('#reference-summary').hidden, true);
+  assert.equal(ui.get('#current-status').hidden, true);
+  assert.equal(ui.get('#reference-field').hidden, false);
+  assert.equal(ui.get('#reference-actions').hidden, false);
+  assert.equal(ui.get('#rebuild').textContent, 'Tak, użyj jako wzorca');
   assert.equal(ui.get('#reference-source').options[0].value, 'external:movie.en.srt');
 });
 
