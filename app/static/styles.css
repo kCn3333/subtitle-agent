@@ -115,7 +115,11 @@ button .fa-solid, .button .fa-solid { margin-right: 5px; }
 .action-content .select-wrap { margin-top: 6px; }
 .panel-actions { display: flex; flex-direction: column; gap: 9px; }
 .panel-actions .button, .panel-actions button { text-align: center; }
-.reference-panel { margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--line); }
+.reference-panel { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+.reference-panel p { margin: 0 0 14px; }
+.reference-panel .panel-actions { justify-self: start; }
+.reference-panel select { min-width: 0; }
+.status .reference-panel .select-wrap { margin-bottom: 0; }
 .settings-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 20px; }
 .settings-fields label { margin: 0; font-size: 14px; }
 .settings-fields .select-wrap { margin-top: 6px; }
