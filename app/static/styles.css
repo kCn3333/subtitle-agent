@@ -51,6 +51,7 @@ button:active, .button:active { transform: translateY(1px); }
 .current strong { display: block; overflow-wrap: anywhere; }
 .console .ocr-console-entry { color: var(--green); font-variant-numeric: tabular-nums; }
 .console .ocr-console-entry[data-connected="false"] { color: var(--yellow); }
+.status-actions button { width: 100%; min-height: 44px; }
 .status-actions { display: flex; width: 205px; flex-direction: column; justify-content: center; gap: 9px; }
 .download-button { display: flex; padding: 11px 16px; align-items: center; justify-content: center; gap: 8px; border: 1px solid #65e7a0; background: linear-gradient(145deg, #21b96b, #168d52); box-shadow: 0 2px 6px rgba(9, 77, 45, .14); font-size: 14px; text-align: center; }
 .download-button[aria-disabled="true"] { border-color: #3a4654; background: #28323e; box-shadow: none; color: #8491a1; cursor: not-allowed; filter: none; pointer-events: none; }
@@ -117,7 +118,6 @@ button .fa-solid, .button .fa-solid { margin-right: 5px; }
 .panel-actions .button, .panel-actions button { text-align: center; }
 .reference-panel { grid-template-columns: minmax(0, 1fr); gap: 14px; }
 .reference-panel p { margin: 0 0 14px; }
-.reference-panel .panel-actions { justify-self: start; }
 .reference-panel select { min-width: 0; }
 .status .reference-panel .select-wrap { margin-bottom: 0; }
 .settings-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 20px; }
