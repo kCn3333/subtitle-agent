@@ -47,7 +47,7 @@ class AuthMiddleware:
         path = request.url.path
         if path != "/health" and request.headers.get("host", "").lower() != urlsplit(config.auth_public_url).netloc.lower():
             return await reject(400, "INVALID_HOST", "Nieprawidłowy adres aplikacji.")
-        public = path in {"/health", "/login", "/api/auth/login"} or path.startswith("/static/")
+        public = path in {"/health", "/favicon.ico", "/login", "/api/auth/login"} or path.startswith("/static/")
         if public:
             return await self.app(scope, receive, secure_send)
         store = request.app.state.auth

@@ -211,3 +211,37 @@ def test_forged_session_cookie_cannot_authorize_requests(browser):
     browser.cookies.set(COOKIE, original[:-1]+('a' if original[-1]!='a' else 'b'))
     assert browser.get('/api/settings/ai').status_code == 401
     assert browser.post('/api/auth/logout', headers={'X-CSRF-Token':'forged'}).status_code == 401
+
+
+def test_favicon_does_not_replace_login_csrf(browser):
+    page=browser.get('/login')
+    csrf=re.search(r'name="login-csrf-token" content="([^\"]+)"',page.text)[1]
+    cookie=browser.cookies.get('subtitle_login_csrf')
+    icon=browser.get('/favicon.ico',follow_redirects=False)
+    assert icon.status_code == 204
+    assert 'location' not in icon.headers
+    assert 'set-cookie' not in icon.headers
+    assert browser.cookies.get('subtitle_login_csrf') == cookie
+    response=browser.post('/api/auth/login',json={'username':'test-user','password':'test-password-for-auth'},
+                          headers={'Origin':'http://testserver','X-CSRF-Token':csrf})
+    assert response.status_code == 200
+
+
+def test_another_login_page_does_not_invalidate_open_form(browser):
+    page=browser.get('/login')
+    csrf=re.search(r'name="login-csrf-token" content="([^\"]+)"',page.text)[1]
+    second=browser.get('/login')
+    assert f'content="{csrf}"' in second.text
+    response=browser.post('/api/auth/login',json={'username':'test-user','password':'test-password-for-auth'},
+                          headers={'Origin':'http://testserver','X-CSRF-Token':csrf})
+    assert response.status_code == 200
+
+
+def test_login_replaces_malformed_challenge_cookie(browser):
+    browser.cookies.set('subtitle_login_csrf','invalid-cookie')
+    page=browser.get('/login')
+    csrf=re.search(r'name="login-csrf-token" content="([^\"]+)"',page.text)[1]
+    assert re.fullmatch(r'[A-Za-z0-9_-]{43}',csrf)
+    response=browser.post('/api/auth/login',json={'username':'test-user','password':'test-password-for-auth'},
+                          headers={'Origin':'http://testserver','X-CSRF-Token':'wrong-token'})
+    assert response.status_code == 403

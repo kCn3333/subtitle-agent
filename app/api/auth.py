@@ -1,9 +1,10 @@
 import hmac
 import json
+import re
 import secrets
 
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.templating import Jinja2Templates
 from starlette.concurrency import run_in_threadpool
 
@@ -22,9 +23,16 @@ def set_cookie(response, name, value, settings, max_age):
                         samesite="strict", path="/")
 
 
+@router.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return Response(status_code=204)
+
+
 @router.get("/login", include_in_schema=False)
 async def login_page(request: Request):
-    token = secrets.token_urlsafe(32)
+    token = request.cookies.get(LOGIN_COOKIE, "")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{43}", token):
+        token = secrets.token_urlsafe(32)
     response = templates.TemplateResponse(request=request, name="login.html", context={
         "app_name": request.app.state.settings.app_name, "login_csrf": token})
     set_cookie(response, LOGIN_COOKIE, token, request.app.state.settings, 900)
