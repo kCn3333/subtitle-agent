@@ -1,3 +1,4 @@
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -15,7 +16,8 @@ def settings(tmp_path: Path) -> Settings:
     media_root = tmp_path / "media"
     media_root.mkdir()
     return Settings(data_root=tmp_path / "data", media_roots=[media_root], ffprobe_timeout_seconds=1,
-                    ffmpeg_timeout_seconds=1, subtitle_agent_app_mode="ADVANCED")
+                    ffmpeg_timeout_seconds=1, subtitle_agent_app_mode="ADVANCED", auth_username="test-user",
+                    auth_password="test-password-for-auth", auth_public_url="http://testserver", auth_cookie_secure=False)
 
 
 @pytest.fixture
@@ -33,6 +35,7 @@ def client(settings: Settings, monkeypatch):
     monkeypatch.setattr("app.services.job_manager.probe_media", fake_probe)
     monkeypatch.setattr("app.services.job_manager.extract_reference", fake_extract)
     with TestClient(create_app(settings)) as test_client:
+        authenticate(test_client)
         yield test_client
 
 
@@ -84,3 +87,13 @@ def pgs_ocr_case():
         events.extend([{'start_ms': start}, {'start_ms': end}])
     return {'content': '\n'.join(cues).encode(), 'events': events,
             'timeline': {'codec': 'hdmv_pgs_subtitle', 'cueCount': len(events), 'firstMs': first, 'lastMs': last}}
+
+
+def authenticate(client, username="test-user", password="test-password-for-auth"):
+    page = client.get('/login')
+    csrf = re.search(r'name="login-csrf-token" content="([^"]+)"', page.text)[1]
+    response = client.post('/api/auth/login', json={"username":username,"password":password},
+                           headers={"Origin":"http://testserver","X-CSRF-Token":csrf})
+    assert response.status_code == 200, response.text
+    csrf = re.search(r'name="csrf-token" content="([^"]+)"', client.get('/').text)[1]
+    client.headers.update({"Origin":"http://testserver","X-CSRF-Token":csrf})

@@ -169,3 +169,9 @@ button:focus-visible, a:focus-visible, .console:focus-visible { outline: 3px sol
 @media (prefers-reduced-motion: reduce) { .ai-spinner { animation: none; } }
 
 #ai-sync-button:disabled { background: #28323e; color: #8491a1; opacity: 1; filter: none; }
+
+.login-page { max-width: 460px; padding-top: 8vh; }
+.login-form { display: flex; flex-direction: column; gap: 18px; }
+.login-form input { display: block; width: 100%; margin-top: 6px; }
+.login-form button { width: 100%; }
+#login-status { margin: 0; color: var(--yellow); }

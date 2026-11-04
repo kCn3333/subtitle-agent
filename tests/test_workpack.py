@@ -262,10 +262,12 @@ def test_zip_file_limit_marks_omissions(tmp_path):
     assert archive.is_file() and len(omitted) == 3
 
 
-def test_workpack_mode_blocks_advanced_endpoints(tmp_path, monkeypatch):
-    media=tmp_path/"media"; media.mkdir(); settings=Settings(data_root=tmp_path/"data",media_roots=[media])
+def test_workpack_mode_blocks_advanced_endpoints(tmp_path, monkeypatch, settings):
+    settings.subtitle_agent_app_mode="WORKPACK"
     monkeypatch.setattr("app.main.probe_tools",lambda:ToolInfo("ffmpeg test","ffprobe test","mkvextract test"))
     with TestClient(create_app(settings)) as client:
+        from conftest import authenticate
+        authenticate(client)
         assert client.get('/api/jobs/semantic/config').status_code == 404
         assert client.get('/api/jobs/publishing/config').status_code == 404
         assert client.post('/api/jobs/missing/alignment',json={}).status_code == 404

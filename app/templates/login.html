@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="pl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Logowanie · {{ app_name }}</title><link rel="stylesheet" href="/static/styles.css?v=auth-1">
+<meta name="login-csrf-token" content="{{ login_csrf }}"></head>
+<body><main class="login-page"><h1>{{ app_name }}</h1><section class="card">
+<h2>Zaloguj się</h2><form id="login-form" class="login-form" method="post" action="/api/auth/login">
+<label>Użytkownik<input id="username" name="username" autocomplete="username" required maxlength="200" autofocus></label>
+<label>Hasło<input id="password" name="password" type="password" autocomplete="current-password" required maxlength="1024"></label>
+<button type="submit">Zaloguj się</button><p id="login-status" role="status" aria-live="polite"></p>
+</form></section></main><script src="/static/login.js?v=1"></script></body></html>

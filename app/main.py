@@ -6,6 +6,9 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from app.api.auth import router as auth_router
+from app.core.auth import AuthMiddleware
+from app.services.auth import AuthStore
 from app.api.jobs import router as jobs_router
 from app.api.archive import router as archive_router
 from app.api.ai_sync import router as ai_sync_router
@@ -27,7 +30,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         logging.getLogger().setLevel(config.log_level.upper())
+        config.require_auth_config()
         prepare_data_root(config.data_root)
+        app.state.auth = AuthStore(config.data_root / "subtitle-agent.db", config)
         tools = probe_tools()
         logger.info("Narzędzia systemowe: %s; %s; %s", tools.ffmpeg, tools.ffprobe, tools.mkvextract)
         app.state.tools = tools
@@ -42,7 +47,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         finally:
             await app.state.jobs.close()
 
-    app = FastAPI(title=config.app_name, lifespan=lifespan)
+    app = FastAPI(title=config.app_name, lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+    app.add_middleware(AuthMiddleware, settings=config)
     app.state.settings = config
     app.state.ai_sync_locks = {}
     app.state.ai_operations = {}
@@ -63,9 +69,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/health")
     async def health(request: Request):
-        return {"status": "ok", "ffmpeg": bool(request.app.state.tools.ffmpeg),
-                "ffprobe": bool(request.app.state.tools.ffprobe),
-                "mkvextract": bool(request.app.state.tools.mkvextract)}
+        return {"status": "ok"}
 
     @app.get("/settings")
     async def ai_settings(request: Request):
@@ -75,6 +79,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def archive(request: Request):
         return templates.TemplateResponse(request=request, name="archive.html", context={"app_name": config.app_name})
 
+    app.include_router(auth_router)
     app.include_router(archive_router)
     app.include_router(jobs_router)
     app.include_router(workpacks_router)

@@ -16,6 +16,14 @@ class Settings(BaseSettings):
     app_port: int = 8080
     log_level: str = "INFO"
     data_root: Path = Path("/data")
+    auth_username: str | None = Field(default=None, max_length=200)
+    auth_password: SecretStr | None = Field(default=None, repr=False)
+    auth_public_url: str = ""
+    auth_cookie_secure: bool = True
+    auth_session_seconds: int = Field(default=28800, ge=300, le=86400)
+    auth_lockout_seconds: int = Field(default=3600, ge=60, le=604800)
+    auth_trusted_proxies: Annotated[list[str], NoDecode] = Field(default_factory=list)
+
     # NoDecode keeps pydantic-settings from treating this environment value as
     # JSON before our documented comma-separated parser can process it.
     media_roots: Annotated[list[Path], NoDecode] = Field(
@@ -65,6 +73,39 @@ class Settings(BaseSettings):
     subtitle_agent_auto_publish_require_semantic: bool = True
     subtitle_agent_publish_max_version: int = 999
     subtitle_agent_publish_file_mode: int = 0o644
+
+    @field_validator("auth_trusted_proxies", mode="before")
+    @classmethod
+    def trusted_proxy_networks(cls, value):
+        from ipaddress import ip_network
+        items = value.split(",") if isinstance(value, str) else value
+        networks = [ip_network(item.strip()) for item in items if item.strip()]
+        if any(network.prefixlen == 0 for network in networks):
+            raise ValueError("AUTH_TRUSTED_PROXIES must not trust all addresses")
+        return [str(network) for network in networks]
+
+    @field_validator("auth_public_url")
+    @classmethod
+    def public_origin(cls, value):
+        from urllib.parse import urlsplit
+        value = value.rstrip("/")
+        parsed = urlsplit(value)
+        if value and (parsed.scheme not in {"http", "https"} or not parsed.hostname
+                      or parsed.username or parsed.password or parsed.path or parsed.query or parsed.fragment):
+            raise ValueError("AUTH_PUBLIC_URL must be an HTTP(S) origin without a path")
+        if value:
+            parsed.port  # Reject malformed ports.
+        return value
+
+    def require_auth_config(self):
+        if not self.auth_username or not self.auth_username.strip() or not self.auth_password:
+            raise ValueError("AUTH_USERNAME and AUTH_PASSWORD are required")
+        if not 16 <= len(self.auth_password.get_secret_value()) <= 1024:
+            raise ValueError("AUTH_PASSWORD must contain between 16 and 1024 characters")
+        if not self.auth_public_url:
+            raise ValueError("AUTH_PUBLIC_URL is required")
+        if self.auth_cookie_secure and not self.auth_public_url.startswith("https://"):
+            raise ValueError("AUTH_PUBLIC_URL must use HTTPS when AUTH_COOKIE_SECURE=true")
 
     @field_validator("media_roots", mode="before")
     @classmethod

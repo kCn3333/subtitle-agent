@@ -46,6 +46,11 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Run UI tests
+        run: node --test tests/*_ui.test.cjs
       - name: Run tests in Python 3.12 image
         uses: docker/build-push-action@v6
         with:
@@ -71,13 +76,25 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker run -d --name subtitle-agent-test -p 8080:8080 subtitle-agent:test
+          docker run -d --name subtitle-agent-test -p 127.0.0.1:8080:8080 \
+            -e AUTH_USERNAME=ci-user -e AUTH_PASSWORD=ci-test-password-not-for-deployment \
+            -e AUTH_PUBLIC_URL=http://127.0.0.1:8080 -e AUTH_COOKIE_SECURE=false subtitle-agent:test
           trap 'docker logs subtitle-agent-test; docker rm -f subtitle-agent-test' EXIT
           for attempt in {1..30}; do
             if python -c "import json,urllib.request; assert json.load(urllib.request.urlopen('http://127.0.0.1:8080/health'))['status']=='ok'"; then break; fi
             if [ "$attempt" = 30 ]; then exit 1; fi
             sleep 1
           done
+          python - <<'PY'
+          import urllib.error
+          import urllib.request
+          try:
+              urllib.request.urlopen('http://127.0.0.1:8080/api/settings/ai')
+          except urllib.error.HTTPError as exc:
+              assert exc.code == 401
+          else:
+              raise AssertionError('Anonymous API access must be rejected')
+          PY
           docker exec subtitle-agent-test ffmpeg -version
           docker exec subtitle-agent-test ffprobe -version
           docker exec subtitle-agent-test mkvextract --version

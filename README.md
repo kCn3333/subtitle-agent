@@ -26,7 +26,8 @@ Tryby w GUI:
 1. Otwórz **Stacks → Add stack → Web editor**.
 2. Wklej zawartość `compose.example.yml`.
 3. Zmień hostowe ścieżki `/media/movies` i `/media/shows`.
-4. Pozostaw mounty mediów jako `:ro` i wdroż stack.
+4. Ustaw zmienne `AUTH_USERNAME`, `AUTH_PASSWORD`, `AUTH_PUBLIC_URL` i `AUTH_TRUSTED_PROXIES` zgodnie z sekcją logowania poniżej.
+5. Pozostaw mounty mediów jako `:ro`, skonfiguruj reverse proxy z HTTPS i wdroż stack.
 
 Obrazy:
 
@@ -42,6 +43,11 @@ Worker OCR nie potrzebuje portu hostowego ani dostępu do `/media` i `/data`. Ot
 | Zmienna | Domyślna | Znaczenie |
 |---|---:|---|
 | `APP_PORT` | `8080` | Port aplikacji w kontenerze |
+| `AUTH_USERNAME` / `AUTH_PASSWORD` | wymagane | Dane logowania z Compose; hasło minimum 16 znaków |
+| `AUTH_PUBLIC_URL` | wymagany | Publiczny adres HTTPS bez ścieżki |
+| `AUTH_TRUSTED_PROXIES` | puste | Zaufane adresy/CIDR reverse proxy |
+| `AUTH_LOCKOUT_SECONDS` | `3600` | Blokada IP po trzeciej błędnej próbie |
+| `AUTH_SESSION_SECONDS` | `28800` | Maksymalny czas sesji |
 | `DATA_ROOT` | `/data` | Baza i pliki robocze |
 | `SUBTITLE_AGENT_MEDIA_ROOTS` | `/media/movies:/media/shows` | Dozwolone katalogi mediów |
 | `MAX_CONCURRENT_JOBS` | `1` | Liczba równoległych zadań |
@@ -147,3 +153,33 @@ Ustawienie reasoning oferuje domyślne zachowanie (pominięcie parametru), `none
 Wyniki AI są pobierane jako `<nazwa pliku filmu bez rozszerzenia>.AI-Synced-v001.pl.srt` (synchronizacja) lub `.AI-Translated-v001.pl.srt` (tłumaczenie). Prefiks zachowuje nazwę materiału dla dopasowania napisów w Jellyfin. Każdy nowy wynik o innym SHA otrzymuje kolejną wersję w obrębie tytułu i trybu; identyczny wynik zachowuje dotychczasową nazwę. Numeracja obejmuje kolejne zadania i restarty. Pobieranie z archiwum używa tej samej nazwy; istniejące wpisy SRT otrzymują ją przy starcie aplikacji, bez zmiany treści plików.
 
 Referencją synchronizacji lub tłumaczenia mogą być także napisy francuskie i inne wykryte języki. Wybierz ścieżkę w polu „Wybierz wykrytą referencję” i użyj „Zbuduj ponownie z tą referencją”, a następnie „Przekaż do AI”. Napisy zewnętrzne wymagają potwierdzenia. Worker OCR zawiera dane eng, fra, deu, spa, ita, por i pol; brak danych wybranego języka daje czytelny błąd zamiast OCR po angielsku. Zmiana języków OCR wymaga przebudowania obrazu workera.
+
+## Logowanie i dostęp z Internetu
+
+Logowanie jest obowiązkowe dla stron, ustawień, API, SSE i pobierania plików. W Compose ustaw `AUTH_USERNAME`, `AUTH_PASSWORD` (unikalne hasło, minimum 16 znaków) i `AUTH_PUBLIC_URL`, np. `https://subtitles.example.invalid`. Brak danych logowania zatrzymuje start aplikacji. W Portainerze wpisz je jako zmienne środowiskowe stacka; przy lokalnym Compose możesz skopiować `.env.example` do `.env`. Nie zapisuj prawdziwych haseł w repozytorium.
+
+Przed publicznym uruchomieniem skonfiguruj reverse proxy z HTTPS i zachowaniem nagłówka `Host`. `AUTH_PUBLIC_URL` musi dokładnie odpowiadać adresowi w przeglądarce, bez ścieżki. Domyślnie port hosta jest dostępny tylko pod `127.0.0.1:8080`; nie udostępniaj portów aplikacji ani workera OCR z pominięciem proxy. Gdy proxy działa w osobnym kontenerze, połącz je z aplikacją prywatną siecią Docker i usuń publikowanie portu hosta.
+
+`AUTH_TRUSTED_PROXIES` to rozdzielona przecinkami lista rzeczywistych adresów lub wąskich podsieci proxy widzianych przez kontener aplikacji. Pozostawienie pustej wartości oznacza używanie adresu bezpośredniego połączenia — za proxy wszyscy użytkownicy mogą wtedy współdzielić jedną blokadę. Dla połączeń od zaufanego proxy wymagany jest `X-Forwarded-For`. Aplikacja odczytuje łańcuch od prawej do pierwszego niezaufanego adresu, ignorując dopisane po lewej adresy klienta. Proxy brzegowe musi nadpisywać nagłówek wartością ustaloną z połączenia. Nie ufaj całej sieci Internet ani nagłówkom od niezaufanych nadawców. Obraz uruchamia Uvicorn z `--no-proxy-headers`, aby zachować rzeczywisty adres połączenia; nie usuwaj tej opcji.
+
+Przykładowa konfiguracja Caddy działającego na hoście (podmień domenę):
+
+```caddyfile
+subtitles.example.invalid {
+    reverse_proxy 127.0.0.1:8080 {
+        header_up X-Forwarded-For {remote_host}
+    }
+}
+```
+
+Jeśli przed Caddy działa dodatkowy pośrednik, np. Cloudflare, skonfiguruj osobno jego weryfikację i ustalanie prawdziwego IP w proxy. Nie przekazuj bez weryfikacji `CF-Connecting-IP` od dowolnego klienta. Sprawdź przed publikacją, czy blokada dotyczy właściwego IP, a inny klient nadal może się zalogować.
+
+Cloudflare Tunnel może łączyć się bezpośrednio z aplikacją, bez Caddy/Nginx. Gdy `cloudflared` działa na innym hoście, jako usługę tunelu ustaw `http://<adres-LAN-hosta-aplikacji>:8080`. W Compose zamień przypisanie portu do `127.0.0.1` na `<adres-LAN-hosta-aplikacji>:8080:8080` i ogranicz dostęp do tego portu do hosta tunelu regułami firewalla uwzględniającymi Docker. Nie otwieraj portu na Internet.
+
+`AUTH_PUBLIC_URL` pozostaje publicznym adresem HTTPS, a `AUTH_COOKIE_SECURE=true`. Zachowaj publiczną domenę w nagłówku `Host` (w tunelu można ustawić HTTP Host Header). Do `AUTH_TRUSTED_PROXIES` wpisz rzeczywisty adres źródłowy połączenia widziany przez aplikację. Przy standardowym NAT sieci bridge Docker będzie to zwykle adres LAN hosta tunelu z maską `/32`, a nie wewnętrzny adres jego kontenera ani publiczne zakresy Cloudflare. Potwierdź adres źródłowy i działanie blokady przed publikacją; pozostaw przekazywanie `X-Forwarded-For` przez tunel.
+
+Po trzech błędnych logowaniach IP jest blokowane na **3600 sekund**; blokada obejmuje również dostęp do chronionych zasobów. Próby w trakcie blokady nie przedłużają jej. Nieudane próby są liczone w okresie bezczynności równym czasowi blokady; poprawne logowanie zeruje licznik. Liczniki i blokady są w SQLite, więc restart ich nie usuwa. `AUTH_LOCKOUT_SECONDS` pozwala zmienić czas. Jeśli trzeba odblokować adres wcześniej, administrator może zatrzymać aplikację i usunąć jego rekord z tabeli `auth_failures` w bazie `/data/subtitle-agent.db`, wykonując wcześniej kopię bazy.
+
+Sesje wygasają po `AUTH_SESSION_SECONDS` (domyślnie 8 godzin). Przycisk **Wyloguj** unieważnia sesję po stronie serwera. Zmiana użytkownika lub hasła w Compose i restart unieważniają poprzednie sesje. Cookie sesji ma `HttpOnly`, `Secure` i `SameSite=Strict`; żądania zmieniające dane wymagają tokenu CSRF. Klienci API również muszą się zalogować i przekazywać token CSRF ze strony głównej. `/health` ujawnia publicznie tylko `{"status":"ok"}`; dokumentacja OpenAPI jest wyłączona. Testy lokalne przez HTTP wymagają jawnego `AUTH_COOKIE_SECURE=false` oraz zgodnego `AUTH_PUBLIC_URL=http://...`; dla dostępu z Internetu pozostaw `true` i HTTPS.
+
+Ochrona logowania nie zastępuje aktualizacji obrazu, zabezpieczenia hosta, kopii `/data` ani limitów ruchu w reverse proxy. `/data` zawiera ustawienia i klucze API — ogranicz dostęp do wolumenu i kopii zapasowych. Uruchamiaj jedną instancję aplikacji; kolejka zadań pozostaje lokalna dla procesu.
