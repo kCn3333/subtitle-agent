@@ -127,9 +127,14 @@ def prepared_job(client,settings):
 
 
 def test_settings_and_connection_api(client,monkeypatch):
-    assert client.get('/settings').status_code==200
+    settings_page=client.get('/settings')
+    assert settings_page.status_code==200
+    assert 'Ustawienia AI (zmieniaj tylko gdy wiesz co robisz)' in settings_page.text
     assert client.put('/api/settings/ai',json={'api_url':'http://local/v1','model':'test','api_key':'test-secret'}).json()['api_key_set']
     assert 'test-secret' not in client.get('/api/settings/ai').text
+    page=client.get('/').text
+    assert '<span id="ai-panel-title">Synchronizacja przez AI</span> (test)</h2>' in page
+    assert 'test-secret' not in page
     async def fake(settings,instruction,data):return {'ok':True},.125,{'total_tokens':8}
     monkeypatch.setattr('app.api.ai_sync.chat_request',fake)
     assert client.post('/api/settings/ai/test').json()['elapsed_seconds']==.125
