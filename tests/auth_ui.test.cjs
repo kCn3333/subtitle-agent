@@ -26,7 +26,7 @@ test('authenticated fetch attaches CSRF only to same-origin mutations and redire
 test('login clears rejected password, reports lockout and redirects after success',async()=>{
   const elements=new Map(),redirects=[],calls=[];
   function get(selector){
-    if(!elements.has(selector))elements.set(selector,{value:'',content:'login-csrf',querySelector:()=>get('button'),addEventListener(name,handler){this[name]=handler}});
+    if(!elements.has(selector))elements.set(selector,{value:'',checked:false,content:'login-csrf',querySelector:()=>get('button'),addEventListener(name,handler){this[name]=handler}});
     return elements.get(selector);
   }
   let ok=false;
@@ -40,7 +40,9 @@ test('login clears rejected password, reports lockout and redirects after succes
   assert.match(get('#login-status').textContent,/60 min/);
   assert.equal(get('button').disabled,false);
   assert.equal(calls[0].options.headers['X-CSRF-Token'],'login-csrf');
-  ok=true;get('#password').value='example-test-password';
+  assert.equal(JSON.parse(calls[0].options.body).remember,false);
+  ok=true;get('#password').value='example-test-password';get('#remember-me').checked=true;
   await get('#login-form').submit({preventDefault(){}});
   assert.deepEqual(redirects,['/']);
+  assert.equal(JSON.parse(calls.at(-1).options.body).remember,true);
 });

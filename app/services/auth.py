@@ -11,6 +11,7 @@ from pathlib import Path
 
 COOKIE = "subtitle_session"
 LOGIN_COOKIE = "subtitle_login_csrf"
+REMEMBER_SESSION_SECONDS = 30 * 24 * 60 * 60
 
 
 def digest(value: str) -> str:
@@ -80,7 +81,10 @@ class AuthStore:
             row = db.execute("SELECT blocked_until FROM auth_failures WHERE ip=?", (ip,)).fetchone()
         return max(0, math.ceil(row[0] - time.time())) if row else 0
 
-    def login(self, ip: str, username: str, password: str, old_token: str = ""):
+    def session_seconds(self, remember: bool = False) -> int:
+        return REMEMBER_SESSION_SECONDS if remember else self.settings.auth_session_seconds
+
+    def login(self, ip: str, username: str, password: str, old_token: str = "", *, remember: bool = False):
         now = time.time()
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")  # Serialize failures, including across processes.
@@ -103,7 +107,7 @@ class AuthStore:
             db.execute("DELETE FROM auth_sessions WHERE token_hash IN (SELECT token_hash FROM auth_sessions ORDER BY expires DESC LIMIT -1 OFFSET 19)")
             token, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
             db.execute("INSERT INTO auth_sessions VALUES (?,?,?,?)",
-                       (digest(token), csrf, now + self.settings.auth_session_seconds, self.version))
+                       (digest(token), csrf, now + self.session_seconds(remember), self.version))
             return (token, csrf), 0
 
     def session(self, token: str):

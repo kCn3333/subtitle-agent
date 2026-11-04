@@ -63,19 +63,21 @@ async def login(request: Request):
     try:
         payload = json.loads(raw)
         username, password = payload.get("username"), payload.get("password")
-        if not isinstance(username, str) or not isinstance(password, str) or len(username) > 200 or len(password) > 1024:
+        remember = payload.get("remember", False)
+        if (not isinstance(username, str) or not isinstance(password, str) or len(username) > 200
+                or len(password) > 1024 or type(remember) is not bool):
             raise ValueError()
         username.encode()
         password.encode()
     except (ValueError, AttributeError, UnicodeError):
         return error(400, "INVALID_LOGIN", "Nieprawidłowe dane logowania.")
-    session, blocked = await run_in_threadpool(store.login, ip, username, password, request.cookies.get(COOKIE, ""))
+    session, blocked = await run_in_threadpool(store.login, ip, username, password, request.cookies.get(COOKIE, ""), remember=remember)
     if not session:
         if blocked:
             return error(429, "IP_BLOCKED", "Zbyt wiele nieudanych prób. Adres IP jest czasowo zablokowany.", {"Retry-After": str(blocked)})
         return error(401, "INVALID_LOGIN", "Nieprawidłowy użytkownik lub hasło.")
     response = JSONResponse({"ok": True})
-    set_cookie(response, COOKIE, session[0], config, config.auth_session_seconds)
+    set_cookie(response, COOKIE, session[0], config, store.session_seconds(remember))
     response.delete_cookie(LOGIN_COOKIE, path="/", secure=config.auth_cookie_secure, httponly=True, samesite="strict")
     return response
 

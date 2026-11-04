@@ -5,7 +5,8 @@ loginForm.addEventListener('submit',async event=>{
   try{
     const response=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json',
       'X-CSRF-Token':document.querySelector('meta[name="login-csrf-token"]').content},
-      body:JSON.stringify({username:document.querySelector('#username').value,password:document.querySelector('#password').value})});
+      body:JSON.stringify({username:document.querySelector('#username').value,password:document.querySelector('#password').value,
+        remember:document.querySelector('#remember-me').checked===true})});
     const body=await response.json();
     if(response.ok){window.location.replace('/');return}
     document.querySelector('#password').value='';

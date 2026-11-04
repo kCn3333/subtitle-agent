@@ -174,5 +174,7 @@ button:focus-visible, a:focus-visible, .console:focus-visible { outline: 3px sol
 .login-page { max-width: 460px; padding-top: 8vh; }
 .login-form { display: flex; flex-direction: column; gap: 18px; }
 .login-form input { display: block; width: 100%; margin-top: 6px; }
+.login-form .remember-login { display: flex; align-items: center; gap: 9px; margin: 0; font-size: 14px; cursor: pointer; }
+.login-form .remember-login input { display: inline-block; width: 18px; height: 18px; flex: 0 0 18px; margin: 0; padding: 0; accent-color: var(--blue); }
 .login-form button { width: 100%; }
 #login-status { margin: 0; color: var(--yellow); }

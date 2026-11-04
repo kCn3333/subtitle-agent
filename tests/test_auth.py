@@ -18,10 +18,11 @@ def browser(settings, monkeypatch):
         yield client
 
 
-def login(browser, username='test-user', password='test-password-for-auth', headers=None):
+def login(browser, username='test-user', password='test-password-for-auth', headers=None, remember=None):
     page = browser.get('/login')
     csrf = re.search(r'name="login-csrf-token" content="([^\"]+)"', page.text)[1]
-    return browser.post('/api/auth/login', json={'username':username,'password':password},
+    return browser.post('/api/auth/login', json={'username':username,'password':password,
+                              **({'remember':remember} if remember is not None else {})},
                         headers={'Origin':'http://testserver','X-CSRF-Token':csrf, **(headers or {})})
 
 
@@ -155,8 +156,9 @@ def test_concurrent_failures_are_atomic(browser):
 
 
 @pytest.mark.parametrize('updates', [{'auth_username':'changed-user'}, {'auth_password':'changed-password-for-auth'}])
-def test_credential_change_invalidates_sessions(browser, updates):
-    assert login(browser).status_code == 200
+@pytest.mark.parametrize('remember', [False, True])
+def test_credential_change_invalidates_sessions(browser, updates, remember):
+    assert login(browser, remember=remember).status_code == 200
     store = browser.app.state.auth
     changed = Settings(**{**store.settings.model_dump(), **updates})
     assert AuthStore(store.path, changed).session(browser.cookies[COOKIE]) is None
@@ -245,3 +247,42 @@ def test_login_replaces_malformed_challenge_cookie(browser):
     response=browser.post('/api/auth/login',json={'username':'test-user','password':'test-password-for-auth'},
                           headers={'Origin':'http://testserver','X-CSRF-Token':'wrong-token'})
     assert response.status_code == 403
+
+
+@pytest.mark.parametrize('remember', [False, True])
+def test_remember_me_cookie_and_server_expire_together(browser, monkeypatch, remember):
+    from app.services.auth import REMEMBER_SESSION_SECONDS
+    before=time.time()
+    response=login(browser,remember=remember)
+    assert response.status_code == 200
+    store=browser.app.state.auth
+    expected=REMEMBER_SESSION_SECONDS if remember else store.settings.auth_session_seconds
+    assert f'Max-Age={expected}' in response.headers['set-cookie']
+    assert 'HttpOnly' in response.headers['set-cookie']
+    assert 'SameSite=strict' in response.headers['set-cookie']
+    token=browser.cookies[COOKIE]
+    csrf,expires=store.session(token)
+    assert before+expected <= expires <= time.time()+expected
+    assert AuthStore(store.path,store.settings).session(token) is not None
+    with monkeypatch.context() as clock:
+        clock.setattr('app.services.auth.time.time',lambda:expires-1)
+        assert store.session(token) is not None
+        clock.setattr('app.services.auth.time.time',lambda:expires)
+        assert store.session(token) is None
+    if remember:
+        with monkeypatch.context() as clock:
+            clock.setattr('app.services.auth.time.time',lambda:before+store.settings.auth_session_seconds+1)
+            assert store.session(token) is not None
+    response=browser.post('/api/auth/logout',headers={'Origin':'http://testserver','X-CSRF-Token':csrf})
+    assert response.status_code == 200
+    assert store.session(token) is None
+
+
+@pytest.mark.parametrize('remember', ['true','false',1,0,None,[],{}])
+def test_login_rejects_non_boolean_remember_flag(browser, remember):
+    page=browser.get('/login')
+    csrf=re.search(r'name="login-csrf-token" content="([^\"]+)"',page.text)[1]
+    response=browser.post('/api/auth/login',json={'username':'test-user','password':'test-password-for-auth','remember':remember},
+                          headers={'Origin':'http://testserver','X-CSRF-Token':csrf})
+    assert response.status_code == 400
+    assert browser.app.state.auth.session(browser.cookies.get(COOKIE,'')) is None
