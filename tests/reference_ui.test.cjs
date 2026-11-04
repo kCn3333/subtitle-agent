@@ -6,7 +6,7 @@ const {test} = require('node:test');
 function renderReport(report) {
   const elements = new Map();
   function element() {
-    return {hidden: false, options: [], setAttribute() {}, removeAttribute() {},
+    return {hidden: false, options: [], setAttribute(name,value) {this[name]=value}, removeAttribute(name) {delete this[name]},
       replaceChildren() {this.options = []}, append(...options) {this.options.push(...options)},
       get outerHTML() {return String(this.textContent ?? '')}};
   }
@@ -79,3 +79,18 @@ test('French reference is selectable alongside English and shown with its langua
   assert.match(options[1].textContent, /FRA · French/);
   assert.match(ui.get('#result-content').innerHTML, /Wybrana referencja/);
 });
+
+for (const pending of [{workpack:{referenceAmbiguous:true}}, {externalReferenceConfirmationRequired:true,workpack:{referenceAmbiguous:false}}]) {
+  test(`download waits for reference confirmation: ${JSON.stringify(pending)}`, () => {
+    const report={jobType:'PREPARE_WORKPACK',referenceRanking:[pgs,srt],selectedReference:pgs,...pending};
+    const ui=renderReport(report);
+    assert.equal(ui.get('#download')['aria-disabled'],'true');
+    assert.equal(ui.get('#download').href,undefined);
+    assert.equal(ui.get('#reference-actions').hidden,false);
+    assert.equal(ui.get('#rebuild').textContent,pending.externalReferenceConfirmationRequired?'Tak, użyj jako wzorca':'Zatwierdź wybór');
+    const confirmed=renderReport({...report,externalReferenceConfirmationRequired:false,workpack:{referenceAmbiguous:false}});
+    assert.equal(confirmed.get('#download')['aria-disabled'],'false');
+    assert.equal(confirmed.get('#download').href,'/api/tasks/test/download');
+    assert.equal(confirmed.get('#rebuild').textContent,'Zbuduj ponownie');
+  });
+}

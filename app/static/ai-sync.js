@@ -1,7 +1,7 @@
 const aiPanel=document.querySelector('#ai-sync-panel'),polishSelect=document.querySelector('#ai-polish');
 const aiButtonLabel=document.querySelector('#ai-sync-button-label');
 const aiButton=document.querySelector('#ai-sync-button'),aiMessage=document.querySelector('#ai-sync-status'),aiDownload=document.querySelector('#ai-download');
-let aiPreparedReference=null,aiRunning=false,aiJobId=null,aiMode='sync',aiRequestMode='sync',aiMediaTitle='Nieznany tytuł',aiChecking=true,aiPostPending=false,aiSeenOperation=null,aiObservedOperation=null,aiPhase='Oczekiwanie na odpowiedź modelu',aiStatusVersion=0;
+let aiReferencePending=false,aiPreparedReference=null,aiRunning=false,aiJobId=null,aiMode='sync',aiRequestMode='sync',aiMediaTitle='Nieznany tytuł',aiChecking=true,aiPostPending=false,aiSeenOperation=null,aiObservedOperation=null,aiPhase='Oczekiwanie na odpowiedź modelu',aiStatusVersion=0;
 function aiEndpoint(mode=aiMode){return mode==='translation'?'ai-translate':'ai-sync'}
 function aiHasInputs(){return aiMode==='translation'||polishSelect.options.length>0}
 function aiStage(mode=aiMode){return mode==='translation'?'AI_TRANSLATE':'AI_SYNC'}
@@ -25,7 +25,7 @@ function stopAiElapsed(){
   aiTimer=null;aiStartedAt=null;aiRequestJobId=null;aiActivity.remove();
 }
 function aiControls(){
-  aiButton.disabled=aiChecking||aiRunning||aiPostPending||!aiHasInputs()||referenceSelect.value!==aiPreparedReference;
+  aiButton.disabled=aiReferencePending||aiChecking||aiRunning||aiPostPending||!aiHasInputs()||referenceSelect.value!==aiPreparedReference;
   polishSelect.disabled=aiRunning||aiPostPending;
   referenceSelect.disabled=aiRunning||aiPostPending;
   document.querySelector('#rebuild').disabled=aiRunning||aiPostPending;
@@ -92,21 +92,22 @@ function showAiResult(result,jobId,mode=aiMode){
 }
 function renderAiSync(job){
   const report=job.report||{};
-  aiPanel.hidden=!(job.status==='WORKPACK_READY'&&['PREPARE_SYNC','PREPARE_TRANSLATION'].includes(report.pipeline)&&!report.externalReferenceConfirmationRequired&&!report.requiresOcr);
+  aiReferencePending=referenceNeedsConfirmation(report);
+  aiPanel.hidden=!((job.status==='WORKPACK_READY'||(job.status==='WORKPACK_INCOMPLETE'&&aiReferencePending))&&['PREPARE_SYNC','PREPARE_TRANSLATION'].includes(report.pipeline)&&!report.requiresOcr);
   aiButton.hidden=aiPanel.hidden;
   if(aiPanel.hidden)return;
   aiMediaTitle=job.displayTitle||readableMediaTitle(report.media?.name||report.mediaInspection?.name||'');
   aiMode=report.pipeline==='PREPARE_TRANSLATION'?'translation':'sync';
   document.querySelector('#ai-panel-title').textContent=aiMode==='translation'?'Tłumaczenie przez AI':'Synchronizacja przez AI';
   document.querySelector('#ai-polish-field').hidden=aiMode==='translation';
-  aiJobId=job.jobId;aiPreparedReference=sourceId((report.selectedReference||report.selectedEnglish));
+  aiJobId=job.jobId;aiPreparedReference=(report.selectedReference||report.selectedEnglish)?sourceId(report.selectedReference||report.selectedEnglish):null;
   polishSelect.replaceChildren();
   for(const item of report.polishCandidates||[]){
     if(!item.archiveName?.toLowerCase().endsWith('.srt'))continue;
     const option=document.createElement('option');option.value=item.archiveName;option.textContent=item.originalName||item.archiveName;polishSelect.append(option);
   }
   aiChecking=true;aiControls();
-  aiMessage.textContent=aiRunning?(aiRequestJobId===job.jobId?'AI przetwarza żądanie…':'Poczekaj na zakończenie żądania AI poprzedniego zadania.'):'';aiDownload.hidden=true;
+  aiMessage.textContent=aiReferencePending?'Najpierw zatwierdź wybór referencji.':aiRunning?(aiRequestJobId===job.jobId?'AI przetwarza żądanie…':'Poczekaj na zakończenie żądania AI poprzedniego zadania.'):'';aiDownload.hidden=true;
   refreshAiStatus(job.jobId,true);
 }
 referenceSelect.addEventListener('change',()=>{
@@ -119,7 +120,7 @@ document.querySelector('#rebuild').addEventListener('click',hideAiHandoff);
 aiButton.addEventListener('click',async()=>{
   const jobId=aiJobId,mode=aiMode,title=aiMediaTitle;
   const operation=mode==='translation'?'Tłumaczenie przez AI':'Synchronizacja przez AI';
-  if(!jobId||aiRunning||aiChecking||aiPostPending)return;
+  if(!jobId||aiButton.disabled)return;
   aiPostPending=true;aiPhase='Wysyłanie danych i oczekiwanie na model';
   aiRunning=true;aiButton.disabled=true;polishSelect.disabled=true;aiDownload.hidden=true;
   aiControls();

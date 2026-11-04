@@ -46,7 +46,8 @@ function duration(ms){if(ms==null)return '—';const hours=Math.floor(ms/3600000
 function fileSize(bytes){const size=Number(bytes)||0;return size>=1048576?`${(size/1048576).toFixed(2)} MB`:`${(size/1024).toFixed(1)} KB`}
 function tracks(items,subtitle=false){return `<ul class="result-list">${(items||[]).map(item=>`<li>#${nodeText(item.streamIndex)} · ${nodeText((item.codec||'').toUpperCase())} · ${nodeText((item.language||'—').toUpperCase())}${subtitle?'':` · ${nodeText(item.channelLayout||item.channels)}`}</li>`).join('')||'<li>Brak</li>'}</ul>`}
 function setProgress(value){const progress=Math.max(0,Math.min(100,Number(value)||0));progressEl.textContent=`${progress}%`;progressBar.style.width=`${progress}%`;progressTrack.setAttribute('aria-valuenow',String(progress))}
-function setDownload(job,pack){const ready=Boolean(pack);download.setAttribute('aria-disabled',String(!ready));if(ready){download.href=`/api/tasks/${job.jobId}/download`;download.download=pack.filename||''}else{download.removeAttribute('href');download.removeAttribute('download')}}
+function referenceNeedsConfirmation(report){return Boolean(report?.externalReferenceConfirmationRequired||report?.workpack?.referenceAmbiguous)}
+function setDownload(job,pack){const ready=Boolean(pack)&&!referenceNeedsConfirmation(job?.report);download.setAttribute('aria-disabled',String(!ready));if(ready){download.href=`/api/tasks/${job.jobId}/download`;download.download=pack.filename||''}else{download.removeAttribute('href');download.removeAttribute('download')}}
 
 function render(job){const report=job.report||{},pack=report.workpack;activeMediaTitle=job.displayTitle||readableMediaTitle(report.media?.name||report.mediaInspection?.name||'');setDownload(job,pack);if(!report.jobType){results.hidden=true;referenceBox.hidden=true;referenceActions.hidden=true;currentStatus.hidden=false;return}activeJobId=job.jobId;results.hidden=false;
   const selected=(report.selectedReference||report.selectedEnglish),warnings=[...(report.warnings||[]),...(report.incompleteReasons||[])];
@@ -60,7 +61,7 @@ function render(job){const report=job.report||{},pack=report.workpack;activeMedi
   document.querySelector('#reference-question').hidden=!confirmationRequired;
   document.querySelector('#reference-field').hidden=!canChoose;
   referenceActions.hidden=!canChoose;
-  document.querySelector('#rebuild').textContent=confirmationRequired?'Tak, użyj jako wzorca':'Zbuduj ponownie';
+  document.querySelector('#rebuild').textContent=confirmationRequired?'Tak, użyj jako wzorca':pack?.referenceAmbiguous?'Zatwierdź wybór':'Zbuduj ponownie';
   referenceBox.hidden=!(selected||canChoose);
   currentStatus.hidden=!referenceBox.hidden;
   if(typeof renderAiSync==='function')renderAiSync(job)}

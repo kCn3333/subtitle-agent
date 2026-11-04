@@ -21,6 +21,7 @@ async function setup(response,state={status:'idle'}){
   const script=readFileSync('app/static/ai-sync.js','utf8');
   runInNewContext(readFileSync('app/static/ai-metrics.js','utf8'),context);
   runInNewContext(readFileSync('app/static/media-title.js','utf8'),context);
+  runInNewContext(readFileSync('app/static/app.js','utf8').match(/^function referenceNeedsConfirmation.*$/m)[0],context);
   runInNewContext(script,context);
   context.renderAiSync({jobId:'job',status:'WORKPACK_READY',displayTitle:'Come and See (1985)',report:{pipeline:'PREPARE_SYNC',
     selectedEnglish:{streamIndex:4},polishCandidates:[{archiveName:'polish/a.srt',originalName:'A'},{archiveName:'polish/b.srt'}]}});
@@ -199,3 +200,31 @@ test('failure after return shows metrics once and stops animation',async()=>{
   assert.match(context.logs.at(-1)[2],/0,01 USD/);
   const count=context.logs.length;await context.refreshAiStatus();assert.equal(context.logs.length,count);
 });
+
+for(const pipeline of ['PREPARE_SYNC','PREPARE_TRANSLATION']){
+  for(const external of [false,true]){
+    test(`${pipeline} waits for ${external?'external':'ambiguous'} reference confirmation and unlocks after rebuild`,async()=>{
+      const {get,context}=await setup();
+      let posts=0;
+      context.fetch=async(url,options)=>{if(options?.method==='POST')posts++;return {ok:true,json:async()=>({status:'idle'})}};
+      const report={pipeline,selectedReference:external?null:{streamIndex:4},
+        polishCandidates:[{archiveName:'polish/a.srt'}],
+        externalReferenceConfirmationRequired:external,workpack:{referenceAmbiguous:!external}};
+      context.renderAiSync({jobId:'job',status:external?'WORKPACK_INCOMPLETE':'WORKPACK_READY',report});
+      await context.refreshAiStatus();
+      assert.equal(get('#ai-sync-panel').hidden,false);
+      assert.equal(get('#ai-sync-button').hidden,false);
+      assert.equal(get('#ai-sync-button').disabled,true);
+      assert.equal(get('#rebuild').disabled,false);
+      assert.match(get('#ai-sync-status').textContent,/Najpierw zatwierdź/);
+      await get('#ai-sync-button').handlers.click();
+      assert.equal(posts,0);
+      await context.refreshAiStatus();
+      assert.equal(get('#ai-sync-button').disabled,true);
+      context.renderAiSync({jobId:'job',status:'WORKPACK_READY',report:{...report,
+        selectedReference:{streamIndex:4},externalReferenceConfirmationRequired:false,workpack:{referenceAmbiguous:false}}});
+      await context.refreshAiStatus();
+      assert.equal(get('#ai-sync-button').disabled,false);
+    });
+  }
+}
