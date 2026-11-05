@@ -9,6 +9,7 @@ from fastapi.templating import Jinja2Templates
 from app.api.auth import router as auth_router
 from app.core.auth import AuthMiddleware
 from app.services.auth import AuthStore
+from app.services.operation_queue import AiQueue, QueueBusy, JobBusy
 from app.api.jobs import router as jobs_router
 from app.api.archive import router as archive_router
 from app.api.ai_sync import router as ai_sync_router
@@ -41,20 +42,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.ai_console = AiConsoleStore(config.data_root / "subtitle-agent.db")
         app.state.ai_console.usage.backfill(app.state.jobs.list_jobs(limit=None),
                                            config.data_root / "work" / "jobs")
+        app.state.ai_queue = AiQueue(config.data_root / "subtitle-agent.db", app.state.jobs,
+                                     app.state.ai_operations, config.max_queued_ai_operations)
         await app.state.jobs.start()
+        app.state.ai_queue.start()
         try:
             yield
         finally:
+            await app.state.ai_queue.close()
             await app.state.jobs.close()
 
     app = FastAPI(title=config.app_name, lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.add_middleware(AuthMiddleware, settings=config)
     app.state.settings = config
-    app.state.ai_sync_locks = {}
     app.state.ai_operations = {}
     app.state.ai_health = ApiHealth()
     app.mount("/static", StaticFiles(directory="app/static"), name="static")
     templates = Jinja2Templates(directory="app/templates")
+
+    @app.exception_handler(QueueBusy)
+    async def queue_busy(_: Request, exc: QueueBusy):
+        return JSONResponse(status_code=429, headers={"Retry-After":"30"},
+                            content={"detail":{"code":"QUEUE_FULL", "message":str(exc)}})
+
+    @app.exception_handler(JobBusy)
+    async def job_busy(_: Request, exc: JobBusy):
+        return JSONResponse(status_code=409, content={"detail":{"code":"JOB_BUSY", "message":str(exc)}})
 
     @app.exception_handler(Exception)
     async def unexpected_error(_: Request, exc: Exception):

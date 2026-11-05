@@ -1,7 +1,7 @@
 const aiPanel=document.querySelector('#ai-sync-panel'),polishSelect=document.querySelector('#ai-polish');
 const aiButtonLabel=document.querySelector('#ai-sync-button-label');
 const aiButton=document.querySelector('#ai-sync-button'),aiMessage=document.querySelector('#ai-sync-status'),aiDownload=document.querySelector('#ai-download');
-let aiReferencePending=false,aiPreparedReference=null,aiRunning=false,aiJobId=null,aiMode='sync',aiRequestMode='sync',aiMediaTitle='Nieznany tytuł',aiChecking=true,aiPostPending=false,aiSeenOperation=null,aiObservedOperation=null,aiPhase='Oczekiwanie na odpowiedź modelu',aiStatusVersion=0;
+let aiQueued=false,aiQueuePosition=null,aiReferencePending=false,aiPreparedReference=null,aiRunning=false,aiJobId=null,aiMode='sync',aiRequestMode='sync',aiMediaTitle='Nieznany tytuł',aiChecking=true,aiPostPending=false,aiSeenOperation=null,aiObservedOperation=null,aiPhase='Oczekiwanie na odpowiedź modelu',aiStatusVersion=0;
 function aiEndpoint(mode=aiMode){return mode==='translation'?'ai-translate':'ai-sync'}
 function aiHasInputs(){return aiMode==='translation'||polishSelect.options.length>0}
 function aiStage(mode=aiMode){return mode==='translation'?'AI_TRANSLATE':'AI_SYNC'}
@@ -18,7 +18,7 @@ function updateAiElapsed(){
   const elapsed=Math.max(0,Math.floor((Date.now()-aiStartedAt)/1000));
   aiActivityText.textContent=`[${aiStage(aiRequestMode)}] ${aiPhase} · Film: ${aiMediaTitle} · oczekiwanie: ${Math.floor(elapsed/60)} min ${String(elapsed%60).padStart(2,'0')} s`;
   if(!output.contains(aiActivity))output.append(aiActivity);
-  aiMessage.textContent=`AI przetwarza żądanie${'.'.repeat(elapsed%3+1)} Czas oczekiwania: ${elapsed} s.`;
+  aiMessage.textContent=aiQueued?`Oczekiwanie w kolejce AI${aiQueuePosition?` · pozycja ${aiQueuePosition}`:''}. Czas oczekiwania: ${elapsed} s.`:`AI przetwarza żądanie${'.'.repeat(elapsed%3+1)} Czas oczekiwania: ${elapsed} s.`;
 }
 function stopAiElapsed(){
   if(aiTimer!==null)clearInterval(aiTimer);
@@ -29,20 +29,21 @@ function aiControls(){
   polishSelect.disabled=aiRunning||aiPostPending;
   referenceSelect.disabled=aiRunning||aiPostPending;
   document.querySelector('#rebuild').disabled=aiRunning||aiPostPending;
-  aiButtonLabel.textContent=aiRunning||aiPostPending?'AI pracuje…':aiChecking?'Sprawdzanie stanu…':'Przekaż do AI';
+  aiButtonLabel.textContent=aiQueued?'Oczekuje w kolejce…':aiRunning||aiPostPending?'AI pracuje…':aiChecking?'Sprawdzanie stanu…':'Przekaż do AI';
 }
 function applyAiState(state,jobId){
   if(jobId!==activeJobId||jobId!==aiJobId)return;
   aiChecking=false;
-  if(state.status==='running'){
+  if(['queued','running'].includes(state.status)){
+    aiQueued=state.status==='queued';aiQueuePosition=state.queue_position;
     aiRunning=true;aiRequestJobId=jobId;aiRequestMode=state.mode;aiMediaTitle=state.title||aiMediaTitle;
     aiObservedOperation=state.operation_id;aiPhase=state.phase||'Oczekiwanie na odpowiedź modelu';
-    const started=Date.parse(state.started_at);aiStartedAt=Number.isFinite(started)?started:Date.now();
+    const started=Date.parse(aiQueued?state.queued_at:state.started_at);aiStartedAt=Number.isFinite(started)?started:Date.now();
     if(state.polish_file&&polishSelect.options.length)polishSelect.value=state.polish_file;
     if(aiTimer===null)aiTimer=setInterval(updateAiElapsed,1000);
     aiDownload.hidden=true;updateAiElapsed();
   }else if(!aiPostPending){
-    stopAiElapsed();aiRunning=false;
+    stopAiElapsed();aiRunning=false;aiQueued=false;aiQueuePosition=null;
     const operation=state.mode==='translation'?'Tłumaczenie przez AI':'Synchronizacja przez AI';
     if(state.status==='completed')showAiResult(state.result,jobId,state.mode);
     if(state.operation_id&&state.operation_id!==aiSeenOperation){
@@ -134,6 +135,7 @@ aiButton.addEventListener('click',async()=>{
       body:JSON.stringify(payload)});
     const body=await response.json();
     if(response.status===409){aiPostPending=false;await refreshAiStatus(jobId);return}
+    if(response.status===202){aiPostPending=false;applyAiState(body,jobId);return}
     stopAiElapsed();
     aiSeenOperation=body.operation_id||body.detail?.operation_id||aiObservedOperation;
     if(!response.ok){const error=new Error(body.detail?.message||'Operacja AI nie powiodła się');error.metrics=body.detail;throw error}

@@ -1,3 +1,4 @@
+from conftest import complete_ai
 import json
 import math
 
@@ -72,7 +73,7 @@ def use_transport(client,monkeypatch,content):
 def test_translation_cost_console_download_archive_and_restoration(client,prepared_job,monkeypatch):
     job,directory=translate_job(client,prepared_job)
     use_transport(client,monkeypatch,json.dumps({'segments':[{'id':'en:1','text':'Polskie tłumaczenie.'}]}))
-    response=client.post(f'/api/tasks/{job}/ai-translate',json={'reference_source_id':'embedded:4'})
+    response=complete_ai(client,f'/api/tasks/{job}/ai-translate',json={'reference_source_id':'embedded:4'})
     assert response.status_code==200,response.text
     assert response.json()['total_cost']==0.00123456
     assert response.json()['usage']['cost_currency']=='USD'
@@ -96,7 +97,7 @@ def test_translation_cost_console_download_archive_and_restoration(client,prepar
 def test_paid_bad_translation_keeps_cost_and_creates_no_srt(client,prepared_job,monkeypatch,content):
     job,directory=translate_job(client,prepared_job)
     use_transport(client,monkeypatch,content)
-    response=client.post(f'/api/tasks/{job}/ai-translate',json={'reference_source_id':'embedded:4'})
+    response=complete_ai(client,f'/api/tasks/{job}/ai-translate',json={'reference_source_id':'embedded:4'})
     assert response.status_code==502,response.text
     assert response.json()['detail']['usage']['cost']==0.00123456
     assert not (directory/'ai-translation.pl.srt').exists()
@@ -141,9 +142,9 @@ def test_sync_and_connection_test_preserve_zero_cost(client,prepared_job,monkeyp
     async def call(settings,instruction,data):
         return await chat_request(settings,instruction,data,httpx.MockTransport(respond))
     monkeypatch.setattr('app.api.ai_sync.chat_request',call)
-    connection=client.post('/api/settings/ai/test')
+    connection=complete_ai(client,'/api/settings/ai/test')
     assert connection.json()['usage']['cost']==0
-    response=client.post(f'/api/tasks/{job}/ai-sync',json={'reference_source_id':'embedded:4','polish_file':'polish/original.pl.srt'})
+    response=complete_ai(client,f'/api/tasks/{job}/ai-sync',json={'reference_source_id':'embedded:4','polish_file':'polish/original.pl.srt'})
     assert response.status_code==200 and response.json()['total_cost']==0
     entries=client.get('/api/settings/ai/console').json()['entries']
     sync_success=[row for row in entries if row['operation']=='SYNC' and row['level']=='SUCCESS']

@@ -70,3 +70,31 @@ test('settings preserve selected reasoning and optional output limit in save pay
   await context.saveAiSettings(false);
   assert.equal(saved.reasoning_effort,null);assert.equal(saved.max_output_tokens,null);
 });
+
+test('connection test follows queued operation without holding the POST response',async()=>{
+  const elements=new Map(),messages=[];
+  const get=id=>{
+    if(!elements.has(id)){
+      const el={value:'',checked:false,children:[],addEventListener(){},querySelectorAll(){return []},append(node){this.children.push(node)},replaceChildren(){this.children=[]}};
+      if(id==='#settings-status')Object.defineProperty(el,'textContent',{get(){return messages.at(-1)},set(value){messages.push(value)}});
+      elements.set(id,el);
+    }
+    return elements.get(id);
+  };
+  let polls=0;
+  const context={document:{querySelector:get,createElement:()=>({}),hidden:false},setInterval(){},setTimeout(fn){fn()},
+    fetch:async(url,options)=>({ok:true,json:async()=>{
+      if(url.endsWith('/console'))return {entries:[]};
+      if(url==='/api/settings/ai/test')return {status:'queued',operation_id:'test-op',queue_position:2};
+      if(url==='/api/ai-operations/test-op')return ++polls===1?{status:'running',operation_id:'test-op'}:{status:'completed',result:{ok:true}};
+      if(options?.method==='PUT')return JSON.parse(options.body);
+      return {api_url:'http://test/v1',model:'test',timeout_seconds:120};
+    }})};
+  runInNewContext(readFileSync('app/static/settings.js','utf8'),context);
+  await new Promise(setImmediate);
+  await context.saveAiSettings(true);
+  assert.equal(polls,2);
+  assert.ok(messages.some(message=>/pozycja 2/.test(message)));
+  assert.ok(messages.includes('Testowanie połączenia…'));
+  assert.equal(messages.at(-1),'Połączenie poprawne.');
+});

@@ -228,3 +228,38 @@ for(const pipeline of ['PREPARE_SYNC','PREPARE_TRANSLATION']){
     });
   }
 }
+
+test('queued AI shows waiting state and transitions to running and completion',async()=>{
+  const state={status:'queued',operation_id:'queued-op',mode:'sync',queue_position:2,
+    queued_at:'1970-01-01T00:00:00Z',phase:'Oczekiwanie w kolejce AI'};
+  const {get,context}=await setup(undefined,state);
+  assert.equal(get('#ai-sync-button').disabled,true);
+  assert.equal(get('#rebuild').disabled,true);
+  assert.equal(get('#ai-sync-button-label').textContent,'Oczekuje w kolejce…');
+  assert.match(get('#ai-sync-status').textContent,/pozycja 2/);
+  state.status='running';state.started_at='1970-01-01T00:00:05Z';state.phase='Oczekiwanie na odpowiedź modelu';
+  await context.refreshAiStatus();
+  assert.equal(get('#ai-sync-button-label').textContent,'AI pracuje…');
+  state.status='completed';state.result={cue_count:2,elapsed_seconds:4,inputs:[{}, {name:'polish/a.srt'}]};
+  await context.refreshAiStatus();
+  assert.equal(get('#ai-sync-button').disabled,false);
+  assert.equal(get('#ai-download').hidden,false);
+  assert.equal(context.logs.filter(entry=>entry[1]==='AI_SYNC_SUMMARY').length,1);
+});
+
+test('202 acceptance waits for status instead of displaying an unfinished result',async()=>{
+  const state={status:'idle'};
+  const {get,context}=await setup(undefined,state);
+  context.fetch=async(url,options)=>{
+    if(options?.method==='POST'){
+      Object.assign(state,{status:'queued',operation_id:'new-op',mode:'sync',queue_position:1,
+        queued_at:'1970-01-01T00:00:00Z',phase:'Oczekiwanie w kolejce AI'});
+      return {ok:true,status:202,json:async()=>({...state})};
+    }
+    return {ok:true,json:async()=>({...state})};
+  };
+  await get('#ai-sync-button').handlers.click();
+  assert.equal(get('#ai-download').hidden,true);
+  assert.equal(get('#ai-sync-button-label').textContent,'Oczekuje w kolejce…');
+  assert.equal(context.logs.filter(entry=>entry[1].endsWith('_SUMMARY')).length,0);
+});

@@ -15,6 +15,15 @@ async function settingsRequest(url,options={}){
   if(!response.ok)throw new Error(body.detail?.message||(Array.isArray(body.detail)?body.detail.map(item=>item.msg).join('; '):'Nie udało się wykonać żądania'));
   return body;
 }
+async function waitForAiTest(state){
+  while(['queued','running'].includes(state.status)){
+    settingsStatus.textContent=state.status==='queued'?`Test oczekuje w kolejce AI${state.queue_position?` · pozycja ${state.queue_position}`:''}…`:'Testowanie połączenia…';
+    await new Promise(resolve=>setTimeout(resolve,1500));
+    state=await settingsRequest(`/api/ai-operations/${state.operation_id}`);
+  }
+  if(state.status==='failed')throw new Error(state.error?.message||'Test połączenia nie powiódł się.');
+  return state;
+}
 async function saveAiSettings(test){
   const buttons=settingsForm.querySelectorAll('button');buttons.forEach(button=>button.disabled=true);
   settingsStatus.textContent=test?'Zapisywanie i testowanie połączenia…':'Zapisywanie…';
@@ -28,7 +37,7 @@ async function saveAiSettings(test){
     if(document.querySelector('#clear-key').checked)payload.api_key='';else if(key)payload.api_key=key;
     displaySettings(await settingsRequest('/api/settings/ai',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}));
     if(typeof refreshHeaderHealth==='function')refreshHeaderHealth();
-    if(test){await settingsRequest('/api/settings/ai/test',{method:'POST'});settingsStatus.textContent='Połączenie poprawne.'}
+    if(test){await waitForAiTest(await settingsRequest('/api/settings/ai/test',{method:'POST'}));settingsStatus.textContent='Połączenie poprawne.'}
     else settingsStatus.textContent='Ustawienia zapisane.';
   }catch(error){settingsStatus.textContent=error.message}finally{buttons.forEach(button=>button.disabled=false)}
 }

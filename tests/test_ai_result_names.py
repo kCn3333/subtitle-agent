@@ -1,3 +1,4 @@
+from conftest import complete_ai
 from urllib.parse import unquote
 
 from app.services.archive import ArchiveStore
@@ -17,16 +18,16 @@ def test_sync_names_versions_dedup_and_archive_download(client,prepared_job,monk
     monkeypatch.setattr('app.api.ai_sync.chat_request',fake)
     payload={'polish_file':'polish/original.pl.srt','reference_source_id':'embedded:4'}
     path=f'/api/tasks/{job}/ai-sync'
-    first=client.post(path,json=payload)
+    first=complete_ai(client,path,json=payload)
     assert first.status_code==200,first.text
     expected=f'{media_name}.AI-Synced-v001.pl.srt'
     assert first.json()['filename']==expected
     assert expected in unquote(client.get(path+'/download').headers['content-disposition'])
     assert client.get(path).json()['result']['filename']==expected
     start=5000
-    second=client.post(path,json=payload)
+    second=complete_ai(client,path,json=payload)
     assert second.json()['filename']==f'{media_name}.AI-Synced-v002.pl.srt'
-    assert client.post(path,json=payload).json()['filename']==second.json()['filename']
+    assert complete_ai(client,path,json=payload).json()['filename']==second.json()['filename']
     entries=client.get('/api/archive').json()['titles'][0]['subtitles']
     assert len(entries)==2
     for entry in entries:

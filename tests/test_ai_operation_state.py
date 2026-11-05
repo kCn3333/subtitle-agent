@@ -25,7 +25,9 @@ async def test_server_reports_running_and_terminal_state_without_duplicate_reque
     path=f'/api/tasks/{job}'
     payload={'polish_file':'polish/original.pl.srt','reference_source_id':'embedded:4'}
     assert client.get(path+'/ai-status').json() == {'status':'idle'}
-    pending=asyncio.create_task(asyncio.to_thread(client.post,path+'/ai-sync',json=payload))
+    response=client.post(path+'/ai-sync',json=payload)
+    assert response.status_code == 202
+    operation_id=response.json()['operation_id']
     try:
         assert await asyncio.to_thread(started.wait,3)
         state=client.get(path+'/ai-status').json()
@@ -34,20 +36,24 @@ async def test_server_reports_running_and_terminal_state_without_duplicate_reque
         assert state['started_at'] and state['operation_id']
         assert state['polish_file']==payload['polish_file']
         rejected=client.post(path+'/ai-sync',json=payload)
-        assert rejected.status_code==409
-        assert rejected.json()['detail']['code']=='AI_OPERATION_RUNNING'
+        assert rejected.status_code==202
+        assert rejected.json()['operation_id']==operation_id
         assert client.get(path+'/ai-status').json()['operation_id']==state['operation_id']
         assert len(calls)==1
     finally:
         release.set()
-        response=await pending
-    assert response.status_code==(502 if failed else 200)
+        for _ in range(300):
+            terminal=client.get(path+'/ai-status').json()
+            if terminal['status'] in {'completed','failed'}:
+                break
+            await asyncio.sleep(.01)
+    assert terminal['http_status']==(502 if failed else 200)
     terminal=client.get(path+'/ai-status').json()
     assert terminal['operation_id']==state['operation_id']
     assert terminal['status']==('failed' if failed else 'completed')
     metrics=terminal['error' if failed else 'result']
     assert metrics['usage']['total_tokens']==42
-    assert not client.app.state.ai_sync_locks[job].locked()
+    assert job not in client.app.state.jobs.reserved_jobs
     assert job not in client.app.state.jobs.artifact_users
 
 

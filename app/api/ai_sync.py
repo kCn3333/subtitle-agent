@@ -1,7 +1,4 @@
-import asyncio
 import json
-import uuid
-from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
@@ -13,6 +10,7 @@ from app.services.ai_sync import (ApiSettings, AiSyncError, SYNC_INSTRUCTION, ch
 from app.services.alignment import sha256, write_preview
 from app.services.ai_console import capture
 from app.services.artifact_retention import validated_job_directory
+from app.services.operation_queue import JobBusy
 
 router = APIRouter(tags=["ai-sync"])
 
@@ -42,9 +40,22 @@ async def save_settings(payload: ApiSettings, request: Request):
     return request.app.state.ai_settings.save(payload).public()
 
 
-@router.post("/api/settings/ai/test")
+@router.post("/api/settings/ai/test", status_code=202)
 async def test_connection(request: Request):
-    settings = request.app.state.ai_settings.get()
+    settings = request.app.state.ai_settings.get().model_copy(deep=True)
+    return request.app.state.ai_queue.submit({'mode':'test', 'title':'Test połączenia API'},
+                                           lambda: execute_test(request, settings))
+
+
+@router.get("/api/ai-operations/{operation_id}")
+async def queued_operation(operation_id: str, request: Request):
+    state = request.app.state.ai_queue.status(operation_id)
+    if state is None:
+        raise error('Nie znaleziono operacji AI', 404)
+    return state
+
+
+async def execute_test(request: Request, settings):
     try:
         with capture(request.app.state.ai_console, settings, "TEST"):
             result, elapsed, usage = await chat_request(settings,
@@ -113,12 +124,12 @@ def saved_result(directory: Path, stem="ai-sync"):
     return result
 
 
-@router.post("/api/tasks/{job_id}/ai-sync")
+@router.post("/api/tasks/{job_id}/ai-sync", status_code=202)
 async def synchronize(job_id: str, payload: SyncRequest, request: Request):
     return await process(job_id, payload, request, "PREPARE_SYNC")
 
 
-@router.post("/api/tasks/{job_id}/ai-translate")
+@router.post("/api/tasks/{job_id}/ai-translate", status_code=202)
 async def translate(job_id: str, payload: SyncRequest, request: Request):
     return await process(job_id, payload, request, "PREPARE_TRANSLATION")
 
@@ -127,61 +138,59 @@ async def translate(job_id: str, payload: SyncRequest, request: Request):
 async def operation_status(job_id: str, request: Request):
     if not request.app.state.jobs.get(job_id):
         raise error("Nie znaleziono zadania", 404)
-    return request.app.state.ai_operations.get(job_id, {"status":"idle"})
+    state = request.app.state.ai_operations.get(job_id)
+    return request.app.state.ai_queue.status(state['operation_id']) if state else {"status":"idle"}
 
 
 async def process(job_id, payload, request, pipeline):
-    prepared(request, job_id, pipeline)
-    lock = request.app.state.ai_sync_locks.setdefault(job_id, asyncio.Lock())
-    if lock.locked():
-        exc = error("Operacja AI tego zadania już trwa", 409)
-        exc.detail['code'] = 'AI_OPERATION_RUNNING'
-        raise exc
-    async with lock:
-        states = request.app.state.ai_operations
-        for expired in list(states):
-            if not request.app.state.jobs.get(expired):
-                states.pop(expired, None)
-        state = {"status":"running", "operation_id":str(uuid.uuid4()),
-                 "started_at":datetime.now(timezone.utc).isoformat(),
-                 "mode":"translation" if pipeline == "PREPARE_TRANSLATION" else "sync",
-                 "title":request.app.state.jobs.get(job_id)['display_title'],
-                 "polish_file":payload.polish_file, "phase":"Przygotowanie danych dla modelu"}
-        states[job_id] = state
-        try:
-            result = await execute(job_id, payload, request, pipeline)
-            result = {**result, "operation_id":state['operation_id']}
-            state.update(status="completed", result=result, phase="Gotowe")
-            return result
-        except HTTPException as exc:
-            if isinstance(exc.detail, dict):
-                exc.detail['operation_id'] = state['operation_id']
-            state.update(status="failed", error=exc.detail, phase="Operacja zakończona błędem")
-            raise
-        except BaseException:
-            state.update(status="failed", error={"message":"Operacja AI została przerwana"}, phase="Operacja przerwana")
-            raise
+    queue = request.app.state.ai_queue
+    intent = {'pipeline':pipeline, **payload.model_dump()}
+    duplicate = queue.existing(job_id, intent)
+    if duplicate:
+        return duplicate
+    if job_id in request.app.state.jobs.reserved_jobs:
+        raise JobBusy('Zadanie jest już w kolejce lub jest przetwarzane.')
+    # Validate before admission, then revalidate when the worker starts.
+    directory, *_ = validate_inputs(job_id, payload, request, pipeline)
+    expected_manifest = sha256(directory / "manifest.json")
+    settings = request.app.state.ai_settings.get().model_copy(deep=True)
+    submitted = payload.model_copy(deep=True)
+    state = {'job_id':job_id, 'request':intent, 'mode':'translation' if pipeline == 'PREPARE_TRANSLATION' else 'sync',
+             'title':request.app.state.jobs.get(job_id)['display_title'], 'polish_file':payload.polish_file}
+    return queue.submit(state, lambda: execute(job_id, submitted, request, pipeline, settings, expected_manifest))
 
 
-async def execute(job_id, payload, request, pipeline):
-    translation = pipeline == "PREPARE_TRANSLATION"
-    stem = "ai-translation" if translation else "ai-sync"
+def validate_inputs(job_id, payload, request, pipeline):
     directory, report = prepared(request, job_id, pipeline)
     data = manifest(directory)
-    reference = data.get("reference") or {}
-    selected = report.get("selectedReference") or report.get("selectedEnglish") or {}
-    selected_id = (f"external:{selected.get('name')}" if selected.get("sourceType") == "external"
+    reference = data.get('reference') or {}
+    selected = report.get('selectedReference') or report.get('selectedEnglish') or {}
+    selected_id = (f"external:{selected.get('name')}" if selected.get('sourceType') == 'external'
                    else f"embedded:{selected.get('streamIndex')}")
     if payload.reference_source_id != selected_id:
-        raise error("Wybrano inną referencję; najpierw zbuduj ponownie workpack z tą referencją")
-    english_entries = [entry for entry in reference.get("files", [])
-                       if Path(entry.get("name", "")).name in {"selected.eng.srt", "selected.eng.ocr.srt", "selected.ref.srt", "selected.ref.ocr.srt"}]
-    polish_entries = [entry for entry in data.get("polish_candidates", [])
-                      if entry.get("archiveName") == payload.polish_file]
+        raise error('Wybrano inną referencję; najpierw zbuduj ponownie workpack z tą referencją')
+    english_entries = [entry for entry in reference.get('files', [])
+                       if Path(entry.get('name', '')).name in {'selected.eng.srt','selected.eng.ocr.srt','selected.ref.srt','selected.ref.ocr.srt'}]
+    polish_entries = [entry for entry in data.get('polish_candidates', []) if entry.get('archiveName') == payload.polish_file]
     if len(english_entries) != 1:
-        raise error("Brak przygotowanej tekstowej referencji; zakończ ekstrakcję/OCR")
-    if not translation and len(polish_entries) != 1:
-        raise error("Wybierz przygotowany polski plik SRT")
+        raise error('Brak przygotowanej tekstowej referencji; zakończ ekstrakcję/OCR')
+    if pipeline != 'PREPARE_TRANSLATION' and len(polish_entries) != 1:
+        raise error('Wybierz przygotowany polski plik SRT')
+    input_file(directory, english_entries[0], 'name')
+    if pipeline != 'PREPARE_TRANSLATION':
+        input_file(directory, polish_entries[0], 'archiveName')
+    duration = data.get('media', {}).get('duration_ms')
+    if type(duration) is not int or duration <= 0:
+        raise error('Brak poprawnego czasu trwania filmu')
+    return directory, report, data, reference, selected, english_entries, polish_entries
+
+
+async def execute(job_id, payload, request, pipeline, settings, expected_manifest):
+    translation = pipeline == "PREPARE_TRANSLATION"
+    stem = "ai-translation" if translation else "ai-sync"
+    directory, report, data, reference, selected, english_entries, polish_entries = validate_inputs(job_id, payload, request, pipeline)
+    if sha256(directory / 'manifest.json') != expected_manifest:
+        raise error('Dane workpacka zmieniły się podczas oczekiwania. Przygotuj go ponownie.', 409)
     english_path = input_file(directory, english_entries[0], "name")
     polish_path = None if translation else input_file(directory, polish_entries[0], "archiveName")
     inputs = [(english_entries[0], "name")]
@@ -194,8 +203,6 @@ async def execute(job_id, payload, request, pipeline):
     # Remove the previous result before a new attempt, including invalid responses.
     for name in (f"{stem}.json", f"{stem}.pl.srt"):
         (directory / name).unlink(missing_ok=True)
-    settings = request.app.state.ai_settings.get()
-    request.app.state.jobs.artifact_users.add(job_id)
     elapsed, usage = None, None
     try:
         with capture(request.app.state.ai_console, settings, "TRANSLATE" if translation else "SYNC", job_id,
@@ -243,9 +250,6 @@ async def execute(job_id, payload, request, pipeline):
     except AiSyncError as exc:
         raise error(str(exc), 502, exc.elapsed_seconds if exc.elapsed_seconds is not None else elapsed,
                     exc.usage if exc.usage is not None else usage) from exc
-    finally:
-        request.app.state.jobs.artifact_users.discard(job_id)
-        request.app.state.jobs.cleanup_expired_artifacts()
 
 @router.get("/api/tasks/{job_id}/ai-sync")
 async def result(job_id: str, request: Request):

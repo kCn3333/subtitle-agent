@@ -24,7 +24,7 @@ def test_readable_title(filename, title):
 
 @pytest.mark.anyio
 async def test_new_operations_start_with_action_and_title(tmp_path):
-    manager = JobManager(tmp_path/'jobs.db', Settings(data_root=tmp_path))
+    manager = JobManager(tmp_path/'jobs.db', Settings(data_root=tmp_path, max_queued_jobs=len(WorkpackTaskType)))
     for mode in WorkpackTaskType:
         job = await manager.create_workpack('/private/Movie.1985.1080p.mkv', mode)
         first = manager.events(job['id'])[0]

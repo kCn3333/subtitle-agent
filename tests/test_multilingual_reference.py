@@ -1,3 +1,4 @@
+from conftest import complete_ai
 import json
 
 import pytest
@@ -48,7 +49,7 @@ def test_french_reference_preparation_and_manual_selection(client, settings, mon
         return SubtitleExtractionResult([path], [])
     monkeypatch.setattr('app.services.job_manager.probe_media', probe)
     monkeypatch.setattr('app.services.job_manager.extract_embedded', extract)
-    job_id = client.post('/api/workpacks', json={'mediaPath': str(media), 'taskType': mode}).json()['jobId']
+    job_id = complete_ai(client,'/api/workpacks', json={'mediaPath': str(media), 'taskType': mode}).json()['jobId']
     job = _wait(client, job_id)
     assert job['status'] == 'WORKPACK_READY', job
     assert job['report']['selectedReference']['language'] == 'fra'
@@ -58,7 +59,7 @@ def test_french_reference_preparation_and_manual_selection(client, settings, mon
     assert manifest['reference']['language'] == 'fra'
     assert 'reference/selected/selected.ref.srt' in manifest['files']
     assert 'Angielskie' not in (directory / 'REQUEST.md').read_text()
-    response = client.post(f'/api/workpacks/{job_id}/reference', json={'referenceSourceId': 'embedded:3'})
+    response = complete_ai(client,f'/api/workpacks/{job_id}/reference', json={'referenceSourceId': 'embedded:3'})
     assert response.status_code == 202, response.text
 
 
@@ -97,7 +98,7 @@ def test_ai_accepts_french_reference_and_preserves_output_contract(client, prepa
                 {'segments': [{'id': 'pl:1', 'start_ms': 1000, 'end_ms': 2000}]}), .1, None
     monkeypatch.setattr('app.api.ai_sync.chat_request', call)
     endpoint = 'ai-translate' if translation else 'ai-sync'
-    response = client.post(f'/api/tasks/{job_id}/{endpoint}', json={'reference_source_id': 'embedded:4',
+    response = complete_ai(client,f'/api/tasks/{job_id}/{endpoint}', json={'reference_source_id': 'embedded:4',
                            **({} if translation else {'polish_file': 'polish/original.pl.srt'})})
     assert response.status_code == 200, response.text
     assert client.get(f'/api/tasks/{job_id}/{endpoint}/download').status_code == 200
@@ -120,7 +121,7 @@ def test_manual_rebuild_can_switch_from_english_to_french(client, settings, monk
         return SubtitleExtractionResult([path], [])
     monkeypatch.setattr('app.services.job_manager.probe_media', probe)
     monkeypatch.setattr('app.services.job_manager.extract_embedded', extract)
-    job_id = client.post('/api/workpacks', json={'mediaPath': str(media), 'taskType': 'PREPARE_TRANSLATION'}).json()['jobId']
+    job_id = complete_ai(client,'/api/workpacks', json={'mediaPath': str(media), 'taskType': 'PREPARE_TRANSLATION'}).json()['jobId']
     job = _wait(client, job_id)
     assert job['report']['selectedReference']['language'] == 'eng'
     # Older saved reports should expose newly supported tracks as well.
@@ -128,7 +129,7 @@ def test_manual_rebuild_can_switch_from_english_to_french(client, settings, monk
     with client.app.state.jobs._connect() as db:
         db.execute('UPDATE jobs SET report_json=? WHERE id=?', (json.dumps(saved), job_id))
     assert len(client.get(f'/api/workpacks/{job_id}').json()['report']['referenceRanking']) == 2
-    response = client.post(f'/api/workpacks/{job_id}/reference', json={'referenceSourceId': 'embedded:3'})
+    response = complete_ai(client,f'/api/workpacks/{job_id}/reference', json={'referenceSourceId': 'embedded:3'})
     assert response.status_code == 202, response.text
     import time
     for _ in range(300):
@@ -193,7 +194,7 @@ def test_french_graphic_reference_uses_french_ocr_without_english_text_fixes(cli
     monkeypatch.setattr('app.services.job_manager.graphic_timeline', graphic)
     monkeypatch.setattr('app.services.job_manager.recognize_reference', recognize)
     monkeypatch.setattr('app.services.job_manager.normalize_ocr_text', fail_normalization)
-    job_id = client.post('/api/workpacks', json={'mediaPath': str(media), 'taskType': mode}).json()['jobId']
+    job_id = complete_ai(client,'/api/workpacks', json={'mediaPath': str(media), 'taskType': mode}).json()['jobId']
     job = _wait(client, job_id)
     assert job['status'] == 'WORKPACK_READY', job
     assert job['report']['requiresOcr'] is False

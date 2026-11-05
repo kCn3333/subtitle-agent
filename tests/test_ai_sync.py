@@ -1,3 +1,4 @@
+from conftest import complete_ai
 import asyncio
 import json
 import sqlite3
@@ -137,7 +138,7 @@ def test_settings_and_connection_api(client,monkeypatch):
     assert 'test-secret' not in page
     async def fake(settings,instruction,data):return {'ok':True},.125,{'total_tokens':8}
     monkeypatch.setattr('app.api.ai_sync.chat_request',fake)
-    assert client.post('/api/settings/ai/test').json()['elapsed_seconds']==.125
+    assert complete_ai(client,'/api/settings/ai/test').json()['elapsed_seconds']==.125
 
 
 def test_sync_uses_prepared_ocr_and_preserves_polish(client,prepared_job,monkeypatch):
@@ -148,7 +149,7 @@ def test_sync_uses_prepared_ocr_and_preserves_polish(client,prepared_job,monkeyp
         assert data['polish'][0]['id']=='pl:1' and data['polish'][0]['text']==original
         return {'segments':[{'id':'pl:1','start_ms':5000,'end_ms':6500}]},1.25,None
     monkeypatch.setattr('app.api.ai_sync.chat_request',fake)
-    response=client.post(f'/api/tasks/{job_id}/ai-sync',json={'polish_file':'polish/original.pl.srt','reference_source_id':'embedded:4'})
+    response=complete_ai(client,f'/api/tasks/{job_id}/ai-sync',json={'polish_file':'polish/original.pl.srt','reference_source_id':'embedded:4'})
     assert response.status_code==200,response.text
     assert response.json()['elapsed_seconds']==1.25
     assert read_cues(directory/'ai-sync.pl.srt','pl')[0].raw_text==original
@@ -163,7 +164,7 @@ def test_invalid_answer_produces_no_srt(client,prepared_job,monkeypatch):
     job_id,directory=prepared_job
     async def fake(*args):return {'segments':[]},.5,None
     monkeypatch.setattr('app.api.ai_sync.chat_request',fake)
-    response=client.post(f'/api/tasks/{job_id}/ai-sync',json={'polish_file':'polish/original.pl.srt','reference_source_id':'embedded:4'})
+    response=complete_ai(client,f'/api/tasks/{job_id}/ai-sync',json={'polish_file':'polish/original.pl.srt','reference_source_id':'embedded:4'})
     assert response.status_code==502 and 'Niepełna' in response.json()['detail']['message']
     assert not (directory/'ai-sync.pl.srt').exists()
     assert client.get(f'/api/tasks/{job_id}/ai-sync/download').status_code==404
@@ -172,7 +173,7 @@ def test_invalid_answer_produces_no_srt(client,prepared_job,monkeypatch):
 def test_changed_reference_and_unsafe_polish_are_rejected(client,prepared_job):
     job_id,_=prepared_job
     for file,reference in [('polish/original.pl.srt','embedded:13'),('../private.srt','embedded:4')]:
-        response=client.post(f'/api/tasks/{job_id}/ai-sync',json={'polish_file':file,'reference_source_id':reference})
+        response=complete_ai(client,f'/api/tasks/{job_id}/ai-sync',json={'polish_file':file,'reference_source_id':reference})
         assert response.status_code==422
 
 
@@ -197,7 +198,7 @@ def test_pipeline_prepares_inputs_for_new_api(client,media_file,monkeypatch,mode
     monkeypatch.setattr('app.services.job_manager.extract_embedded',extract)
     monkeypatch.setattr('app.api.ai_sync.chat_request',fake)
     cue_file(media_file.with_suffix('.pl.srt'))
-    job_id=client.post('/api/tasks',json={'mediaPath':str(media_file),'mode':mode}).json()['jobId']
+    job_id=complete_ai(client,'/api/tasks',json={'mediaPath':str(media_file),'mode':mode}).json()['jobId']
     for _ in range(300):
         job=client.get(f'/api/tasks/{job_id}').json()
         if job['status'] in {'WORKPACK_READY','WORKPACK_INCOMPLETE','FAILED'}:break
@@ -206,7 +207,7 @@ def test_pipeline_prepares_inputs_for_new_api(client,media_file,monkeypatch,mode
     payload={'reference_source_id':'embedded:4'}
     endpoint='ai-translate' if mode=='PREPARE_TRANSLATION' else 'ai-sync'
     if mode=='PREPARE_SYNC':payload['polish_file']=job['report']['polishCandidates'][0]['archiveName']
-    response=client.post(f'/api/tasks/{job_id}/{endpoint}',json=payload)
+    response=complete_ai(client,f'/api/tasks/{job_id}/{endpoint}',json=payload)
     assert response.status_code==200,response.text
     assert client.get(f'/api/tasks/{job_id}/{endpoint}/download').status_code==200
 
@@ -247,8 +248,8 @@ def test_reasoning_effort_in_connection_test_and_sync(client,prepared_job,monkey
     assert client.put('/api/settings/ai',json=settings).json()['reasoning_effort']==effort
     assert client.get('/api/settings/ai').json()['reasoning_effort']==effort
     assert client.get('/api/settings/ai').json()['response_format']==response_format
-    assert client.post('/api/settings/ai/test').status_code==200
-    response=client.post(f'/api/tasks/{job_id}/ai-sync',json={'polish_file':'polish/original.pl.srt','reference_source_id':'embedded:4'})
+    assert complete_ai(client,'/api/settings/ai/test').status_code==200
+    response=complete_ai(client,f'/api/tasks/{job_id}/ai-sync',json={'polish_file':'polish/original.pl.srt','reference_source_id':'embedded:4'})
     assert response.status_code==200,response.text
     assert len(calls)==2
     # Switching back must stop sending the optional parameter.
@@ -294,7 +295,7 @@ def test_ai_console_preserves_invalid_model_reply(client,prepared_job,monkeypatc
         return await chat_request(settings,instruction,data,httpx.MockTransport(lambda request:httpx.Response(200,json=envelope)))
     monkeypatch.setattr('app.api.ai_sync.chat_request',fake)
     client.put('/api/settings/ai',json={'api_url':'http://local/v1','model':'test'})
-    response=client.post(f'/api/tasks/{job_id}/ai-sync',json={'polish_file':'polish/original.pl.srt','reference_source_id':'embedded:4'})
+    response=complete_ai(client,f'/api/tasks/{job_id}/ai-sync',json={'polish_file':'polish/original.pl.srt','reference_source_id':'embedded:4'})
     assert response.status_code==502
     entries=client.get('/api/settings/ai/console').json()['entries']
     assert [entry['level'] for entry in entries]==['INFO','INFO','RESPONSE','INFO','ERROR','SUMMARY']
@@ -313,7 +314,7 @@ def test_ai_console_records_test_and_redacts_api_key(client,monkeypatch):
         return await chat_request(settings,instruction,data,httpx.MockTransport(
             lambda request:httpx.Response(401,json={'error':f'Invalid bearer {key}'})))
     monkeypatch.setattr('app.api.ai_sync.chat_request',fake)
-    assert client.post('/api/settings/ai/test').status_code==502
+    assert complete_ai(client,'/api/settings/ai/test').status_code==502
     response=client.get('/api/settings/ai/console')
     assert key not in response.text and 'UKRYTY KLUCZ API' in response.text
     assert all(row['operation']=='TEST' and row['job_id'] is None for row in response.json()['entries'])
@@ -357,7 +358,7 @@ def test_connection_accepts_extra_fields_but_requires_boolean_true(client,monkey
     async def fake(settings,instruction,data):
         return reply,2.752,{'total_tokens':81,'cost':0.00001876,'cost_currency':'USD'}
     monkeypatch.setattr('app.api.ai_sync.chat_request',fake)
-    response=client.post('/api/settings/ai/test')
+    response=complete_ai(client,'/api/settings/ai/test')
     assert response.status_code==(200 if accepted else 502)
     body=response.json() if accepted else response.json()['detail']
     assert body['elapsed_seconds']==2.752

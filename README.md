@@ -50,11 +50,13 @@ Worker OCR nie potrzebuje portu hostowego ani dostępu do `/media` i `/data`. Ot
 | `AUTH_SESSION_SECONDS` | `28800` | Maksymalny czas sesji |
 | `DATA_ROOT` | `/data` | Baza i pliki robocze |
 | `SUBTITLE_AGENT_MEDIA_ROOTS` | `/media/movies:/media/shows` | Dozwolone katalogi mediów |
-| `MAX_CONCURRENT_JOBS` | `1` | Liczba równoległych zadań |
+| `MAX_CONCURRENT_JOBS` | `1` | Liczba równoległych operacji przygotowania i przebudowy |
+| `MAX_QUEUED_JOBS` | `5` | Limit oczekujących operacji przygotowania i przebudowy |
+| `MAX_QUEUED_AI_OPERATIONS` | `5` | Limit oczekujących operacji AI; wykonywana jest jedna naraz |
 | `OCR_WORKER_URL` | brak | Np. `http://subtitle-ocr-worker:8090` |
 | `OCR_TIMEOUT_SECONDS` | `900` | Limit czasu OCR |
 | `WORKPACK_MAX_ARCHIVE_BYTES` | `104857600` | Maksymalny rozmiar ZIP |
-| `WORKPACK_CLEANUP_INTERVAL_HOURS` | `6` | Okresowe porządkowanie danych (także przy starcie i tworzeniu zadania) |
+| `WORKPACK_CLEANUP_INTERVAL_HOURS` | `6` | Okresowe porządkowanie danych (także przy starcie i zakończeniu operacji) |
 
 Pełny zestaw bezpiecznych wartości znajduje się w `.env.example` i `compose.example.yml`.
 
@@ -134,7 +136,7 @@ docker build --target test -t subtitle-agent:test .
 
 Strona `/archive` pokazuje 30 ostatnich filmów/odcinków według daty utworzenia zadania. Tytuł identyfikuje ścieżka materiału; kolejne zadania tego samego pliku zajmują jeden wiersz. Workpacki są deduplikowane według SHA-256, a poprawne wyniki SRT pozostają dostępne również po ponownym uruchomieniu synchronizacji. Tabela rozróżnia synchronizację i tłumaczenie; paczka do tłumaczenia sama nie jest wygenerowanym SRT.
 
-W `DATA_ROOT` (np. katalog hosta `/dane` zamontowany jako `/data`) baza, raporty, zdarzenia, pliki robocze i archiwalne obejmują ostatnie 30 tytułów. Po przekroczeniu limitu usuwane są dane starszych tytułów i nieużywane pliki archiwalne. Aktywne zadania i żądania AI kończą pracę przed usunięciem swoich danych. Porządkowanie działa przy starcie, tworzeniu i zakończeniu zadania oraz okresowo. Dotychczasowy limit 72 godzin nie obowiązuje; `WORKPACK_RETENTION_HOURS` pozostaje akceptowany dla zgodności ze starszą konfiguracją.
+W `DATA_ROOT` (np. katalog hosta `/dane` zamontowany jako `/data`) baza, raporty, zdarzenia, pliki robocze i archiwalne obejmują ostatnie 30 tytułów. Po przekroczeniu limitu usuwane są dane starszych tytułów i nieużywane pliki archiwalne. Aktywne zadania i żądania AI kończą pracę przed usunięciem swoich danych. Porządkowanie działa przy starcie, zakończeniu zadania oraz okresowo. Dotychczasowy limit 72 godzin nie obowiązuje; `WORKPACK_RETENTION_HOURS` pozostaje akceptowany dla zgodności ze starszą konfiguracją.
 
 Przy pierwszym starcie archiwum przejmuje dostępne workpacki i poprawne wyniki synchronizacji. Wcześniej usuniętych artefaktów nie odtwarza. Pliki archiwum znajdują się w `archive/`, z nazwami według SHA-256; źródłowa biblioteka mediów pozostaje tylko do odczytu. Font Awesome Free jest dostarczany lokalnie w `app/static/fontawesome/` razem z licencją.
 
@@ -146,7 +148,7 @@ Wskaźnik API obok OCR odświeża się co 30 sekund na podstawie zapisanych usta
 
 Kolumna „Koszt AI” w archiwum sumuje tokeny i koszty USD wszystkich zapisanych żądań synchronizacji i tłumaczenia dla danego tytułu, również błędnych odpowiedzi i ponownych prób. Testy połączenia nie są przypisywane do filmu. Metryki są przechowywane niezależnie od konsoli i usuwane razem z tytułem po przekroczeniu limitu 30. Brak metryk oznacza „—”, a częściowa suma jest oznaczona „≥”. Przy aktualizacji aplikacja przejmuje dostępne metryki ze starej konsoli lub ostatniego wyniku; wcześniej usuniętych zapisów nie da się odtworzyć.
 
-Stan pracy AI jest dostępny pod `/api/tasks/{job_id}/ai-status`. Strona główna odczytuje go co 2 sekundy, odtwarzając animowany wskaźnik w konsoli, fazę i czas oczekiwania również po powrocie z ustawień lub odświeżeniu strony. Podczas aktywnej operacji przycisk przekazania, wybór PL i zmiana referencji są zablokowane. Po zakończeniu GUI pokazuje wynik lub błąd i podsumowanie; przy utracie łączności blokuje wysyłanie do czasu potwierdzenia stanu serwera. Wskaźnik oznacza trwające żądanie, a nie procentowy postęp generowania modelu.
+Stan pracy AI jest dostępny pod `/api/tasks/{job_id}/ai-status`. Strona główna odczytuje go co 2 sekundy, odtwarzając animowany wskaźnik w konsoli, fazę i czas oczekiwania również po powrocie z ustawień lub odświeżeniu strony. Podczas oczekiwania w kolejce i aktywnej operacji przycisk przekazania, wybór PL i zmiana referencji są zablokowane. Po zakończeniu GUI pokazuje wynik lub błąd i podsumowanie; przy utracie łączności blokuje wysyłanie do czasu potwierdzenia stanu serwera. Wskaźnik oznacza trwające żądanie, a nie procentowy postęp generowania modelu.
 
 Ustawienie reasoning oferuje domyślne zachowanie (pominięcie parametru), `none`, `minimal`, `low`, `medium`, `high`, `xhigh` i `max`. Nie każdy model obsługuje wszystkie poziomy; Gemini 3.8 Flash obsługuje `low`, `medium`, `high` i wymaga reasoning. Dla OpenRouter aplikacja wysyła `reasoning.effort`, a do innych endpointów `reasoning_effort`. Opcjonalny limit wyjścia wysyłany jest jako `max_tokens`; puste pole pomija parametr. Budżet obejmuje reasoning i finalny wynik, nie może przekroczyć limitu modelu lub dostawcy. Te ustawienia obowiązują w teście połączenia, synchronizacji i tłumaczeniu.
 
@@ -183,3 +185,16 @@ Po trzech błędnych logowaniach IP jest blokowane na **3600 sekund**; blokada o
 Bez zaznaczenia dodatkowej opcji sesje wygasają po `AUTH_SESSION_SECONDS` (domyślnie 8 godzin). Zaznaczenie **Zapamiętaj mnie na 30 dni** podczas logowania ustawia ważność sesji i cookie na 30 dni od tego logowania; termin nie przedłuża się przy korzystaniu z aplikacji. Przycisk **Wyloguj** unieważnia sesję po stronie serwera, również zapamiętaną na 30 dni. Zmiana użytkownika lub hasła w Compose i restart unieważniają poprzednie sesje. Cookie sesji ma `HttpOnly`, `Secure` i `SameSite=Strict`; żądania zmieniające dane wymagają tokenu CSRF. Klienci API również muszą się zalogować i przekazywać token CSRF ze strony głównej. `/health` ujawnia publicznie tylko `{"status":"ok"}`; dokumentacja OpenAPI jest wyłączona. Testy lokalne przez HTTP wymagają jawnego `AUTH_COOKIE_SECURE=false` oraz zgodnego `AUTH_PUBLIC_URL=http://...`; dla dostępu z Internetu pozostaw `true` i HTTPS.
 
 Ochrona logowania nie zastępuje aktualizacji obrazu, zabezpieczenia hosta, kopii `/data` ani limitów ruchu w reverse proxy. `/data` zawiera ustawienia i klucze API — ogranicz dostęp do wolumenu i kopii zapasowych. Uruchamiaj jedną instancję aplikacji; kolejka zadań pozostaje lokalna dla procesu.
+
+
+## Kolejki operacji
+
+W trybie WORKPACK analiza, ekstrakcja, OCR i pakowanie, także po zmianie referencji, korzystają ze wspólnej kolejki przygotowania. Domyślnie pracuje jedna operacja, a pięć kolejnych może oczekiwać. Ustawienia to `MAX_CONCURRENT_JOBS` i `MAX_QUEUED_JOBS`. Ponowne zgłoszenie tego samego materiału i trybu podczas przygotowania zwraca istniejące zadanie; powtórna identyczna przebudowa również nie dodaje nowej pracy.
+
+Synchronizacja AI, tłumaczenie AI i test połączenia z modelem korzystają z osobnej kolejki: jedna operacja działa, do pięciu oczekuje (`MAX_QUEUED_AI_OPERATIONS`). Przygotowanie kolejnego filmu może trwać podczas oczekiwania na odpowiedź modelu. Model, adres API, klucz i parametry AI są pobierane w momencie przyjęcia zlecenia; późniejsza zmiana ustawień nie zmienia oczekującej operacji. Klucz nie jest zapisywany w rekordzie kolejki ani zwracany przez endpoint statusu.
+
+Wspólna rezerwacja zadania uniemożliwia zmianę jego referencji podczas oczekiwania i wykonywania AI. Powtórne wysłanie tej samej operacji AI zwraca jej istniejący identyfikator; inne parametry dla zajętego zadania dają HTTP `409`. Pełna kolejka daje HTTP `429` z kodem `QUEUE_FULL` i nagłówkiem `Retry-After`. Pliki zadań oczekujących na AI i przebudowę są chronione przed porządkowaniem do zakończenia operacji.
+
+`POST /api/tasks/{job_id}/ai-sync`, `POST /api/tasks/{job_id}/ai-translate` i `POST /api/settings/ai/test` zwracają teraz HTTP `202` z `operation_id`. Nie utrzymują połączenia HTTP przez czas kolejki ani pracy modelu. Stan `queued`, `running`, `completed` lub `failed` odczytuje się przez `GET /api/ai-operations/{operation_id}`; dla zadań nadal działa `GET /api/tasks/{job_id}/ai-status`. Zakończona operacja zawiera `result` albo `error` oraz `http_status`. Pliki wynikowe pobiera się przez dotychczasowe endpointy. GUI obsługuje ten przebieg automatycznie i pokazuje oczekiwanie oraz pozycję w kolejce AI.
+
+Stan AI jest zapisywany w SQLite. Po restarcie oczekujące i wykonywane operacje są oznaczane jako przerwane; aplikacja nie ponawia automatycznie płatnych żądań. Operacje przygotowania również są oznaczane jako przerwane. W razie potrzeby użytkownik zleca je ponownie. Kolejki działają w jednej instancji procesu aplikacji, zgodnie z konfiguracją obrazu.

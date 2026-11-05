@@ -68,13 +68,9 @@ async def task_report(job_id: str, request: Request) -> dict:
 
 @router.post("/{job_id}/reference", status_code=status.HTTP_202_ACCEPTED)
 async def rebuild(job_id: str, payload: RebuildWorkpackRequest, request: Request) -> dict:
-    lock = request.app.state.ai_sync_locks.get(job_id)
-    if lock and lock.locked():
-        raise HTTPException(status_code=409, detail={"code": "AI_SYNC_RUNNING",
-            "message": "Poczekaj na zakończenie synchronizacji AI przed zmianą referencji"})
     try:
         after = await request.app.state.jobs.rebuild_workpack(job_id, payload.reference_source_id)
-        request.app.state.ai_operations.pop(job_id, None)
+        request.app.state.ai_queue.forget_job(job_id)
     except UserInputError as exc:
         raise HTTPException(status_code=422, detail={"code": "INVALID_REFERENCE", "message": str(exc)}) from exc
     return {"jobId": job_id, "status": "BUILDING_WORKPACK", "afterSequence": after}

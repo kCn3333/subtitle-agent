@@ -31,6 +31,8 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("SUBTITLE_AGENT_MEDIA_ROOTS", "MEDIA_ROOTS"),
     )
     max_concurrent_jobs: int = 1
+    max_queued_jobs: int = Field(default=5, ge=1, le=100)
+    max_queued_ai_operations: int = Field(default=5, ge=1, le=100)
     subtitle_agent_app_mode: str = "WORKPACK"
     workpack_reference_score_margin: int = 10
     workpack_max_reference_alternatives: int = 2

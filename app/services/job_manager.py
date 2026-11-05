@@ -1,6 +1,7 @@
 from app.services.subtitle_languages import reference_prefix, normalize_language
 import asyncio
 import json
+import logging
 import sqlite3
 import threading
 import uuid
@@ -11,6 +12,7 @@ from pathlib import Path
 from typing import AsyncIterator
 
 from app.core.config import Settings
+from app.services.operation_queue import QueueBusy, JobBusy
 from app.models.job import AlignmentMode, JobEvent, JobStatus, WorkpackTaskType
 from app.models.media import MediaIdentity
 from app.services.media_analysis import (
@@ -87,7 +89,9 @@ class JobManager:
         self._lock = threading.RLock()
         self._conditions: dict[str, asyncio.Condition] = {}
         self._publish_locks: dict[str, asyncio.Lock] = {}
-        self._queue: asyncio.Queue[str] = asyncio.Queue()
+        self._queue = asyncio.Queue(maxsize=settings.max_queued_jobs)
+        self.reserved_jobs: dict[str, str] = {}
+        self._rebuild_after: dict[str, int] = {}
         self._workers: list[asyncio.Task[None]] = []
         self._maintenance_task: asyncio.Task[None] | None = None
         self._closed = False
@@ -160,6 +164,11 @@ class JobManager:
         for worker in self._workers:
             with suppress(asyncio.CancelledError):
                 await worker
+        while not self._queue.empty():
+            job_id, _, _ = self._queue.get_nowait()
+            await self._emit(job_id, 'WARNING', JobStatus.INTERRUPTED, 'Oczekiwanie przerwane przez zamknięcie aplikacji', 100)
+            self.release_job(job_id)
+            self._queue.task_done()
 
     async def _maintenance(self) -> None:
         while True:
@@ -198,7 +207,36 @@ class JobManager:
             self.archive.prune(retained)
             return removed
 
+    def reserve_job(self, job_id: str, purpose: str):
+        with self._lock:
+            job = self.get(job_id)
+            if not job or job['status'] not in TERMINAL or job_id in self.reserved_jobs:
+                raise JobBusy('Zadanie jest już w kolejce lub jest przetwarzane.')
+            self.reserved_jobs[job_id] = purpose
+            self.artifact_users.add(job_id)
+
+    def release_job(self, job_id: str):
+        with self._lock:
+            self.reserved_jobs.pop(job_id, None)
+            self.artifact_users.discard(job_id)
+            self._rebuild_after.pop(job_id, None)
+
+    def pending_duplicate(self, media_path, task_type=None):
+        with self._lock, self._connect() as db:
+            terminal = tuple(str(value) for value in TERMINAL)
+            row = db.execute(f"SELECT id FROM jobs WHERE media_path=? AND COALESCE(task_type,'')=? AND status NOT IN ({','.join('?' for _ in terminal)}) ORDER BY created_at DESC LIMIT 1",
+                             (media_path, task_type or '', *terminal)).fetchone()
+        return self.get(row['id']) if row else None
+
+    def require_queue_space(self):
+        if self._closed or self._queue.full():
+            raise QueueBusy('Kolejka przygotowania napisów jest pełna. Spróbuj ponownie po zakończeniu jednego z zadań.')
+
     async def create(self, media_path: str) -> dict:
+        duplicate = self.pending_duplicate(media_path)
+        if duplicate:
+            return duplicate
+        self.require_queue_space()
         job_id = str(uuid.uuid4())
         stamp = now().isoformat()
         with self._lock, self._connect() as db:
@@ -207,12 +245,15 @@ class JobManager:
                 VALUES (?,?,?,?,?,?,?,?,?,?)""",
                 (job_id, media_path, JobStatus.QUEUED, 0, stamp, None, None, None, None, None))
             self._insert_event(db, job_id, "INFO", JobStatus.QUEUED, f"Analiza napisów · Film: {display_title(media_path)}", 0)
-        self.cleanup_expired_artifacts()
         self._conditions[job_id] = asyncio.Condition()
-        await self._queue.put(job_id)
+        self._queue.put_nowait((job_id, None, None))
         return self.get(job_id)
 
     async def create_workpack(self, media_path: str, task_type: WorkpackTaskType) -> dict:
+        duplicate = self.pending_duplicate(media_path, task_type.value)
+        if duplicate:
+            return duplicate
+        self.require_queue_space()
         job_id = str(uuid.uuid4()); stamp = now().isoformat()
         with self._lock, self._connect() as db:
             db.execute("""INSERT INTO jobs
@@ -221,36 +262,35 @@ class JobManager:
                 (job_id, media_path, JobStatus.QUEUED, 0, stamp, None, None, None, None, None,
                  "PREPARE_WORKPACK", task_type.value))
             self._insert_event(db, job_id, "INFO", JobStatus.QUEUED, f"{operation_label(task_type.value)} · Film: {display_title(media_path)}", 0)
-        self.cleanup_expired_artifacts()
-        self._conditions[job_id] = asyncio.Condition(); await self._queue.put(job_id)
+        self._conditions[job_id] = asyncio.Condition(); self._queue.put_nowait((job_id, None, None))
         return self.get(job_id)
 
     async def rebuild_workpack(self, job_id: str, reference_source_id: str) -> int:
+        purpose = 'reference:' + reference_source_id
+        if self.reserved_jobs.get(job_id) == purpose:
+            return self._rebuild_after[job_id]
+        self.require_queue_space()
         job = self.get(job_id)
-        if not job or job.get("job_type") != "PREPARE_WORKPACK" or not job.get("report"):
-            raise UserInputError("Nie znaleziono danych workpacka")
-        if job["status"] not in TERMINAL:
-            raise UserInputError("Zadanie jest nadal przetwarzane")
-        detected = rank_references(job["report"]["media"].get("embeddedSubtitles", []), job["report"].get("externalSubtitles", []))
-        if reference_source_id not in {subtitle_source_id(item) for item in detected}:
-            raise UserInputError("Wybrana referencja nie została wykryta w analizie")
-        after = max((event.sequence for event in self.events(job_id)), default=0)
-        await self._emit(job_id, "INFO", JobStatus.QUEUED, f"Przebudowa workpacka · Film: {display_title(job['media_path'])}", 0)
-        async def run() -> None:
-            try:
-                task_type = WorkpackTaskType(job.get("task_type") or WorkpackTaskType.SYNC_AND_LANGUAGE_REVIEW)
-                await workpack_service(task_type).prepare(self, job_id, job["report"], reference_source_id)
-            except (ProcessExecutionError, ProcessTimeoutError) as exc:
-                message = str(exc)
-                with self._lock, self._connect() as db: db.execute("UPDATE jobs SET error_message=? WHERE id=?", (message, job_id))
-                await self._emit(job_id, "ERROR", JobStatus.FAILED, message, 100)
-            except Exception as exc:
-                message = f"Ponowne budowanie workpacka nie powiodło się ({type(exc).__name__})"
-                with self._lock, self._connect() as db: db.execute("UPDATE jobs SET error_message=? WHERE id=?", (message, job_id))
-                await self._emit(job_id, "ERROR", JobStatus.FAILED, message, 100)
-            finally:
-                await asyncio.to_thread(self.cleanup_expired_artifacts)
-        asyncio.create_task(run())
+        if not job or job.get('job_type') != 'PREPARE_WORKPACK' or not job.get('report'):
+            raise UserInputError('Nie znaleziono danych workpacka')
+        self.reserve_job(job_id, purpose)
+        try:
+            detected = rank_references(job['report']['media'].get('embeddedSubtitles', []), job['report'].get('externalSubtitles', []))
+            if reference_source_id not in {subtitle_source_id(item) for item in detected}:
+                raise UserInputError('Wybrana referencja nie została wykryta w analizie')
+            with self._lock, self._connect() as db:
+                after = db.execute('SELECT COALESCE(MAX(sequence),0) FROM events WHERE job_id=?', (job_id,)).fetchone()[0]
+                self._insert_event(db, job_id, 'INFO', JobStatus.QUEUED,
+                                   f'Przebudowa oczekuje w kolejce · Film: {display_title(job["media_path"])}', 0)
+                db.execute('UPDATE jobs SET status=?,progress=0,finished_at=NULL WHERE id=?', (JobStatus.QUEUED, job_id))
+            self._rebuild_after[job_id] = after
+            self._queue.put_nowait((job_id, reference_source_id, job['report']))
+        except BaseException:
+            self.release_job(job_id)
+            raise
+        condition = self._conditions.setdefault(job_id, asyncio.Condition())
+        async with condition:
+            condition.notify_all()
         return after
 
     def get(self, job_id: str) -> dict | None:
@@ -403,6 +443,9 @@ class JobManager:
         async def run() -> None:
             try:
                 await self.align(job_id, english_source_id, polish_source_id, mode)
+            except asyncio.CancelledError:
+                await self._emit(job_id, 'WARNING', JobStatus.INTERRUPTED, 'Operacja przerwana przez zamknięcie aplikacji', 100)
+                raise
             except UserInputError as exc:
                 with self._lock, self._connect() as db:
                     db.execute("UPDATE jobs SET error_message=? WHERE id=?", (str(exc), job_id))
@@ -987,12 +1030,12 @@ class JobManager:
 
     async def _worker(self) -> None:
         while True:
-            job_id = await self._queue.get()
+            job_id, requested_reference, previous_report = await self._queue.get()
             try:
                 job = self.get(job_id)
                 if job.get("job_type") == "PREPARE_WORKPACK":
                     task_type = WorkpackTaskType(job.get("task_type") or WorkpackTaskType.SYNC_AND_LANGUAGE_REVIEW)
-                    await workpack_service(task_type).prepare(self, job_id)
+                    await workpack_service(task_type).prepare(self, job_id, previous_report, requested_reference)
                     continue
                 await self._emit(job_id, "INFO", JobStatus.VALIDATING_PATH, "Bezpieczna weryfikacja ścieżki", 10)
                 media_path = validate_media_path(job["media_path"], self.settings.media_roots)
@@ -1065,6 +1108,9 @@ class JobManager:
                 }
                 self._save_report(job_id, report, str(media_path))
                 await self._emit(job_id, "SUCCESS", JobStatus.COMPLETED, "Analiza materiału zakończona", 100)
+            except asyncio.CancelledError:
+                await self._emit(job_id, 'WARNING', JobStatus.INTERRUPTED, 'Operacja przerwana przez zamknięcie aplikacji', 100)
+                raise
             except UserInputError as exc:
                 with self._lock, self._connect() as db:
                     db.execute("UPDATE jobs SET error_message=? WHERE id=?", (str(exc), job_id))
@@ -1080,8 +1126,12 @@ class JobManager:
                     db.execute("UPDATE jobs SET error_message=? WHERE id=?", (safe_error, job_id))
                 await self._emit(job_id, "ERROR", JobStatus.FAILED, safe_error, 100)
             finally:
+                self.release_job(job_id)
                 self._queue.task_done()
-                await asyncio.to_thread(self.cleanup_expired_artifacts)
+                try:
+                    await asyncio.to_thread(self.cleanup_expired_artifacts)
+                except Exception:
+                    logging.getLogger(__name__).exception('Porządkowanie po zadaniu nie powiodło się')
 
     async def stream(self, job_id: str, after: int = 0) -> AsyncIterator[str]:
         condition = self._conditions.setdefault(job_id, asyncio.Condition())

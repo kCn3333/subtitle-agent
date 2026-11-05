@@ -97,3 +97,23 @@ def authenticate(client, username="test-user", password="test-password-for-auth"
     assert response.status_code == 200, response.text
     csrf = re.search(r'name="csrf-token" content="([^"]+)"', client.get('/').text)[1]
     client.headers.update({"Origin":"http://testserver","X-CSRF-Token":csrf})
+
+
+def complete_ai(client, url, **kwargs):
+    """Submit through HTTP 202 and wait for the terminal result in functional tests."""
+    import time
+    import httpx
+    response = client.post(url, **kwargs)
+    if response.status_code != 202 or 'operation_id' not in response.json():
+        return response
+    operation_id = response.json()['operation_id']
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        state_response = client.get(f'/api/ai-operations/{operation_id}')
+        assert state_response.status_code == 200, state_response.text
+        state = state_response.json()
+        if state['status'] in {'completed', 'failed'}:
+            body = state['result'] if state['status'] == 'completed' else {'detail':state['error']}
+            return httpx.Response(state['http_status'], json=body)
+        time.sleep(.01)
+    raise AssertionError('AI operation did not finish: ' + operation_id)
