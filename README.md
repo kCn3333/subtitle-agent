@@ -1,75 +1,72 @@
 # Subtitle Agent
 
-Analiza napisów, OCR PGS/VobSub, synchronizacja i tłumaczenie na polski przez API modelu AI. Wyniki: ZIP i SRT. Filmy pozostają tylko do odczytu.
+Subtitle Agent to aplikacja webowa do analizy napisów, przygotowania materiału referencyjnego oraz synchronizacji i tłumaczenia na język polski. Obsługuje napisy tekstowe i graficzne PGS/VobSub, przetwarzane przez osobny worker OCR.
 
-## Uruchomienie
+Aplikacja tworzy pakiety ZIP z napisami i metadanymi oraz pliki wynikowe SRT. Biblioteka mediów jest montowana wyłącznie do odczytu.
 
-1. W Portainerze utwórz stack z [compose.example.yml](compose.example.yml).
-2. Dopasuj mounty mediów; pozostaw `:ro`. Zachowaj wolumen `/data` przy aktualizacjach.
-3. W **Environment variables** stacka ustaw poniższe zmienne.
-4. Skonfiguruj HTTPS przez reverse proxy lub Cloudflare Tunnel i wdroż stack.
+## Funkcje
 
-| Zmienna | Wartość |
+| Tryb | Wymagane dane | Wynik |
+|---|---|---|
+| Analiza napisów | Plik filmu lub odcinka | Raport ścieżek, referencji i kandydatów PL |
+| Przygotowanie do synchronizacji | Referencja źródłowa i pasujące napisy PL | Pakiet ZIP; po przetworzeniu przez AI — SRT z poprawionymi czasami |
+| Przygotowanie do tłumaczenia | Referencja źródłowa | Pakiet ZIP; po przetworzeniu przez AI — polski SRT z czasami referencji |
+
+Referencje osadzone są wybierane z preferencją języka angielskiego i PGS. Wybór niejednoznaczny oraz użycie napisów zewnętrznych wymagają zatwierdzenia. Dostępna jest ręczna zmiana referencji i przebudowa pakietu.
+
+Synchronizacja i tłumaczenie korzystają z API zgodnego z Chat Completions. Walidacja sprawdza kompletność segmentów, strukturę SRT i zakresy czasowe; trafność synchronizacji oraz jakość OCR i tłumaczenia wymagają oceny użytkownika.
+
+## Wdrożenie
+
+[compose.example.yml](compose.example.yml) definiuje aplikację i worker OCR, trwały wolumen `/data` oraz bibliotekę mediów montowaną z `:ro`. Podstawowe parametry dostępu:
+
+| Zmienna | Znaczenie |
 |---|---|
-| `AUTH_USERNAME` | Login |
-| `AUTH_PASSWORD` | Unikalne hasło, 16–1024 znaki |
-| `AUTH_PUBLIC_URL` | Publiczny adres HTTPS bez ścieżki, np. `https://napisy.example.com` |
-| `AUTH_TRUSTED_PROXIES` | Adresy/CIDR zaufanych proxy, rozdzielone przecinkami |
+| `AUTH_USERNAME` | Login do aplikacji |
+| `AUTH_PASSWORD` | Hasło o długości 16–1024 znaków |
+| `AUTH_PUBLIC_URL` | Publiczny adres HTTPS, bez ścieżki |
+| `AUTH_TRUSTED_PROXIES` | Zaufane adresy/CIDR proxy; za proxy wymagane do poprawnego ustalania IP klienta |
 
-Obrazy: `ghcr.io/kcn3333/subtitle-agent:latest` i `ghcr.io/kcn3333/subtitle-agent-ocr:latest`. Przy aktualizacji stacka wybierz ponowne pobranie obrazów.
+Po uzupełnieniu konfiguracji:
 
-Port aplikacji w kontenerze: `8080`. Przykładowy Compose publikuje go tylko na `127.0.0.1:8080`. OCR nie wymaga portu hostowego ani mountów mediów.
+```bash
+docker compose -f compose.example.yml up -d
+```
 
-### Proxy i tunel na innym hoście
+Port HTTP aplikacji to `8080`; przykładowy Compose wiąże go z `127.0.0.1`. Dostęp publiczny wymaga reverse proxy lub Cloudflare Tunnel z HTTPS. Worker OCR pozostaje dostępny w sieci wewnętrznej.
 
-- Proxy musi zachować publiczną domenę w `Host` i przekazywać poprawny `X-Forwarded-For`.
-- Dla tunelu na innym hoście publikuj port jako `ADRES_LAN_APLIKACJI:8080:8080`; w tunelu ustaw `http://ADRES_LAN_APLIKACJI:8080`.
-- Do `AUTH_TRUSTED_PROXIES` wpisz adres źródłowy widziany przez aplikację. Przy NAT Docker zwykle jest to adres LAN hosta tunelu z `/32`, a nie adres kontenera. Potwierdź go przed wdrożeniem.
-- Ogranicz dostęp do portu aplikacji do hosta proxy/tunelu regułami uwzględniającymi Docker. Nie publikuj portu OCR.
-- Pozostaw `AUTH_COOKIE_SECURE=true` i opcję Uvicorn `--no-proxy-headers`. Pusta lista zaufanych proxy oznacza użycie IP bezpośredniego połączenia; za proxy użytkownicy mogą wtedy współdzielić blokadę.
+Pełna konfiguracja: [.env.example](.env.example). Topologie proxy, ustawienia dostępu i trwałość danych: [instrukcja wdrożenia](docs/deployment.md).
 
-## Użycie
+## Wykonywanie zadań
 
-Podaj ścieżkę filmu **wewnątrz kontenera**, np. `/media/movies/Film.mkv`, i wybierz tryb:
+Przygotowanie materiału i operacje AI korzystają z niezależnych kolejek. Oczekiwanie na model nie blokuje przygotowania kolejnego filmu.
 
-| Tryb | Wynik / wymagania |
-|---|---|
-| Sprawdź napisy | Raport analizy |
-| Przygotuj do synchronizacji | ZIP; wymagana referencja i pasujące napisy PL |
-| Przygotuj do tłumaczenia | ZIP; wymagana referencja, bez napisów PL |
+| Kolejka | Zakres | Domyślny limit |
+|---|---|---|
+| Przygotowanie | Analiza, ekstrakcja, OCR, pakowanie i przebudowy | 1 operacja wykonywana, 5 oczekujących |
+| AI | Synchronizacja, tłumaczenie i test połączenia | 1 operacja wykonywana, 5 oczekujących |
 
-Wbudowana referencja jest wybierana automatycznie z preferencją angielskiego i PGS. Niejednoznaczny wybór oraz zewnętrzną referencję trzeba zatwierdzić. Zmiana referencji wymaga **Zbuduj ponownie**.
+Powtórne zgłoszenie tej samej aktywnej operacji zadania zwraca istniejące zlecenie. Rezerwacja zadania chroni przed równoczesną zmianą referencji i przetwarzaniem AI. Po restarcie niedokończone operacje są oznaczane jako przerwane; żądania AI nie są automatycznie ponawiane.
 
-Aby otrzymać SRT, skonfiguruj **Ustawienia AI**, uruchom **Przekaż do AI** i pobierz wynik. [Konfiguracja AI, API i diagnostyka](docs/ai-api-sync.md).
+Archiwum przechowuje wyniki ostatnich 30 tytułów. Starsze dane są usuwane, z wyjątkiem plików używanych przez oczekujące lub aktywne operacje.
 
-OCR działa na CPU dla PGS (`.sup`) i VobSub (`.idx` + `.sub`). Worker zawiera języki `eng`, `fra`, `deu`, `spa`, `ita`, `por`, `pol`. Błąd OCR daje status `NEEDS_OCR`. Tekst po OCR i wynik AI wymagają sprawdzenia.
+## Dostęp i architektura
 
-## Limity i dane
+Strony, API i wyniki są chronione logowaniem. Trzy błędne próby blokują IP na godzinę. Sesja trwa domyślnie 8 godzin lub 30 dni po wybraniu opcji zapamiętania. Żądania zmieniające dane wymagają tokenu CSRF.
 
-| Obszar | Domyślne ustawienie |
-|---|---|
-| Przygotowanie i przebudowy | 1 wykonywana operacja (`MAX_CONCURRENT_JOBS`), 5 oczekujących (`MAX_QUEUED_JOBS`) |
-| Synchronizacja, tłumaczenie i test AI | 1 wykonywana operacja, 5 oczekujących (`MAX_QUEUED_AI_OPERATIONS`) |
-| Logowanie | Blokada IP po 3 błędach na 1 godzinę (`AUTH_LOCKOUT_SECONDS=3600`) |
-| Sesja | 8 godzin (`AUTH_SESSION_SECONDS=28800`) lub 30 dni po zaznaczeniu opcji przy logowaniu |
-| Archiwum | Ostatnie 30 tytułów; starsze dane są usuwane |
+Backend wykorzystuje Python 3.12, FastAPI, SQLite, FFmpeg i mkvtoolnix. Worker OCR korzysta z Tesseracta i seconv. Aplikacja działa jako jeden proces; kolejki nie są współdzielone między instancjami.
 
-- Uruchamiaj jeden proces aplikacji. Kolejki nie są współdzielone między instancjami.
-- Identyczne zgłoszenie aktywnego przygotowania, przebudowy lub AI dla danego zadania korzysta z istniejącego zlecenia. Pełna kolejka zwraca `429`; konflikt operacji tego samego zadania — `409`.
-- Pliki oczekujących i aktywnych operacji są chronione przed retencją. Po restarcie niedokończone operacje są oznaczane jako przerwane; AI nie jest ponawiane automatycznie.
-- `/data` zawiera bazę, pliki robocze i archiwum. Twórz kopie zapasowe; baza zawiera klucz API bez szyfrowania aplikacyjnego.
-- Wylogowanie unieważnia sesję. Zmiana loginu lub hasła unieważnia wcześniejsze sesje po ponownym uruchomieniu aplikacji. Blokady IP pozostają po restarcie.
-- `/health` zwraca tylko `{"status":"ok"}`. Strony, API, logi i pobieranie wymagają logowania.
+## Dokumentacja
 
-Pozostałe zmienne: [.env.example](.env.example). `WORKPACK_RETENTION_HOURS` jest zgodnościowe; nie zastępuje limitu 30 tytułów. `SUBTITLE_AGENT_APP_MODE=WORKPACK` udostępnia opisany interfejs; `ADVANCED` włącza historyczne endpointy.
+- [Wdrożenie i konfiguracja](docs/deployment.md)
+- [Konfiguracja AI, kontrakt API i diagnostyka](docs/ai-api-sync.md)
+- [Próbka VobSub używana w testach](tests/fixtures/README.md)
 
 ## Testy
 
-Backend jest testowany w kontenerze; testy UI wymagają Node.js.
+Testy backendu są uruchamiane w obrazie Python 3.12. Testy interfejsu wymagają Node.js.
 
 ```bash
 podman build --target test -t subtitle-agent:test .
 node --test tests/*_ui.test.cjs
 ```
-
-Backend: Python 3.12, FastAPI, SQLite, FFmpeg i mkvtoolnix. Worker OCR: Tesseract i seconv, wersja przypięta w [Dockerfile.ocr](Dockerfile.ocr).
