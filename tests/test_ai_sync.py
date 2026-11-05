@@ -2,21 +2,13 @@ from conftest import complete_ai
 import asyncio
 import json
 import sqlite3
-import uuid
-from pathlib import Path
 
 import httpx
 import pytest
 
 from app.services.ai_sync import (AiSyncError, ApiSettings, ApiSettingsStore, chat_request,
                                   read_cues, segments, validate_result)
-from app.services.alignment import sha256
-
-
-def cue_file(path, text='  Zażółć <i>gęślą</i>\n- Druga kwestia.  '):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f'7\n00:00:01,000 --> 00:00:02,000\n{text}\n', encoding='utf-8')
-    return path
+from tests.helpers import cue_file, wait_status
 
 
 def test_preserves_text_and_reorders_response_by_id(tmp_path):
@@ -111,22 +103,6 @@ async def test_total_timeout():
                            'Instruction',{},httpx.MockTransport(respond))
 
 
-@pytest.fixture
-def prepared_job(client,settings):
-    job_id=str(uuid.uuid4());directory=settings.data_root/'work'/'jobs'/job_id
-    en=cue_file(directory/'reference'/'selected'/'selected.eng.ocr.srt','English reference.')
-    pl=cue_file(directory/'polish'/'original.pl.srt')
-    manifest={'media':{'duration_ms':10000},'reference':{'files':[{'name':en.relative_to(directory).as_posix(),'sha256':sha256(en)}]},
-              'polish_candidates':[{'archiveName':'polish/original.pl.srt','sha256':sha256(pl)}]}
-    (directory/'manifest.json').write_text(json.dumps(manifest))
-    report={'pipeline':'PREPARE_SYNC','selectedEnglish':{'sourceType':'embedded','streamIndex':4},
-            'requiresOcr':False,'polishCandidates':manifest['polish_candidates'],'workpack':{}}
-    with sqlite3.connect(settings.data_root/'subtitle-agent.db') as db:
-        db.execute('INSERT INTO jobs (id,media_path,status,progress,created_at,job_type,task_type,report_json) VALUES (?,?,?,?,?,?,?,?)',
-                   (job_id,'unused.mkv','WORKPACK_READY',100,'2026-10-03','PREPARE_WORKPACK','PREPARE_SYNC',json.dumps(report)))
-    return job_id,directory
-
-
 def test_settings_and_connection_api(client,monkeypatch):
     settings_page=client.get('/settings')
     assert settings_page.status_code==200
@@ -179,7 +155,6 @@ def test_changed_reference_and_unsafe_polish_are_rejected(client,prepared_job):
 
 @pytest.mark.parametrize("mode",["PREPARE_SYNC","PREPARE_TRANSLATION"])
 def test_pipeline_prepares_inputs_for_new_api(client,media_file,monkeypatch,mode):
-    import time
     from app.services.subtitle_extraction import SubtitleExtractionResult
     async def probe(path,timeout):
         return {'path':str(path),'name':path.name,'sizeBytes':1,'durationSeconds':100,
@@ -199,10 +174,7 @@ def test_pipeline_prepares_inputs_for_new_api(client,media_file,monkeypatch,mode
     monkeypatch.setattr('app.api.ai_sync.chat_request',fake)
     cue_file(media_file.with_suffix('.pl.srt'))
     job_id=complete_ai(client,'/api/tasks',json={'mediaPath':str(media_file),'mode':mode}).json()['jobId']
-    for _ in range(300):
-        job=client.get(f'/api/tasks/{job_id}').json()
-        if job['status'] in {'WORKPACK_READY','WORKPACK_INCOMPLETE','FAILED'}:break
-        time.sleep(.01)
+    job = wait_status(client, f'/api/tasks/{job_id}', {'WORKPACK_READY', 'WORKPACK_INCOMPLETE', 'FAILED'})
     assert job['status']=='WORKPACK_READY',job
     payload={'reference_source_id':'embedded:4'}
     endpoint='ai-translate' if mode=='PREPARE_TRANSLATION' else 'ai-sync'
@@ -212,10 +184,20 @@ def test_pipeline_prepares_inputs_for_new_api(client,media_file,monkeypatch,mode
     assert client.get(f'/api/tasks/{job_id}/{endpoint}/download').status_code==200
 
 
-@pytest.mark.parametrize('effort',[None,'none','minimal','low','medium','high','xhigh','max'])
-@pytest.mark.parametrize('response_format',[None,'json_object'])
-@pytest.mark.parametrize('api_url',['http://local/v1','https://openrouter.ai/api/v1'])
-@pytest.mark.parametrize('output_limit',[None,131072])
+# Pairwise coverage: each effort is tested with both providers and both values
+# of each optional setting. Across efforts, all provider/format/limit pairs occur.
+# Avoid the full 8 x 2 x 2 x 2 integration matrix and its repeated app startup.
+@pytest.mark.parametrize('effort,response_format,api_url,output_limit', [
+    pytest.param(
+        effort,
+        'json_object' if (index + provider) % 2 else None,
+        'https://openrouter.ai/api/v1' if provider else 'http://local/v1',
+        131072 if (index // 2 + provider) % 2 else None,
+        id=f"{effort}-{'openrouter' if provider else 'generic'}",
+    )
+    for index, effort in enumerate([None, 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
+    for provider in range(2)
+])
 def test_reasoning_effort_in_connection_test_and_sync(client,prepared_job,monkeypatch,effort,response_format,api_url,output_limit):
     job_id,_=prepared_job
     calls=[]

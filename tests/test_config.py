@@ -43,10 +43,11 @@ def test_ocr_worker_is_optional_and_requires_internal_http():
         Settings(_env_file=None, ocr_worker_url="https://external.example")
 
 
-def test_missing_openai_key_does_not_break_settings(monkeypatch):
+def test_default_workpack_mode_needs_no_openai_key(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY_FILE", raising=False)
-    settings = Settings()
+    settings = Settings(_env_file=None)
+    assert settings.subtitle_agent_app_mode == "WORKPACK"
     assert settings.openai_configured is False
     assert settings.openai_semantic_alignment_enabled is False
 

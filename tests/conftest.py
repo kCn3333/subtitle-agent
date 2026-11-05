@@ -1,6 +1,9 @@
+import json
 import re
 import shutil
+import sqlite3
 import subprocess
+import uuid
 from pathlib import Path
 
 import pytest
@@ -8,7 +11,9 @@ from fastapi.testclient import TestClient
 
 from app.core.config import Settings
 from app.main import create_app
+from app.services.alignment import sha256
 from app.services.system_probe import ToolInfo
+from tests.helpers import cue_file, wait_operation
 
 
 @pytest.fixture
@@ -101,19 +106,26 @@ def authenticate(client, username="test-user", password="test-password-for-auth"
 
 def complete_ai(client, url, **kwargs):
     """Submit through HTTP 202 and wait for the terminal result in functional tests."""
-    import time
     import httpx
     response = client.post(url, **kwargs)
     if response.status_code != 202 or 'operation_id' not in response.json():
         return response
-    operation_id = response.json()['operation_id']
-    deadline = time.monotonic() + 10
-    while time.monotonic() < deadline:
-        state_response = client.get(f'/api/ai-operations/{operation_id}')
-        assert state_response.status_code == 200, state_response.text
-        state = state_response.json()
-        if state['status'] in {'completed', 'failed'}:
-            body = state['result'] if state['status'] == 'completed' else {'detail':state['error']}
-            return httpx.Response(state['http_status'], json=body)
-        time.sleep(.01)
-    raise AssertionError('AI operation did not finish: ' + operation_id)
+    state = wait_operation(client, response.json()['operation_id'], timeout=10)
+    body = state['result'] if state['status'] == 'completed' else {'detail': state['error']}
+    return httpx.Response(state['http_status'], json=body)
+
+
+@pytest.fixture
+def prepared_job(client,settings):
+    job_id=str(uuid.uuid4());directory=settings.data_root/'work'/'jobs'/job_id
+    en=cue_file(directory/'reference'/'selected'/'selected.eng.ocr.srt','English reference.')
+    pl=cue_file(directory/'polish'/'original.pl.srt')
+    manifest={'media':{'duration_ms':10000},'reference':{'files':[{'name':en.relative_to(directory).as_posix(),'sha256':sha256(en)}]},
+              'polish_candidates':[{'archiveName':'polish/original.pl.srt','sha256':sha256(pl)}]}
+    (directory/'manifest.json').write_text(json.dumps(manifest))
+    report={'pipeline':'PREPARE_SYNC','selectedEnglish':{'sourceType':'embedded','streamIndex':4},
+            'requiresOcr':False,'polishCandidates':manifest['polish_candidates'],'workpack':{}}
+    with sqlite3.connect(settings.data_root/'subtitle-agent.db') as db:
+        db.execute('INSERT INTO jobs (id,media_path,status,progress,created_at,job_type,task_type,report_json) VALUES (?,?,?,?,?,?,?,?)',
+                   (job_id,'unused.mkv','WORKPACK_READY',100,'2026-10-03','PREPARE_WORKPACK','PREPARE_SYNC',json.dumps(report)))
+    return job_id,directory

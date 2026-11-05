@@ -7,7 +7,7 @@ import pytest
 
 from app.services.ai_sync import (ApiSettings, AiSyncError, chat_request, usage_metrics,
                                   read_cues, validate_translation)
-from tests.test_ai_sync import prepared_job, cue_file
+from tests.helpers import cue_file
 
 
 @pytest.mark.parametrize('cost',[0, 0.00001234, 2])

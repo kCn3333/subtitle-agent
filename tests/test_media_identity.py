@@ -1,12 +1,12 @@
 import io
 import json
-import time
 import zipfile
 
 import pytest
 
 from app.models.media import MediaKind
 from app.services.media_analysis import discover_external_subtitles, match_media_identity, parse_media_identity
+from tests.helpers import wait_workpack
 
 
 @pytest.mark.parametrize(("name", "season", "episode", "episode_end"), [
@@ -102,11 +102,7 @@ def test_lost_directory_report_and_zip_never_mix_neighboring_episodes(client, se
     response = client.post("/api/workpacks", json={"mediaPath": str(target), "taskType": "LANGUAGE_REVIEW"})
     assert response.status_code == 202
     job_id = response.json()["jobId"]
-    for _ in range(200):
-        body = client.get(f"/api/workpacks/{job_id}").json()
-        if body["status"] in {"WORKPACK_READY", "WORKPACK_INCOMPLETE", "FAILED"}:
-            break
-        time.sleep(.01)
+    body = wait_workpack(client, job_id)
     assert body["status"] == "WORKPACK_INCOMPLETE"
     report = body["report"]
     discovered_names = {item["name"] for item in report["externalSubtitles"]}

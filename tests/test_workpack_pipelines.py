@@ -9,21 +9,7 @@ from pathlib import Path
 from app.services.subtitle_extraction import SubtitleExtractionResult
 from app.services.ocr_client import OcrResult, OcrWorkerError
 from app.services.process_runner import ProcessExecutionError
-
-
-def _wait(client, job_id: str) -> dict:
-    for _ in range(300):
-        body = client.get(f"/api/workpacks/{job_id}").json()
-        if body["status"] in {"INSPECTION_READY", "WORKPACK_READY", "WORKPACK_INCOMPLETE", "NEEDS_OCR", "FAILED"}:
-            return body
-        time.sleep(.01)
-    raise AssertionError("pipeline did not finish")
-
-
-def _embedded(subtitle_type: str = "text") -> dict:
-    return {"streamIndex": 2, "subtitleOrder": 0, "codec": "subrip" if subtitle_type == "text" else "hdmv_pgs_subtitle",
-            "language": "eng", "title": "English Full Dialogue", "default": True, "forced": False,
-            "hearingImpaired": False, "type": subtitle_type}
+from tests.helpers import wait_workpack, embedded_reference
 
 
 def _configure_probe(monkeypatch, subtitle_type: str = "text") -> None:
@@ -31,7 +17,7 @@ def _configure_probe(monkeypatch, subtitle_type: str = "text") -> None:
         return {"path": str(path), "name": path.name, "sizeBytes": path.stat().st_size,
                 "container": "matroska", "durationSeconds": 100.0, "width": 1920, "height": 1080,
                 "avgFrameRate": "24000/1001", "rFrameRate": "24000/1001", "videoCodec": "h264",
-                "audioTracks": [], "embeddedSubtitles": [_embedded(subtitle_type)]}
+                "audioTracks": [], "embeddedSubtitles": [embedded_reference(subtitle_type)]}
 
     monkeypatch.setattr("app.services.job_manager.probe_media", probe)
 
@@ -52,7 +38,7 @@ def test_inspection_v2_does_not_copy_materials_and_keeps_rejections(client, sett
     (media.parent / "Lost.S01E23.pl.srt").write_text("1\n00:00:01,000 --> 00:00:02,000\nTekst\n")
     (media.parent / "Lost.S01E24.pl.srt").write_text("1\n00:00:01,000 --> 00:00:02,000\nInny\n")
     response = client.post("/api/workpacks", json={"mediaPath": str(media), "taskType": "INSPECT"})
-    body = _wait(client, response.json()["jobId"])
+    body = wait_workpack(client, response.json()["jobId"])
     assert body["status"] == "INSPECTION_READY"
     report = body["report"]
     assert report["reportVersion"] == 2 and report["pipeline"] == "INSPECT"
@@ -73,7 +59,7 @@ def test_inspection_v2_does_not_copy_materials_and_keeps_rejections(client, sett
 
 def test_sync_requires_english_and_a_valid_polish_candidate(client, media_file):
     response = client.post("/api/workpacks", json={"mediaPath": str(media_file), "taskType": "PREPARE_SYNC"})
-    body = _wait(client, response.json()["jobId"])
+    body = wait_workpack(client, response.json()["jobId"])
     assert body["status"] == "WORKPACK_INCOMPLETE"
     assert set(body["report"]["incompleteReasons"]) == {
         "Brak wymaganej referencji", "Brak prawidłowo dopasowanego kandydata polskiego"}
@@ -83,7 +69,7 @@ def test_sync_is_ready_with_english_and_matched_polish(client, media_file, monke
     _configure_probe(monkeypatch); _configure_extraction(monkeypatch)
     media_file.with_name("Example Movie.pl.srt").write_text("1\n00:00:01,000 --> 00:00:02,000\nTekst\n")
     response = client.post("/api/workpacks", json={"mediaPath": str(media_file), "taskType": "PREPARE_SYNC"})
-    body = _wait(client, response.json()["jobId"])
+    body = wait_workpack(client, response.json()["jobId"])
     assert body["status"] == "WORKPACK_READY"
     assert body["report"]["pipeline"] == "PREPARE_SYNC"
     assert body["report"]["incompleteReasons"] == []
@@ -122,7 +108,7 @@ def test_same_episode_title_from_different_production_is_blocked(client, setting
     ), encoding="utf-8")
 
     async def probe(path, timeout):
-        reference = _embedded("graphic")
+        reference = embedded_reference("graphic")
         reference["codec"] = "dvd_subtitle"
         return {"path": str(path), "name": path.name, "sizeBytes": path.stat().st_size,
                 "container": "matroska", "durationSeconds": 3130.388, "width": 1440, "height": 1080,
@@ -145,7 +131,7 @@ def test_same_episode_title_from_different_production_is_blocked(client, setting
     monkeypatch.setattr("app.services.job_manager.probe_media", probe)
     monkeypatch.setattr("app.services.job_manager.extract_embedded", extract)
     response = client.post("/api/workpacks", json={"mediaPath": str(media), "taskType": "PREPARE_SYNC"})
-    body = _wait(client, response.json()["jobId"])
+    body = wait_workpack(client, response.json()["jobId"])
     assert body["status"] == "NEEDS_OCR"
     assert body["report"]["polishCandidates"] == []
     suspect = body["report"]["incompatiblePolishCandidates"][0]
@@ -177,7 +163,7 @@ def test_workpack_process_error_is_visible_in_failed_event(client, media_file, m
 
     monkeypatch.setattr("app.services.job_manager.extract_embedded", fail)
     created = client.post("/api/tasks", json={"mediaPath": str(media_file), "mode": "PREPARE_SYNC"})
-    body = _wait(client, created.json()["jobId"])
+    body = wait_workpack(client, created.json()["jobId"])
     assert body["status"] == "FAILED"
     assert "DVD/VobSub" in body["errorMessage"]
     assert "DVD/VobSub" in client.app.state.jobs.events(body["jobId"])[-1].message
@@ -188,7 +174,7 @@ def test_polish_subtitle_overrun_is_reported(client, media_file):
         "1\n00:01:45,000 --> 00:01:46,000\nTekst\n", encoding="utf-8"
     )
     created = client.post("/api/tasks", json={"mediaPath": str(media_file), "mode": "INSPECT"})
-    body = _wait(client, created.json()["jobId"])
+    body = wait_workpack(client, created.json()["jobId"])
     assert any("00:00:06.000 po zakończeniu materiału" in warning for warning in body["report"]["warnings"])
     assert body["report"]["polishCandidateInspection"][0]["endOverrunSeconds"] == 6
 
@@ -196,7 +182,7 @@ def test_polish_subtitle_overrun_is_reported(client, media_file):
 def test_translation_requires_text_english_but_not_polish(client, media_file, monkeypatch):
     _configure_probe(monkeypatch); _configure_extraction(monkeypatch)
     response = client.post("/api/workpacks", json={"mediaPath": str(media_file), "taskType": "PREPARE_TRANSLATION"})
-    body = _wait(client, response.json()["jobId"])
+    body = wait_workpack(client, response.json()["jobId"])
     assert body["status"] == "WORKPACK_READY"
     assert body["report"]["pipeline"] == "PREPARE_TRANSLATION"
     assert body["report"]["requiresOcr"] is False
@@ -264,7 +250,7 @@ def test_translation_vobsub_builds_downloadable_ocr_pack(client, media_file, set
 
     monkeypatch.setattr("app.services.job_manager.probe_media", dvd_probe)
     response = client.post("/api/workpacks", json={"mediaPath": str(media_file), "taskType": "PREPARE_TRANSLATION"})
-    body = _wait(client, response.json()["jobId"])
+    body = wait_workpack(client, response.json()["jobId"])
     assert body["status"] == "WORKPACK_READY"
     assert body["progress"] == 100
     assert body["report"]["requiresOcr"] is False
@@ -334,7 +320,7 @@ def test_translation_pgs_builds_ocr_pack_with_sup(client, media_file, monkeypatc
     monkeypatch.setattr("app.services.job_manager.extract_embedded", extract)
     monkeypatch.setattr("app.services.job_manager.graphic_timeline", graphic)
     response = client.post("/api/workpacks", json={"mediaPath": str(media_file), "taskType": "PREPARE_TRANSLATION"})
-    body = _wait(client, response.json()["jobId"])
+    body = wait_workpack(client, response.json()["jobId"])
     assert body["status"] == "NEEDS_OCR" and body["report"]["workpack"]
     with zipfile.ZipFile(body["report"]["workpack"]["path"]) as archive:
         assert "reference/selected/selected.eng.sup" in archive.namelist()
@@ -361,7 +347,7 @@ def test_translation_keeps_needs_ocr_pack_when_worker_fails(client, media_file, 
     monkeypatch.setattr("app.services.job_manager.graphic_timeline", graphic)
     monkeypatch.setattr("app.services.job_manager.recognize_reference", failed_ocr)
     response = client.post("/api/workpacks", json={"mediaPath": str(media_file), "taskType": "PREPARE_TRANSLATION"})
-    body = _wait(client, response.json()["jobId"])
+    body = wait_workpack(client, response.json()["jobId"])
     assert body["status"] == "NEEDS_OCR"
     assert any("worker testowo niedostępny" in warning for warning in body["report"]["warnings"])
     with zipfile.ZipFile(body["report"]["workpack"]["path"]) as archive:
@@ -388,7 +374,7 @@ def test_translation_invalid_ocr_srt_falls_back_to_graphic_pack(client, media_fi
     monkeypatch.setattr("app.services.job_manager.graphic_timeline", graphic)
     monkeypatch.setattr("app.services.job_manager.recognize_reference", invalid_ocr)
     response = client.post("/api/workpacks", json={"mediaPath": str(media_file), "taskType": "PREPARE_TRANSLATION"})
-    body = _wait(client, response.json()["jobId"])
+    body = wait_workpack(client, response.json()["jobId"])
     assert body["status"] == "NEEDS_OCR"
     with zipfile.ZipFile(body["report"]["workpack"]["path"]) as archive:
         names = archive.namelist()
@@ -399,7 +385,7 @@ def test_translation_invalid_ocr_srt_falls_back_to_graphic_pack(client, media_fi
 
 def test_translation_without_english_reference_is_incomplete(client, media_file):
     response = client.post("/api/workpacks", json={"mediaPath": str(media_file), "taskType": "PREPARE_TRANSLATION"})
-    body = _wait(client, response.json()["jobId"])
+    body = wait_workpack(client, response.json()["jobId"])
     assert body["status"] == "WORKPACK_INCOMPLETE"
     assert body["report"]["workpack"] is not None
     assert body["report"]["incompleteReasons"] == ["Brak wymaganej referencji"]
@@ -429,7 +415,7 @@ def test_translation_incomplete_vobsub_pair_fails_without_zip(client, media_file
 
     monkeypatch.setattr("app.services.job_manager.probe_media", dvd_probe)
     response = client.post("/api/workpacks", json={"mediaPath": str(media_file), "taskType": "PREPARE_TRANSLATION"})
-    body = _wait(client, response.json()["jobId"])
+    body = wait_workpack(client, response.json()["jobId"])
     assert body["status"] == "FAILED"
     assert "DVD/VobSub" in body["errorMessage"]
     job_dir = settings.data_root / "work" / "jobs" / body["jobId"]
@@ -446,7 +432,7 @@ def test_graphic_inspection_uses_timeline_without_export_and_leaves_no_directory
     monkeypatch.setattr("app.services.job_manager.extract_embedded", forbidden_extract)
     monkeypatch.setattr("app.services.job_manager.graphic_timeline", fake_timeline)
     created = client.post("/api/tasks", json={"mediaPath": str(media_file), "mode": "INSPECT"})
-    body = _wait(client, created.json()["jobId"])
+    body = wait_workpack(client, created.json()["jobId"])
     assert body["status"] == "INSPECTION_READY" and body["report"]["workpack"] is None
     assert not (settings.data_root / "work" / "jobs" / body["jobId"]).exists()
 
@@ -454,7 +440,7 @@ def test_graphic_inspection_uses_timeline_without_export_and_leaves_no_directory
 def test_unified_tasks_api_accepts_mode_and_legacy_endpoint_remains(client, media_file):
     created = client.post("/api/tasks", json={"mediaPath": str(media_file), "mode": "INSPECT"})
     assert created.status_code == 202 and created.json()["mode"] == "INSPECT"
-    body = _wait(client, created.json()["jobId"])
+    body = wait_workpack(client, created.json()["jobId"])
     assert body["report"]["pipeline"] == "INSPECT"
     assert client.get(f"/api/tasks/{created.json()['jobId']}").status_code == 200
     legacy = client.post("/api/workpacks", json={"mediaPath": str(media_file), "taskType": "INSPECT"})
@@ -490,7 +476,7 @@ def test_external_english_requires_confirmation_and_copies_selected_file(client,
         media_file.with_name(media_file.stem + '.pl.srt').write_text(content.replace('You are not the one and you know it is true.', 'To jest polski tekst.'))
     response = client.post('/api/tasks', json={'mediaPath': str(media_file), 'mode': mode})
     job_id = response.json()['jobId']
-    body = _wait(client, job_id)
+    body = wait_workpack(client, job_id)
     assert body['status'] == 'WORKPACK_INCOMPLETE'
     assert body['report']['selectedEnglish'] is None
     assert body['report']['externalReferenceConfirmationRequired'] is True
@@ -523,7 +509,7 @@ def test_embedded_reference_remains_automatic_with_external_english(client, medi
     _configure_extraction(monkeypatch)
     media_file.with_suffix('.srt').write_text('1\n00:00:01,000 --> 00:00:02,000\nYou are not the one and you know it is true.\n')
     response = client.post('/api/tasks', json={'mediaPath': str(media_file), 'mode': 'PREPARE_TRANSLATION'})
-    body = _wait(client, response.json()['jobId'])
+    body = wait_workpack(client, response.json()['jobId'])
     assert body['status'] == 'WORKPACK_READY'
     assert body['report']['selectedEnglish']['sourceType'] == 'embedded'
     assert body['report']['externalReferenceConfirmationRequired'] is False
@@ -532,8 +518,8 @@ def test_embedded_reference_remains_automatic_with_external_english(client, medi
 def test_manual_embedded_reference_rebuild_changes_selected_track_and_zip(client, media_file, settings, monkeypatch):
     settings.include_graphic_reference = True
     tracks = [
-        {**_embedded('graphic'), 'streamIndex': 4, 'title': 'English', 'default': False},
-        {**_embedded(), 'streamIndex': 13, 'title': None, 'default': False},
+        {**embedded_reference('graphic'), 'streamIndex': 4, 'title': 'English', 'default': False},
+        {**embedded_reference(), 'streamIndex': 13, 'title': None, 'default': False},
     ]
 
     async def probe(path, timeout):
@@ -556,7 +542,7 @@ def test_manual_embedded_reference_rebuild_changes_selected_track_and_zip(client
     media_file.with_suffix('.pl.srt').write_text('1\n00:00:01,000 --> 00:00:02,000\nTo jest tekst.\n')
     created = client.post('/api/tasks', json={'mediaPath': str(media_file), 'mode': 'PREPARE_SYNC'})
     job_id = created.json()['jobId']
-    body = _wait(client, job_id)
+    body = wait_workpack(client, job_id)
     assert body['status'] == 'NEEDS_OCR'
     assert body['report']['selectedEnglish']['streamIndex'] == 4
     assert body['report']['workpack']['referenceAmbiguous'] is False
@@ -564,7 +550,7 @@ def test_manual_embedded_reference_rebuild_changes_selected_track_and_zip(client
         response = client.post(f'/api/workpacks/{job_id}/reference',
                                json={'referenceSourceId': f'embedded:{stream}'})
         assert response.status_code == 202
-        body = _wait(client, job_id)
+        body = wait_workpack(client, job_id)
         assert body['status'] == ('NEEDS_OCR' if stream == 4 else 'WORKPACK_READY'), body
         assert body['report']['selectedEnglish']['streamIndex'] == stream
         with zipfile.ZipFile(body['report']['workpack']['path']) as archive:
@@ -585,7 +571,7 @@ def test_real_mov_text_pipeline(client, settings, mov_text_media, monkeypatch, m
     mov_text_media.with_suffix('.pl.srt').write_text('1\n00:00:00,500 --> 00:00:01,500\nTo jest tekst.\n')
     response = client.post('/api/tasks', json={'mediaPath': str(mov_text_media), 'mode': mode})
     assert response.status_code == 202
-    body = _wait(client, response.json()['jobId'])
+    body = wait_workpack(client, response.json()['jobId'])
     assert body['status'] == ('INSPECTION_READY' if mode == 'INSPECT' else 'WORKPACK_READY'), body
     assert body['report']['selectedEnglish']['codec'] == 'mov_text'
     if mode == 'INSPECT':
@@ -607,8 +593,8 @@ def test_graphic_packet_scan_uses_full_file_timeout_without_extracting_alternati
     settings.ffprobe_timeout_seconds = probe_timeout
     settings.ffmpeg_timeout_seconds = extraction_timeout
     tracks = [
-        {**_embedded('graphic'), 'streamIndex': 5, 'title': 'English', 'default': False},
-        {**_embedded(), 'streamIndex': 13, 'title': None},
+        {**embedded_reference('graphic'), 'streamIndex': 5, 'title': 'English', 'default': False},
+        {**embedded_reference(), 'streamIndex': 13, 'title': None},
     ]
     calls = []
 
@@ -634,7 +620,7 @@ def test_graphic_packet_scan_uses_full_file_timeout_without_extracting_alternati
     monkeypatch.setattr('app.services.job_manager.graphic_timeline', graphic)
     media_file.with_suffix('.pl.srt').write_text('1\n00:00:01,000 --> 00:00:02,000\nTo jest tekst.\n')
     response = client.post('/api/tasks', json={'mediaPath': str(media_file), 'mode': mode})
-    body = _wait(client, response.json()['jobId'])
+    body = wait_workpack(client, response.json()['jobId'])
     assert body['status'] == 'NEEDS_OCR', body
     assert calls == [5]
     assert body['report']['workpack']['referenceAmbiguous'] is True
@@ -657,7 +643,7 @@ def test_sync_graphic_ocr_pipeline(client, media_file, settings, monkeypatch, co
 
     settings.include_graphic_reference = include_graphics
     settings.ocr_worker_url = None if outcome == 'unconfigured' else 'http://ocr-worker:8090'
-    reference = {**_embedded('graphic'), 'codec': codec, 'title': 'English SDH', 'hearingImpaired': True}
+    reference = {**embedded_reference('graphic'), 'codec': codec, 'title': 'English SDH', 'hearingImpaired': True}
     original = media_file.read_bytes()
     graphic_names = ['selected.eng.sup'] if codec == 'hdmv_pgs_subtitle' else ['selected.eng.idx', 'selected.eng.sub']
     ocr_srt = b'1\n00:00:03,000 --> 00:00:04,000\nHello world.\n\n2\n00:00:05,000 --> 00:00:06,000\nGoodbye.\n'
@@ -699,7 +685,7 @@ def test_sync_graphic_ocr_pipeline(client, media_file, settings, monkeypatch, co
     monkeypatch.setattr('app.services.job_manager.graphic_timeline', graphic)
     media_file.with_suffix('.pl.srt').write_text('1\n00:00:03,000 --> 00:00:04,000\nTo jest tekst.\n')
     created = client.post('/api/tasks', json={'mediaPath': str(media_file), 'mode': 'PREPARE_SYNC'})
-    body = _wait(client, created.json()['jobId'])
+    body = wait_workpack(client, created.json()['jobId'])
     assert body['status'] == ('WORKPACK_READY' if outcome == 'success' else 'NEEDS_OCR'), body
     assert len(requests) == (0 if outcome == 'unconfigured' else 1)
     with zipfile.ZipFile(body['report']['workpack']['path']) as archive:
@@ -746,7 +732,7 @@ def test_sync_text_reference_does_not_call_configured_ocr(client, settings, medi
     monkeypatch.setattr('app.services.job_manager.recognize_reference', forbidden_ocr)
     media_file.with_suffix('.pl.srt').write_text('1\n00:00:01,000 --> 00:00:02,000\nTo jest tekst.\n')
     created = client.post('/api/tasks', json={'mediaPath': str(media_file), 'mode': 'PREPARE_SYNC'})
-    body = _wait(client, created.json()['jobId'])
+    body = wait_workpack(client, created.json()['jobId'])
     assert body['status'] == 'WORKPACK_READY', body
     with zipfile.ZipFile(body['report']['workpack']['path']) as archive:
         assert 'reference/selected/selected.eng.srt' in archive.namelist()
@@ -789,7 +775,7 @@ def test_sync_pgs_show_hide_ocr_integration(client, settings, media_file, monkey
     monkeypatch.setattr('app.services.job_manager.graphic_timeline', packets)
     media_file.with_suffix('.pl.srt').write_text('1\n00:01:47,483 --> 00:01:48,483\nTo jest tekst.\n')
     created = client.post('/api/tasks', json={'mediaPath': str(media_file), 'mode':'PREPARE_SYNC'})
-    body = _wait(client, created.json()['jobId'])
+    body = wait_workpack(client, created.json()['jobId'])
     assert body['status'] == 'WORKPACK_READY', body
     assert received == [b'graphic reference fixture']
     with zipfile.ZipFile(body['report']['workpack']['path']) as archive:

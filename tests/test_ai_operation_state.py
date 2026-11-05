@@ -4,7 +4,6 @@ import threading
 import pytest
 
 from app.services.ai_sync import AiSyncError
-from tests.test_ai_sync import prepared_job
 
 
 @pytest.mark.anyio

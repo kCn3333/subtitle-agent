@@ -7,14 +7,13 @@ from app.services.media_analysis import (_flags, rank_references, discover_exter
                                         parse_media_identity)
 from app.services.subtitle_extraction import SubtitleExtractionResult, extract_subtitle
 from app.services.workpack import sha256_file
-from tests.test_ai_sync import prepared_job
-from tests.test_workpack_pipelines import _wait, _embedded
+from tests.helpers import wait_workpack, embedded_reference
 
 
 def test_reference_ranking_keeps_english_priority_and_exposes_other_languages():
-    french = {**_embedded(), 'streamIndex': 3, 'language': 'fre', 'title': 'French Full Dialogue'}
+    french = {**embedded_reference(), 'streamIndex': 3, 'language': 'fre', 'title': 'French Full Dialogue'}
     german = {**french, 'streamIndex': 4, 'language': 'ger', 'title': 'German'}
-    rows = rank_references([french, german, _embedded()], [])
+    rows = rank_references([french, german, embedded_reference()], [])
     assert [row['language'] for row in rows] == ['eng', 'fra', 'deu']
     assert {row['streamIndex'] for row in rows} == {2, 3, 4}
     assert rank_references([french], [])[0]['language'] == 'fra'
@@ -37,7 +36,7 @@ def test_external_french_matches_media_without_mistaking_it_for_a_language(tmp_p
 def test_french_reference_preparation_and_manual_selection(client, settings, monkeypatch, mode):
     media = settings.media_roots[0] / 'Film.mkv'; media.write_bytes(b'media')
     (media.parent / 'Film.pl.srt').write_text('1\n00:00:01,000 --> 00:00:02,000\nDzień dobry.\n')
-    french = {**_embedded(), 'language': 'fra', 'title': 'French', 'streamIndex': 3}
+    french = {**embedded_reference(), 'language': 'fra', 'title': 'French', 'streamIndex': 3}
     async def probe(path, timeout):
         return {'path': str(path), 'name': path.name, 'sizeBytes': 5, 'durationSeconds': 100,
                 'embeddedSubtitles': [french], 'audioTracks': []}
@@ -50,7 +49,7 @@ def test_french_reference_preparation_and_manual_selection(client, settings, mon
     monkeypatch.setattr('app.services.job_manager.probe_media', probe)
     monkeypatch.setattr('app.services.job_manager.extract_embedded', extract)
     job_id = complete_ai(client,'/api/workpacks', json={'mediaPath': str(media), 'taskType': mode}).json()['jobId']
-    job = _wait(client, job_id)
+    job = wait_workpack(client, job_id)
     assert job['status'] == 'WORKPACK_READY', job
     assert job['report']['selectedReference']['language'] == 'fra'
     assert job['report']['referenceRanking'][0]['streamIndex'] == 3
@@ -109,10 +108,10 @@ def test_ai_accepts_french_reference_and_preserves_output_contract(client, prepa
 
 def test_manual_rebuild_can_switch_from_english_to_french(client, settings, monkeypatch):
     media = settings.media_roots[0] / 'Film.mkv'; media.write_bytes(b'media')
-    french = {**_embedded(), 'streamIndex': 3, 'language': 'fra', 'title': 'French'}
+    french = {**embedded_reference(), 'streamIndex': 3, 'language': 'fra', 'title': 'French'}
     async def probe(path, timeout):
         return {'path': str(path), 'name': path.name, 'durationSeconds': 100,
-                'embeddedSubtitles': [_embedded(), french], 'audioTracks': []}
+                'embeddedSubtitles': [embedded_reference(), french], 'audioTracks': []}
     async def extract(reference, media_path, target, timeout):
         from app.services.subtitle_languages import reference_prefix
         target.mkdir(parents=True, exist_ok=True)
@@ -122,7 +121,7 @@ def test_manual_rebuild_can_switch_from_english_to_french(client, settings, monk
     monkeypatch.setattr('app.services.job_manager.probe_media', probe)
     monkeypatch.setattr('app.services.job_manager.extract_embedded', extract)
     job_id = complete_ai(client,'/api/workpacks', json={'mediaPath': str(media), 'taskType': 'PREPARE_TRANSLATION'}).json()['jobId']
-    job = _wait(client, job_id)
+    job = wait_workpack(client, job_id)
     assert job['report']['selectedReference']['language'] == 'eng'
     # Older saved reports should expose newly supported tracks as well.
     saved = {key: value for key, value in job['report'].items() if key not in {'referenceRanking', 'selectedReference'}}
@@ -173,7 +172,7 @@ def test_french_graphic_reference_uses_french_ocr_without_english_text_fixes(cli
     media = settings.media_roots[0] / 'Film.mkv'; media.write_bytes(b'media')
     (media.parent / 'Film.pl.srt').write_text('1\n00:00:01,000 --> 00:00:02,000\nDzień dobry.\n')
     settings.ocr_worker_url = 'http://ocr'
-    french = {**_embedded('graphic'), 'language': 'fra', 'title': 'French'}
+    french = {**embedded_reference('graphic'), 'language': 'fra', 'title': 'French'}
     async def probe(path, timeout):
         return {'path': str(path), 'name': path.name, 'durationSeconds': 100,
                 'embeddedSubtitles': [french], 'audioTracks': []}
@@ -195,7 +194,7 @@ def test_french_graphic_reference_uses_french_ocr_without_english_text_fixes(cli
     monkeypatch.setattr('app.services.job_manager.recognize_reference', recognize)
     monkeypatch.setattr('app.services.job_manager.normalize_ocr_text', fail_normalization)
     job_id = complete_ai(client,'/api/workpacks', json={'mediaPath': str(media), 'taskType': mode}).json()['jobId']
-    job = _wait(client, job_id)
+    job = wait_workpack(client, job_id)
     assert job['status'] == 'WORKPACK_READY', job
     assert job['report']['requiresOcr'] is False
     directory = settings.data_root / 'work' / 'jobs' / job_id

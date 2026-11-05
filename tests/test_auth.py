@@ -30,24 +30,24 @@ def session_csrf(browser):
     return re.search(r'name="csrf-token" content="([^\"]+)"', browser.get('/').text)[1]
 
 
-@pytest.mark.parametrize('path', ['/', '/settings', '/archive'])
-def test_pages_require_login(browser, path):
-    response = browser.get(path, follow_redirects=False)
-    assert response.status_code == 303
-    assert response.headers['location'] == '/login'
+def test_pages_require_login(browser):
+    for path in ['/', '/settings', '/archive']:
+        response = browser.get(path, follow_redirects=False)
+        assert response.status_code == 303, path
+        assert response.headers['location'] == '/login', path
 
 
-@pytest.mark.parametrize('path', [
-    '/api/jobs', '/api/tasks/missing', '/api/tasks/missing/download', '/api/jobs/missing/events',
-    '/api/archive', '/api/archive/missing/download', '/api/settings/ai', '/api/settings/ai/console',
-    '/api/settings/ai/health', '/api/workpacks/config', '/api/workpacks/ocr-health',
-    '/api/tasks/missing/ai-sync/download', '/api/tasks/missing/ai-translate/download',
-    '/api/tasks/missing/ai-status', '/api%2fsettings/ai',
-])
-def test_api_downloads_and_sse_require_login(browser, path):
-    response = browser.get(path)
-    assert response.status_code == 401
-    assert response.json()['detail']['code'] == 'LOGIN_REQUIRED'
+def test_api_downloads_and_sse_require_login(browser):
+    for path in [
+        '/api/jobs', '/api/tasks/missing', '/api/tasks/missing/download', '/api/jobs/missing/events',
+        '/api/archive', '/api/archive/missing/download', '/api/settings/ai', '/api/settings/ai/console',
+        '/api/settings/ai/health', '/api/workpacks/config', '/api/workpacks/ocr-health',
+        '/api/tasks/missing/ai-sync/download', '/api/tasks/missing/ai-translate/download',
+        '/api/tasks/missing/ai-status', '/api%2fsettings/ai',
+    ]:
+        response = browser.get(path)
+        assert response.status_code == 401, path
+        assert response.json()['detail']['code'] == 'LOGIN_REQUIRED', path
 
 
 def test_health_is_minimal_and_login_has_security_headers(browser):
@@ -278,11 +278,11 @@ def test_remember_me_cookie_and_server_expire_together(browser, monkeypatch, rem
     assert store.session(token) is None
 
 
-@pytest.mark.parametrize('remember', ['true','false',1,0,None,[],{}])
-def test_login_rejects_non_boolean_remember_flag(browser, remember):
-    page=browser.get('/login')
-    csrf=re.search(r'name="login-csrf-token" content="([^\"]+)"',page.text)[1]
-    response=browser.post('/api/auth/login',json={'username':'test-user','password':'test-password-for-auth','remember':remember},
-                          headers={'Origin':'http://testserver','X-CSRF-Token':csrf})
-    assert response.status_code == 400
-    assert browser.app.state.auth.session(browser.cookies.get(COOKIE,'')) is None
+def test_login_rejects_non_boolean_remember_flag(browser):
+    for remember in ['true', 'false', 1, 0, None, [], {}]:
+        page=browser.get('/login')
+        csrf=re.search(r'name="login-csrf-token" content="([^\"]+)"',page.text)[1]
+        response=browser.post('/api/auth/login',json={'username':'test-user','password':'test-password-for-auth','remember':remember},
+                              headers={'Origin':'http://testserver','X-CSRF-Token':csrf})
+        assert response.status_code == 400, repr(remember)
+        assert browser.app.state.auth.session(browser.cookies.get(COOKIE,'')) is None

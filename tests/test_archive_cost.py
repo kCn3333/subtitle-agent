@@ -5,7 +5,7 @@ import pytest
 from app.services.ai_console import AiConsoleStore, capture, record_metrics
 from app.services.ai_sync import AiSyncError, ApiSettings
 from app.services.ai_usage import UsageStore
-from tests.test_archive import add_job, manager_at
+from tests.helpers import add_job, manager_at
 
 
 def run(store, job, operation, usage, fail=False):

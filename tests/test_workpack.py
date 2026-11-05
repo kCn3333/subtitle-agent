@@ -2,7 +2,6 @@ import base64
 import hashlib
 import json
 import shutil
-import time
 import uuid
 import zipfile
 from datetime import datetime, timedelta
@@ -20,16 +19,11 @@ from app.services.process_runner import ProcessExecutionError
 from app.services.workpack import (build_zip, copy_polish_candidates, extract_embedded, graphic_timeline,
                                    media_summary, parse_vobsub_idx, safe_archive_name, safe_filename,
                                    sha256_file, timeline)
+from tests.helpers import wait_workpack
 
 
 def srt(text="Zażółć gęślą jaźń") -> bytes:
     return f"1\r\n00:00:01,000 --> 00:00:02,500\r\n{text}\r\n".encode("cp1250")
-
-
-def test_default_mode_is_workpack_and_needs_no_key():
-    settings = Settings(_env_file=None)
-    assert settings.subtitle_agent_app_mode == "WORKPACK"
-    assert settings.openai_configured is False
 
 
 def test_workpack_ignores_stale_key_file(tmp_path):
@@ -63,13 +57,6 @@ def test_english_ranking_excludes_foreign_language_tracks():
         {"streamIndex": 2, "language": "dan", "title": "Dansk", "type": "text"},
     ], [])
     assert [item["streamIndex"] for item in ranked] == [1]
-
-
-def test_ambiguity_can_be_calculated_from_margin():
-    ranked = rank_english([
-        {"streamIndex": 1, "language": "eng", "title": "English A", "type": "text"},
-        {"streamIndex": 2, "language": "eng", "title": "English B", "type": "text"}], [])
-    assert ranked[0]["score"] - ranked[1]["score"] < 10
 
 
 @pytest.mark.parametrize("unsafe", ["../secret", "/absolute", "safe/../../secret"])
@@ -279,10 +266,7 @@ def test_workpack_api_persists_download_and_does_not_modify_media(client, media_
     response = client.post('/api/workpacks', json={"mediaPath": str(media_file),
                                                    "taskType": "SYNC_AND_LANGUAGE_REVIEW"})
     assert response.status_code == 202; job_id = response.json()["jobId"]
-    for _ in range(200):
-        report_response = client.get(f'/api/workpacks/{job_id}'); body = report_response.json()
-        if body["status"] in {"WORKPACK_READY", "WORKPACK_INCOMPLETE", "FAILED"}: break
-        time.sleep(.01)
+    body = wait_workpack(client, job_id)
     assert body["status"] == "WORKPACK_INCOMPLETE"
     downloaded = client.get(f'/api/workpacks/{job_id}/download')
     assert downloaded.status_code == 200

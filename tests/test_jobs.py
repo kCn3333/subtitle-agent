@@ -1,5 +1,4 @@
 import sqlite3
-import time
 import json
 from pathlib import Path
 
@@ -8,6 +7,7 @@ import pytest
 from app.models.job import AlignmentMode, JobStatus
 from app.services.job_manager import JobManager, display_size
 from app.services.process_runner import ProcessTimeoutError
+from tests.helpers import wait_status
 
 
 def create(client, path):
@@ -15,12 +15,7 @@ def create(client, path):
 
 
 def wait_terminal(client, job_id):
-    for _ in range(200):
-        body = client.get(f"/api/jobs/{job_id}").json()
-        if body["status"] in {"COMPLETED", "FAILED"}:
-            return body
-        time.sleep(0.01)
-    raise AssertionError("job did not finish")
+    return wait_status(client, f'/api/jobs/{job_id}', {'COMPLETED', 'FAILED'})
 
 
 def test_create_real_analysis_job(client, media_file):

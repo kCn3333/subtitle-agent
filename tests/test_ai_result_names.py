@@ -2,8 +2,7 @@ from conftest import complete_ai
 from urllib.parse import unquote
 
 from app.services.archive import ArchiveStore
-from tests.test_ai_sync import prepared_job
-from tests.test_archive import add_job, manager_at
+from tests.helpers import add_job, manager_at
 
 
 def test_sync_names_versions_dedup_and_archive_download(client,prepared_job,monkeypatch):

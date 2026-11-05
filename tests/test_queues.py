@@ -2,7 +2,6 @@ import asyncio
 import json
 import sqlite3
 import threading
-import time
 import uuid
 from pathlib import Path
 
@@ -11,16 +10,9 @@ import pytest
 from app.models.job import JobStatus, WorkpackTaskType
 from app.services.job_manager import JobManager
 from app.services.operation_queue import AiQueue, JobBusy, QueueBusy
-from tests.test_ai_sync import prepared_job
 
 
-def wait_operation(client, operation_id):
-    for _ in range(500):
-        state=client.get(f'/api/ai-operations/{operation_id}').json()
-        if state['status'] in {'completed','failed'}:
-            return state
-        time.sleep(.01)
-    raise AssertionError('Operation did not complete')
+from tests.helpers import wait_operation
 
 
 def clone_job(client, settings, source):

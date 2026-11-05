@@ -1,33 +1,9 @@
 import hashlib
 import json
-import uuid
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from app.services.job_manager import JobManager
-from app.core.config import Settings
-
-
-def add_job(manager, title, index=0, payload=b'zip', status='WORKPACK_READY'):
-    job_id = str(uuid.uuid4())
-    directory = manager.settings.data_root / 'work' / 'jobs' / job_id
-    directory.mkdir(parents=True)
-    archive = directory / (title + '.zip')
-    archive.write_bytes(payload)
-    stamp = (datetime(2025, 1, 1, tzinfo=timezone.utc) + timedelta(minutes=index)).isoformat()
-    report = {'workpack': {'path': str(archive), 'filename': archive.name,
-                          'sha256': hashlib.sha256(payload).hexdigest()}}
-    with manager._connect() as db:
-        db.execute('''INSERT INTO jobs(id,media_path,status,progress,created_at,finished_at,report_json,job_type)
-                      VALUES(?,?,?,?,?,?,?,?)''',
-                   (job_id, '/media/' + title + '.mkv', status, 100, stamp,
-                    None if status == 'QUEUED' else stamp, json.dumps(report), 'PREPARE_WORKPACK'))
-    return job_id, directory
-
-
-def manager_at(tmp_path):
-    root = tmp_path / 'data'; root.mkdir()
-    return JobManager(root / 'subtitle-agent.db', Settings(data_root=root, media_roots=[tmp_path]))
+from tests.helpers import add_job, manager_at
 
 
 def test_archive_keeps_versions_deduplicates_sha_and_preserves_srt_on_retry(tmp_path):
