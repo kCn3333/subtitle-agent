@@ -87,3 +87,33 @@ test('directory AI highlights the current item while keeping user exclusions vis
   assert.match(html,/data-state="skipped".*S01E03/);
   assert.doesNotMatch(html,/0%/);
 });
+
+test('inspection report uses readable shared parameters instead of JSON and raw metadata',()=>{
+  const inspected=job('INSPECTION_READY');
+  inspected.report.summary={common:{container:'matroska,webm',width:1920,height:1036,video_codec:'hevc',
+    fps:{fraction:'25/1',decimal:25},referenceCodec:'subrip',referenceLanguage:'eng',referenceType:'text',referenceForced:false},
+    differences:{fps:[{value:{fraction:'24000/1001',decimal:23.976024},items:['S01E02.mkv']}]}};
+  const html=setup(inspected).get('#result-content').innerHTML;
+  assert.match(html,/Matroska \(MKV\)/);
+  assert.match(html,/Rozdzielczość.*1920 × 1036/);
+  assert.match(html,/HEVC \(H.265\)/);
+  assert.match(html,/25 kl\.\/s/);
+  assert.match(html,/23,976 kl\.\/s \(24000\/1001\)/);
+  assert.match(html,/angielski · tekstowa \(SRT\) · forced: nie/);
+  assert.doesNotMatch(html,/"fraction"|"decimal"|>false<|>subrip<|>eng<|>text</);
+});
+test('inspection report summarizes subtitle findings and exposes per-file issues',()=>{
+  const inspected=job('INSPECTION_READY');
+  inspected.report.summary={subtitleInspection:{total:2,withReference:1,withPolish:1,needsAttention:1,items:[
+    {name:'S01E01.mkv',reference:{language:'eng',codec:'subrip',type:'text',forced:false},polishFiles:['S01E01.pl.srt'],incompatiblePolishCount:0,attentionReasons:[]},
+    {name:'S01E02.mkv',reference:null,polishFiles:[],incompatiblePolishCount:1,attentionReasons:['Brak wskazanej referencji','Brak jednoznacznie dopasowanych napisów PL']}
+  ]}};
+  const html=setup(inspected).get('#result-content').innerHTML;
+  assert.match(html,/wskazana referencja: <strong>1\/2/);
+  assert.match(html,/napisy PL: <strong>1\/2/);
+  assert.match(html,/wymagają uwagi: <strong>1/);
+  assert.match(html,/<details open><summary>Napisy w poszczególnych plikach/);
+  assert.match(html,/S01E01.pl.srt/);
+  assert.match(html,/Brak wskazanej referencji/);
+  assert.match(html,/Nie potwierdza zgodności dialogów ani poprawnej synchronizacji/);
+});

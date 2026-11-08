@@ -1,4 +1,54 @@
 const batchLabels={pending:'Oczekuje',running:'Przetwarzanie',attention:'Wymaga wyboru referencji',ready:'Gotowe',failed:'Błąd',skipped:'Pominięto'};
+const batchFieldLabels={container:'Kontener',width:'Szerokość',height:'Wysokość',video_codec:'Wideo',fps:'Klatkaż',referenceCodec:'Format referencji',referenceLanguage:'Język referencji',referenceType:'Typ referencji',referenceForced:'Forced'};
+function batchValueText(key,value){
+  if(value===null||value===undefined||value==='')return 'brak danych';
+  if(key==='fps'){
+    const decimal=typeof value==='object'?value.decimal:Number(value);
+    const fraction=typeof value==='object'?value.fraction:null;
+    if(typeof decimal==='number'&&Number.isFinite(decimal)&&decimal>0)return `${decimal.toLocaleString('pl-PL',{maximumFractionDigits:3})} kl./s${!Number.isInteger(decimal)&&fraction?` (${fraction})`:''}`;
+    return fraction?`${fraction} kl./s`:'brak danych';
+  }
+  if(key==='container'){
+    const formats=String(value).toLowerCase().split(',');
+    if(formats.includes('matroska'))return 'Matroska (MKV)';
+    if(formats.includes('mp4')||formats.includes('mov'))return 'MP4 / MOV';
+    return String(value).toUpperCase();
+  }
+  if(key==='video_codec')return ({hevc:'HEVC (H.265)',h264:'H.264',mpeg4:'MPEG-4',av1:'AV1',vp9:'VP9'})[value]||String(value).toUpperCase();
+  if(key==='referenceCodec')return ({subrip:'SRT',srt:'SRT',ass:'ASS',ssa:'SSA',webvtt:'WebVTT',hdmv_pgs_subtitle:'PGS',dvd_subtitle:'VobSub',mov_text:'MP4 Timed Text'})[value]||String(value).toUpperCase();
+  if(key==='referenceLanguage')return ({eng:'angielski',en:'angielski',english:'angielski',pol:'polski',pl:'polski',fra:'francuski',fr:'francuski',deu:'niemiecki',de:'niemiecki',spa:'hiszpański',es:'hiszpański',ita:'włoski',it:'włoski',por:'portugalski',pt:'portugalski',jpn:'japoński',ja:'japoński',rus:'rosyjski',ru:'rosyjski',ukr:'ukraiński',uk:'ukraiński',ces:'czeski',cs:'czeski',nld:'niderlandzki',nl:'niderlandzki',swe:'szwedzki',sv:'szwedzki',dan:'duński',da:'duński',nor:'norweski',no:'norweski',fin:'fiński',fi:'fiński',kor:'koreański',ko:'koreański',zho:'chiński',zh:'chiński',ara:'arabski',ar:'arabski',tur:'turecki',tr:'turecki',ell:'grecki',el:'grecki',hun:'węgierski',hu:'węgierski',ron:'rumuński',ro:'rumuński',und:'nieokreślony'})[String(value).toLowerCase()]||String(value).toUpperCase();
+  if(key==='referenceType')return ({text:'tekstowa',graphic:'graficzna'})[value]||String(value);
+  if(typeof value==='boolean')return value?'tak':'nie';
+  return typeof value==='object'?'brak danych':String(value);
+}
+function batchReferenceText(reference){
+  if(!reference)return 'brak wskazanej referencji';
+  const parts=[];
+  if(reference.language)parts.push(batchValueText('referenceLanguage',reference.language));
+  const type=reference.type?batchValueText('referenceType',reference.type):'';
+  const codec=reference.codec?batchValueText('referenceCodec',reference.codec):'';
+  if(type||codec)parts.push(type&&codec?`${type} (${codec})`:type||codec);
+  if(typeof reference.forced==='boolean')parts.push(`forced: ${batchValueText('referenceForced',reference.forced)}`);
+  return parts.join(' · ')||'brak danych referencji';
+}
+function batchCommonParameters(common){
+  const rows=[];
+  const add=(label,value)=>rows.push(`<dt>${nodeText(label)}</dt><dd>${nodeText(value)}</dd>`);
+  if(common.container!=null)add('Kontener',batchValueText('container',common.container));
+  if(common.width!=null&&common.height!=null)add('Rozdzielczość',`${common.width} × ${common.height}`);
+  else for(const key of ['width','height'])if(common[key]!=null)add(batchFieldLabels[key],`${common[key]} px`);
+  for(const key of ['video_codec','fps'])if(common[key]!=null)add(batchFieldLabels[key],batchValueText(key,common[key]));
+  const reference={language:common.referenceLanguage,codec:common.referenceCodec,type:common.referenceType,forced:common.referenceForced};
+  if(Object.values(reference).some(value=>value!=null))add('Referencja',batchReferenceText(reference));
+  return rows.length?`<h3>Wspólne parametry</h3><dl>${rows.join('')}</dl>`:'';
+}
+function batchSubtitleInspection(inspection,total){
+  if(!inspection)return '';
+  if(!inspection.total)return '<h3>Napisy</h3><p>Brak zakończonych analiz napisów.</p>';
+  return `<h3>Napisy</h3><p>Przeanalizowane pliki: <strong>${inspection.total}/${total}</strong> · wskazana referencja: <strong>${inspection.withReference}/${inspection.total}</strong> · napisy PL: <strong>${inspection.withPolish}/${inspection.total}</strong> · wymagają uwagi: <strong>${inspection.needsAttention}</strong></p>`+
+    `<details${inspection.needsAttention?' open':''}><summary>Napisy w poszczególnych plikach</summary><div class="table-scroll"><table class="archive-table inspection-table"><thead><tr><th>Plik</th><th>Referencja</th><th>Napisy PL</th><th>Ocena techniczna</th></tr></thead><tbody>${inspection.items.map(item=>`<tr><td>${nodeText(item.name)}</td><td>${nodeText(batchReferenceText(item.reference))}</td><td>Zewnętrzne: ${item.polishFiles.length} · osadzone: ${item.embeddedPolishCount||0}${item.polishFiles.length?`<small>${nodeText(item.polishFiles.join(', '))}</small>`:''}${item.incompatiblePolishCount?`<small class="warning-box">Niezgodne czasowo: ${item.incompatiblePolishCount}</small>`:''}</td><td${item.attentionReasons.length?' class="warning-box"':''}>${nodeText(item.attentionReasons.length?item.attentionReasons.join(' · '):'Bez ostrzeżeń technicznych')}</td></tr>`).join('')}</tbody></table></div></details>`+
+    '<p class="inspection-note">Ocena dotyczy metadanych i dopasowania plików. Nie potwierdza zgodności dialogów ani poprawnej synchronizacji.</p>';
+}
 function batchRow(item){
   const state=Object.hasOwn(batchLabels,item.state)?item.state:'pending';
   const incomplete=state==='ready'&&['WORKPACK_INCOMPLETE','NEEDS_OCR'].includes(item.resultStatus);
@@ -26,12 +76,11 @@ function renderDirectoryBatch(job){
     currentStatus.hidden=false;activityEl.textContent='Brak referencji. Pomiń bieżący plik, aby kontynuować.';
   }
   results.hidden=false;
-  function valueText(value){return value&&typeof value==='object'?JSON.stringify(value):String(value??'—')}
-  const summary=report.summary||{},labels={container:'Kontener',width:'Szerokość',height:'Wysokość',video_codec:'Kodek wideo',fps:'FPS',referenceCodec:'Kodek referencji',referenceLanguage:'Język referencji',referenceType:'Typ referencji',referenceForced:'Flaga forced referencji'};
+  const summary=report.summary||{};
   content.innerHTML=`<p>Katalog: ${nodeText(job.displayTitle)} · pliki: ${items.length} · pominięte dodatki: ${batch.ignoredFiles||0}</p>`+
     (report.workpack?`<p>ZIP: ${fileSize(report.workpack.sizeBytes)} · SHA-256: ${nodeText(report.workpack.sha256)}</p>`:'')+
-    `<dl>${Object.entries(summary.common||{}).map(([key,value])=>`<dt>${nodeText(labels[key]||key)}</dt><dd>${nodeText(valueText(value))}</dd>`).join('')}</dl>`+
-    Object.entries(summary.differences||{}).map(([key,groups])=>`<details><summary>${nodeText(labels[key]||key)} — różnice (${groups.length} wariantów)</summary><ul>${groups.map(group=>`<li>${nodeText(valueText(group.value))}: ${nodeText(group.items.join(', '))}</li>`).join('')}</ul></details>`).join('')+
+    batchSubtitleInspection(summary.subtitleInspection,items.length)+batchCommonParameters(summary.common||{})+
+    Object.entries(summary.differences||{}).map(([key,groups])=>`<details><summary>${nodeText(batchFieldLabels[key]||key)} — różnice (${groups.length} wariantów)</summary><ul>${groups.map(group=>`<li>${nodeText(batchValueText(key,group.value))}: ${nodeText(group.items.join(', '))}</li>`).join('')}</ul></details>`).join('')+
     `<div class="warning-box">${(report.warnings||[]).map(warning=>`<p>${nodeText(warning)}</p>`).join('')}${(summary.warnings||[]).map(item=>`<details><summary>${nodeText(item.message)} (${item.items.length})</summary><p>${nodeText(item.items.join(', '))}</p></details>`).join('')}</div>`;
   if(job.errorMessage)activityEl.textContent=job.errorMessage;
   if(typeof renderAiSync==='function')renderAiSync(job);else if(typeof hideAiHandoff==='function')hideAiHandoff();

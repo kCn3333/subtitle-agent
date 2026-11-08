@@ -7,6 +7,7 @@ from app.models.job import ContinueBatchRequest, CreateTaskRequest, PrepareWorkp
 from app.services.media_analysis import UserInputError, rank_references
 from app.services.ocr_client import worker_available
 from app.services.workpack import sha256_file
+from app.services.directory_batch import subtitle_inspection
 
 router = APIRouter(prefix="/api/workpacks", tags=["workpacks"])
 tasks_router = APIRouter(prefix="/api/tasks", tags=["tasks"])
@@ -58,6 +59,15 @@ async def report(job_id: str, request: Request) -> dict:
     job = request.app.state.jobs.get(job_id)
     if not job or job.get("job_type") not in {"PREPARE_WORKPACK", "DIRECTORY_WORKPACK"}: raise missing()
     report_data = job.get("report")
+    if report_data and report_data.get('batch') and 'summary' in report_data:
+        summary = report_data['summary']
+        if 'subtitleInspection' not in summary:
+            children = []
+            for item in report_data['batch']['items']:
+                if item['state'] == 'ready':
+                    child = request.app.state.jobs.get(item['jobId'])
+                    children.append((item['name'], (child or {}).get('report') or {}))
+            summary['subtitleInspection'] = subtitle_inspection(children)
     if report_data and not report_data.get('batch') and "referenceRanking" not in report_data:
         report_data = {**report_data, "referenceRanking": rank_references(
             report_data.get("media", {}).get("embeddedSubtitles", []), report_data.get("externalSubtitles", [])),

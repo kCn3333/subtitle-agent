@@ -208,3 +208,9 @@ button:focus-visible, a:focus-visible, .console:focus-visible { outline: 3px sol
 .ai-batch-choice span { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ai-batch-choice select { min-width: 0; width: 100%; }
 @media (max-width: 700px) { .ai-batch-choice { grid-template-columns: minmax(0, 1fr); } }
+
+.inspection-table { font-size: 13px; }
+.inspection-table th, .inspection-table td { padding: 8px 10px; }
+.inspection-table small { display: block; margin-top: 3px; color: var(--muted); overflow-wrap: anywhere; }
+.inspection-table small.warning-box { color: var(--yellow); }
+.inspection-note { color: var(--muted); font-size: 12px; }

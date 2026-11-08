@@ -328,3 +328,39 @@ def test_retry_only_failed_items_keeps_successful_results(client, settings, monk
     assert wait_batch(client, job_id)['status'] == 'WORKPACK_READY'
     assert len(probes) == len(extracted) == 1
     assert 'E02.' in probes[0]
+
+
+def test_subtitle_summary_distinguishes_missing_sources_flags_and_technical_findings():
+    from app.services.directory_batch import compact_summary
+    reference = {'language': 'eng', 'codec': 'subrip', 'type': 'text', 'forced': False}
+    summary = compact_summary([
+        ('E01.mkv', {'pipeline': 'INSPECT', 'selectedReference': reference,
+                     'polishCandidateInspection': [{'name': 'E01.pl.srt', 'eligibleByDefault': True}]}),
+        ('E02.mkv', {'pipeline': 'INSPECT', 'selectedReference': {**reference, 'type': 'graphic', 'forced': True},
+                     'polishCandidateInspection': [{'name': 'E02.pl.srt', 'eligibleByDefault': False}]}),
+        ('E03.mkv', {'pipeline': 'INSPECT', 'selectedReference': None, 'embeddedSubtitleTracks': [{'language': 'pol'}], 'incompatiblePolishCandidates': [{'name': 'wrong.pl.srt'}]}),
+    ])['subtitleInspection']
+    assert (summary['total'], summary['withReference'], summary['withPolish'], summary['needsAttention']) == (3, 2, 2, 2)
+    assert summary['withExternalPolish'] == 1
+    assert summary['items'][2]['embeddedPolishCount'] == 1
+    assert summary['items'][0]['attentionReasons'] == []
+    assert summary['items'][0]['polishFiles'] == ['E01.pl.srt']
+    assert any('forced' in reason for reason in summary['items'][1]['attentionReasons'])
+    assert any('OCR' in reason for reason in summary['items'][1]['attentionReasons'])
+    assert summary['items'][2]['incompatiblePolishCount'] == 1
+
+
+def test_cached_inspection_report_gains_subtitle_summary_without_rescanning(client, settings, monkeypatch):
+    directory = season(settings, 2)
+    probes, _ = configure(monkeypatch)
+    job_id = submit(client, directory, 'INSPECT')
+    result = wait_batch(client, job_id)
+    report = result['report']
+    assert report['summary']['subtitleInspection']['withReference'] == 2
+    assert report['summary']['subtitleInspection']['withPolish'] == 2
+    report['summary'].pop('subtitleInspection')
+    with client.app.state.jobs._connect() as db:
+        db.execute('UPDATE jobs SET report_json=? WHERE id=?', (json.dumps(report), job_id))
+    restored = client.get(f'/api/tasks/{job_id}').json()['report']['summary']['subtitleInspection']
+    assert restored['total'] == restored['withPolish'] == restored['withReference'] == 2
+    assert len(probes) == 2

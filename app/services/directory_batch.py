@@ -12,6 +12,7 @@ from app.models.job import JobStatus, WorkpackTaskType
 from app.services.media_analysis import (SUPPORTED_MEDIA, UserInputError, parse_media_identity,
                                          reference_source_id, validate_media_path)
 from app.services.operation_queue import JobBusy
+from app.services.subtitle_languages import normalize_language
 from app.services.workpack import (SCHEMA_VERSION, build_zip, safe_filename,
                                   validate_zip, write_json)
 
@@ -70,6 +71,48 @@ def scan_directory(root: Path, maximum: int) -> tuple[list[dict], int]:
     return items, ignored
 
 
+def subtitle_inspection(reports: list[tuple[str, dict]]) -> dict:
+    rows = []
+    for name, report in reports:
+        reference = report.get('selectedReference') or report.get('selectedEnglish')
+        polish = report.get('polishCandidateInspection') or []
+        matched = [item for item in polish if item.get('eligibleByDefault')]
+        tracks = report.get('embeddedSubtitleTracks') or (report.get('media') or {}).get('embeddedSubtitles') or []
+        embedded_polish = sum(normalize_language(track.get('language')) == 'pol' for track in tracks)
+        reasons = []
+        if report.get('externalReferenceConfirmationRequired'):
+            reasons.append('Referencja zewnętrzna wymaga potwierdzenia')
+        elif not reference:
+            reasons.append('Brak wskazanej referencji')
+        if reference and reference.get('forced'):
+            reasons.append('Referencja forced — kompletność wymaga oceny')
+        if reference and reference.get('type') == 'graphic' and not report.get('ocr'):
+            reasons.append('Referencja graficzna wymaga OCR do dalszej pracy')
+        ocr = report.get('ocr') or {}
+        if any(ocr.get(key) and ocr[key] != 'GOOD' for key in ('structuralQuality', 'textQuality')):
+            reasons.append('Jakość OCR wymaga weryfikacji')
+        if 'Wybór referencji jest niejednoznaczny' in report.get('warnings', []):
+            reasons.append('Niejednoznaczny wybór referencji')
+        if not matched and report.get('pipeline') == 'PREPARE_SYNC':
+            reasons.append('Brak jednoznacznie dopasowanego zewnętrznego pliku PL')
+        elif not matched and not embedded_polish and report.get('pipeline') != 'PREPARE_TRANSLATION':
+            reasons.append('Brak jednoznacznie dopasowanych napisów PL')
+        if any(any((item.get('structuralErrors') or {}).get(key, 0) for key in
+                   ('malformedSegments', 'reversedIntervals', 'overlappingSegments')) for item in matched):
+            reasons.append('Uwagi do struktury napisów PL')
+        rows.append({'name': name,
+                     'reference': ({key: reference.get(key) for key in ('language', 'codec', 'type', 'forced')}
+                                   if reference else None),
+                     'polishFiles': [item['name'] for item in matched],
+                     'embeddedPolishCount': embedded_polish,
+                     'incompatiblePolishCount': len(report.get('incompatiblePolishCandidates') or []),
+                     'attentionReasons': reasons})
+    return {'total': len(rows), 'withReference': sum(row['reference'] is not None for row in rows),
+            'withPolish': sum(bool(row['polishFiles']) or row['embeddedPolishCount'] > 0 for row in rows),
+            'withExternalPolish': sum(bool(row['polishFiles']) for row in rows),
+            'needsAttention': sum(bool(row['attentionReasons']) for row in rows), 'items': rows}
+
+
 def compact_summary(reports: list[tuple[str, dict]]) -> dict:
     common, differences = {}, {}
     fields = ('container', 'width', 'height', 'video_codec', 'fps',
@@ -93,7 +136,7 @@ def compact_summary(reports: list[tuple[str, dict]]) -> dict:
     for name, report in reports:
         for warning in dict.fromkeys(report.get('warnings', []) + report.get('incompleteReasons', [])):
             warnings.setdefault(warning, []).append(name)
-    return {'common': common, 'differences': differences,
+    return {'common': common, 'differences': differences, 'subtitleInspection': subtitle_inspection(reports),
             'warnings': [{'message': message, 'items': names} for message, names in warnings.items()]}
 
 
