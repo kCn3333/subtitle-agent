@@ -107,6 +107,9 @@ class AiQueue:
                 self.save(state)
                 result = await run()
                 state.update(status='completed', result=result, http_status=200, phase='Gotowe')
+                if state.get('batch') and result.get('failed_count'):
+                    state.update(status='failed', http_status=502, phase='AI zakończone z błędami',
+                                 error={'message': f"AI: {result['file_count']} gotowych plików, {result['failed_count']} błędnych. Możesz pobrać wynik i ponowić błędne pozycje."})
             except asyncio.CancelledError:
                 state.update(status='failed', http_status=503, phase='Operacja przerwana',
                              error={'code':'INTERRUPTED', 'message':'Operacja AI została przerwana. Zleć ją ponownie, jeśli jest potrzebna.'})

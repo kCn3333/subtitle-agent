@@ -159,7 +159,7 @@ def test_ambiguity_pauses_before_extraction_and_confirmation_resumes_whole_batch
     assert len(probes) == 2  # Saved analysis is reused after explicit selection.
 
 
-def test_skip_missing_reference_creates_explicit_partial_zip(client, settings, monkeypatch):
+def test_user_skips_finish_as_ready_with_explicit_exclusions(client, settings, monkeypatch):
     directory = season(settings, 2)
     configure(monkeypatch, external=True)
     job_id = submit(client, directory)
@@ -167,11 +167,13 @@ def test_skip_missing_reference_creates_explicit_partial_zip(client, settings, m
     assert client.post(f'/api/tasks/{job_id}/batch', json={'action': 'skip'}).status_code == 202
     assert wait_batch(client, job_id)['status'] == 'BATCH_PAUSED'
     client.post(f'/api/tasks/{job_id}/batch', json={'action': 'skip'})
-    assert wait_batch(client, job_id)['status'] == 'WORKPACK_INCOMPLETE'
+    assert wait_batch(client, job_id)['status'] == 'WORKPACK_READY'
     with zipfile.ZipFile(io.BytesIO(client.get(f'/api/tasks/{job_id}/download').content)) as bundle:
         manifest = json.loads(bundle.read('manifest.json'))
         assert all(item['state'] == 'skipped' for item in manifest['items'])
-        assert manifest['warnings']
+        assert manifest['warnings'] == []
+        assert manifest['complete'] is True
+        assert manifest['skippedCount'] == 2
 
 
 def test_failed_episode_does_not_stop_siblings_and_archive_limits_never_silently_omit(client, settings, monkeypatch):

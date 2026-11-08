@@ -1,9 +1,9 @@
 const aiPanel=document.querySelector('#ai-sync-panel'),polishSelect=document.querySelector('#ai-polish');
 const aiButtonLabel=document.querySelector('#ai-sync-button-label');
 const aiButton=document.querySelector('#ai-sync-button'),aiMessage=document.querySelector('#ai-sync-status'),aiDownload=document.querySelector('#ai-download');
-let aiQueued=false,aiQueuePosition=null,aiReferencePending=false,aiPreparedReference=null,aiRunning=false,aiJobId=null,aiMode='sync',aiRequestMode='sync',aiMediaTitle='Nieznany tytuł',aiChecking=true,aiPostPending=false,aiSeenOperation=null,aiObservedOperation=null,aiPhase='Oczekiwanie na odpowiedź modelu',aiStatusVersion=0;
+let aiQueued=false,aiQueuePosition=null,aiReferencePending=false,aiPreparedReference=null,aiRunning=false,aiJobId=null,aiMode='sync',aiRequestMode='sync',aiMediaTitle='Nieznany tytuł',aiChecking=true,aiPostPending=false,aiSeenOperation=null,aiObservedOperation=null,aiPhase='Oczekiwanie na odpowiedź modelu',aiStatusVersion=0,aiDirectory=false,aiDirectoryInputs=[],aiDirectoryChoices=new Map(),aiDirectoryVersion=0;
 function aiEndpoint(mode=aiMode){return mode==='translation'?'ai-translate':'ai-sync'}
-function aiHasInputs(){return aiMode==='translation'||polishSelect.options.length>0}
+function aiHasInputs(){if(aiDirectory)return aiDirectoryInputs.some(item=>item.available);return aiMode==='translation'||polishSelect.options.length>0}
 function aiStage(mode=aiMode){return mode==='translation'?'AI_TRANSLATE':'AI_SYNC'}
 let aiStartedAt=null,aiTimer=null,aiRequestJobId=null;
 const aiActivity=document.createElement('div');
@@ -25,15 +25,18 @@ function stopAiElapsed(){
   aiTimer=null;aiStartedAt=null;aiRequestJobId=null;aiActivity.remove();
 }
 function aiControls(){
-  aiButton.disabled=aiReferencePending||aiChecking||aiRunning||aiPostPending||!aiHasInputs()||referenceSelect.value!==aiPreparedReference;
+  aiButton.disabled=aiReferencePending||aiChecking||aiRunning||aiPostPending||!aiHasInputs()||(!aiDirectory&&referenceSelect.value!==aiPreparedReference);
   polishSelect.disabled=aiRunning||aiPostPending;
   referenceSelect.disabled=aiRunning||aiPostPending;
   document.querySelector('#rebuild').disabled=aiRunning||aiPostPending;
+  if(aiDirectory)for(const select of document.querySelector('#ai-directory-inputs').querySelectorAll('select'))select.disabled=aiRunning||aiPostPending;
   aiButtonLabel.textContent=aiQueued?'Oczekuje w kolejce…':aiRunning||aiPostPending?'AI pracuje…':aiChecking?'Sprawdzanie stanu…':'Przekaż do AI';
 }
-function applyAiState(state,jobId){
+function applyAiState(state,jobId,restoreInputs=false){
   if(jobId!==activeJobId||jobId!==aiJobId)return;
   aiChecking=false;
+  if(aiDirectory&&state.batch&&(restoreInputs||['queued','running'].includes(state.status)))restoreDirectoryChoices(state.items||[]);
+  if(state.batch&&typeof renderDirectoryAiProgress==='function')renderDirectoryAiProgress(state);
   if(['queued','running'].includes(state.status)){
     aiQueued=state.status==='queued';aiQueuePosition=state.queue_position;
     aiRunning=true;aiRequestJobId=jobId;aiRequestMode=state.mode;aiMediaTitle=state.title||aiMediaTitle;
@@ -45,11 +48,14 @@ function applyAiState(state,jobId){
   }else if(!aiPostPending){
     stopAiElapsed();aiRunning=false;aiQueued=false;aiQueuePosition=null;
     const operation=state.mode==='translation'?'Tłumaczenie przez AI':'Synchronizacja przez AI';
-    if(state.status==='completed')showAiResult(state.result,jobId,state.mode);
+    if(state.status==='completed'||(state.batch&&state.result))showAiResult(state.result,jobId,state.mode);
+    if(state.status==='failed'){
+      if(!state.batch||!state.result)aiDownload.hidden=true;
+      aiMessage.textContent=state.error?.message||'Operacja AI nie powiodła się';
+    }
     if(state.operation_id&&state.operation_id!==aiSeenOperation){
       aiSeenOperation=state.operation_id;
       if(state.status==='failed'){
-        aiDownload.hidden=true;aiMessage.textContent=state.error?.message||'Operacja AI nie powiodła się';
         line('ERROR',aiStage(state.mode),aiMessage.textContent);
       }
       if(['completed','failed'].includes(state.status))line(state.status==='completed'?'SUCCESS':'ERROR',`${aiStage(state.mode)}_SUMMARY`,
@@ -67,10 +73,10 @@ async function refreshAiStatus(jobId=aiJobId,loadResult=false){
     const state=await response.json();
     if(version!==aiStatusVersion||jobId!==aiJobId||jobId!==activeJobId)return;
     if(loadResult&&state.polish_file&&polishSelect.options.length)polishSelect.value=state.polish_file;
-    applyAiState(state,jobId);
+    applyAiState(state,jobId,loadResult);
     if(loadResult&&state.status==='idle'&&!aiPostPending){
       const mode=aiMode,result=await fetch(`/api/tasks/${jobId}/${aiEndpoint(mode)}`);
-      if(result.ok)showAiResult((await result.json()).result,jobId,mode);
+      if(result.ok){const saved=(await result.json()).result;if(saved?.batch)restoreDirectoryChoices(saved.outputs||[]);showAiResult(saved,jobId,mode);}
     }
   }catch{
     if(version!==aiStatusVersion||jobId!==activeJobId||jobId!==aiJobId)return;
@@ -83,16 +89,21 @@ function hideAiHandoff(){aiPanel.hidden=true;aiButton.hidden=true}
 function showAiResult(result,jobId,mode=aiMode){
   if(jobId!==activeJobId)return;
   if(mode!==aiMode)return;
-  if(result&&mode==='sync'&&result.inputs?.[1]?.name!==polishSelect.value)return;
+  if(result&&!result.batch&&mode==='sync'&&result.inputs?.[1]?.name!==polishSelect.value)return;
+  if(result?.batch&&mode==='sync'&&(result.outputs||[]).some(item=>item.polish_file!==aiDirectoryChoices.get(item.job_id))){aiDownload.hidden=true;return;}
   aiDownload.hidden=!result;
   if(result){
     aiDownload.href=`/api/tasks/${jobId}/${aiEndpoint(mode)}/download`;
     if(result.filename)aiDownload.download=result.filename;
-    aiMessage.textContent=`Gotowe: ${result.cue_count} kwestii. Wynik SRT jest dostępny do pobrania.`;
+    document.querySelector('#ai-download-label').textContent=result.batch?'Pobierz wyniki ZIP':'Pobierz wynik SRT';
+    aiMessage.textContent=result.batch?`Wyniki AI: ${result.file_count} plików SRT${result.failed_count?` · błędy: ${result.failed_count}`:''}. ZIP jest dostępny do pobrania.`:`Gotowe: ${result.cue_count} kwestii. Wynik SRT jest dostępny do pobrania.`;
   }
 }
 function renderAiSync(job){
   const report=job.report||{};
+  if(report.batch)return renderDirectoryHandoff(job);
+  aiDirectory=false;document.querySelector('#ai-directory-inputs').hidden=true;
+  document.querySelector('#ai-download-label').textContent='Pobierz wynik SRT';
   aiReferencePending=referenceNeedsConfirmation(report);
   aiPanel.hidden=!((job.status==='WORKPACK_READY'||(job.status==='WORKPACK_INCOMPLETE'&&aiReferencePending))&&['PREPARE_SYNC','PREPARE_TRANSLATION'].includes(report.pipeline)&&!report.requiresOcr);
   aiButton.hidden=aiPanel.hidden;
@@ -113,7 +124,7 @@ function renderAiSync(job){
 }
 referenceSelect.addEventListener('change',()=>{
   aiControls();
-  if(referenceSelect.value!==aiPreparedReference){aiMessage.textContent='Najpierw zbuduj workpack z wybraną referencją.';aiDownload.hidden=true}
+  if(!aiDirectory&&referenceSelect.value!==aiPreparedReference){aiMessage.textContent='Najpierw zbuduj workpack z wybraną referencją.';aiDownload.hidden=true}
 });
 polishSelect.addEventListener('change',()=>{aiDownload.hidden=true;aiMessage.textContent=''});
 form.addEventListener('submit',hideAiHandoff);
@@ -129,8 +140,8 @@ aiButton.addEventListener('click',async()=>{
   aiRequestMode=mode;
   aiRequestJobId=jobId;aiStartedAt=Date.now();updateAiElapsed();aiTimer=setInterval(updateAiElapsed,1000);
   try{
-    const payload={reference_source_id:aiPreparedReference};
-    if(mode==='sync')payload.polish_file=polishSelect.value;
+    const payload=aiDirectory?directoryAiPayload():{reference_source_id:aiPreparedReference};
+    if(!aiDirectory&&mode==='sync')payload.polish_file=polishSelect.value;
     const response=await fetch(`/api/tasks/${jobId}/${aiEndpoint(mode)}`,{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify(payload)});
     const body=await response.json();
@@ -149,3 +160,59 @@ aiButton.addEventListener('click',async()=>{
 });
 
 aiDownload.addEventListener('click',()=>line('INFO','DOWNLOAD',`Pobieranie wyniku AI · Film: ${aiMediaTitle}`));
+
+async function renderDirectoryHandoff(job){
+  const report=job.report||{},version=++aiDirectoryVersion;
+  if(aiJobId!==job.jobId)aiDirectoryChoices=new Map();
+  aiDirectory=true;aiJobId=job.jobId;aiReferencePending=false;aiPreparedReference=null;
+  aiPanel.hidden=!(['WORKPACK_READY','WORKPACK_INCOMPLETE'].includes(job.status)&&['PREPARE_SYNC','PREPARE_TRANSLATION'].includes(report.mode)&&report.workpack);
+  aiButton.hidden=aiPanel.hidden;
+  if(aiPanel.hidden)return;
+  aiMode=report.mode==='PREPARE_TRANSLATION'?'translation':'sync';
+  aiMediaTitle=job.displayTitle;
+  aiDirectoryInputs=[];aiChecking=true;aiControls();
+  document.querySelector('#ai-panel-title').textContent=aiMode==='translation'?'Tłumaczenie katalogu przez AI':'Synchronizacja katalogu przez AI';
+  document.querySelector('#ai-polish-field').hidden=true;
+  document.querySelector('#ai-download-label').textContent='Pobierz wyniki ZIP';
+  const container=document.querySelector('#ai-directory-inputs');container.hidden=false;container.replaceChildren();
+  aiMessage.textContent='Sprawdzanie materiałów katalogu…';aiDownload.hidden=true;
+  try{
+    const response=await fetch(`/api/tasks/${job.jobId}/ai-inputs`);
+    const body=await response.json();
+    if(!response.ok)throw new Error(body.detail?.message||'Nie udało się odczytać materiałów AI');
+    if(version!==aiDirectoryVersion||job.jobId!==activeJobId||job.jobId!==aiJobId)return;
+    aiDirectoryInputs=body.items;
+    for(const item of aiDirectoryInputs.filter(item=>item.available)){
+      const candidates=item.polish_candidates||[];
+      if(aiMode==='translation')continue;
+      if(!candidates.some(entry=>entry.archiveName===aiDirectoryChoices.get(item.job_id)))aiDirectoryChoices.set(item.job_id,candidates[0]?.archiveName);
+      if(candidates.length<=1)continue;
+      const label=document.createElement('label'),name=document.createElement('span'),select=document.createElement('select');
+      label.className='ai-batch-choice';name.textContent=item.name;select.dataset.jobId=item.job_id;
+      for(const candidate of candidates){
+        const option=document.createElement('option');option.value=candidate.archiveName;option.textContent=candidate.originalName;select.append(option);
+      }
+      select.value=aiDirectoryChoices.get(item.job_id);
+      select.addEventListener('change',()=>{aiDirectoryChoices.set(item.job_id,select.value);aiDownload.hidden=true;aiMessage.textContent='Zmieniono wybór napisów PL. Przekaż katalog do AI, aby przygotować nowe wyniki.'});
+      label.append(name,select);container.append(label);
+    }
+    const ready=aiDirectoryInputs.filter(item=>item.available).length;
+    aiMessage.textContent=ready?`Do AI: ${ready} plików. Każdy będzie przetwarzany osobnym żądaniem. Pominięte lub niegotowe: ${body.items.length-ready}.`:'Brak gotowych materiałów do AI. Sprawdź raport plików.';
+    await refreshAiStatus(job.jobId,true);
+  }catch(error){if(version===aiDirectoryVersion&&job.jobId===activeJobId){aiMessage.textContent=error.message;aiChecking=false;aiControls()}}
+}
+function directoryAiPayload(){
+  return {items:aiDirectoryInputs.filter(item=>item.available).map(item=>({job_id:item.job_id,
+    reference_source_id:item.reference_source_id,polish_file:aiMode==='sync'?aiDirectoryChoices.get(item.job_id):null}))};
+}
+
+function restoreDirectoryChoices(rows){
+  for(const row of rows){
+    const input=aiDirectoryInputs.find(item=>item.job_id===row.job_id);
+    if(row.polish_file&&input?.polish_candidates.some(item=>item.archiveName===row.polish_file))aiDirectoryChoices.set(row.job_id,row.polish_file);
+  }
+  for(const select of document.querySelector('#ai-directory-inputs').querySelectorAll('select'))select.value=aiDirectoryChoices.get(select.dataset.jobId);
+}
+
+// A saved job can finish loading before this script is available.
+if(typeof activeDirectoryJob!=='undefined'&&activeDirectoryJob)renderAiSync(activeDirectoryJob);

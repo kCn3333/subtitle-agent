@@ -41,15 +41,18 @@ Logowanie wymaga cookie i tokenu z `meta[name="login-csrf-token"]` strony `/logi
 | `POST /api/settings/ai/test` | Zlecenie testu modelu |
 | `POST /api/tasks/{job_id}/ai-sync` | Synchronizacja; pola `reference_source_id` i `polish_file` |
 | `POST /api/tasks/{job_id}/ai-translate` | Tłumaczenie; pole `reference_source_id` |
+| `GET /api/tasks/{job_id}/ai-inputs` | Gotowe materiały katalogu i kandydaci PL dla każdego pliku |
 | `GET /api/ai-operations/{operation_id}` | Status dowolnej operacji AI |
 | `GET /api/tasks/{job_id}/ai-status` | Ostatni status AI danego zadania |
 | `GET /api/tasks/{job_id}/ai-sync` | Metadane wyniku synchronizacji |
 | `GET /api/tasks/{job_id}/ai-translate` | Metadane wyniku tłumaczenia |
-| `GET /api/tasks/{job_id}/ai-sync/download` | Pobranie zsynchronizowanego SRT |
-| `GET /api/tasks/{job_id}/ai-translate/download` | Pobranie przetłumaczonego SRT |
+| `GET /api/tasks/{job_id}/ai-sync/download` | Pobranie SRT lub ZIP-a wyników katalogu |
+| `GET /api/tasks/{job_id}/ai-translate/download` | Pobranie SRT lub ZIP-a tłumaczeń katalogu |
 | `GET/DELETE /api/settings/ai/console` | Odczyt/usunięcie wspólnej historii diagnostycznej |
 
 `reference_source_id` to np. `embedded:4` lub `external:Film.en.srt`; `polish_file` musi być wartością `archiveName` przygotowanego kandydata.
+
+Dla zadania katalogowego te same endpointy POST przyjmują `items`: listę obiektów z `job_id`, `reference_source_id` i — dla synchronizacji — `polish_file`. Lista musi obejmować wszystkie pozycje oznaczone jako gotowe przez `ai-inputs`, bez duplikatów. Partia zajmuje jedno miejsce w kolejce, a żądania do modelu wykonywane są kolejno, oddzielnie dla każdego pliku. Status zawiera `batch=true` i listę `items` z postępem. Wynik to ZIP z SRT i manifestem. Gdy część plików zakończy się błędem, status to `failed`, ale `result` nadal zawiera dostępną paczkę częściową. Ponowienie wykorzystuje gotowe wyniki zgodne z wybranymi wejściami i ustawieniami modelu; zmiana samego timeoutu nie wymusza ponownego przetwarzania.
 
 Zlecenie AI zwraca HTTP `202` z `operation_id`. Odczytuj status do `completed` lub `failed`: wynik jest w `result`, błąd w `error`, kod zakończenia w `http_status`. `queued` zawiera `queue_position`; `running` — bieżącą fazę. Odświeżenie strony ani rozłączenie klienta nie zleca ponownie pracy.
 

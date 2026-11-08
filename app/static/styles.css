@@ -200,3 +200,11 @@ button:focus-visible, a:focus-visible, .console:focus-visible { outline: 3px sol
 .batch-list li[aria-current="step"] { border-left-color: var(--green); background: rgba(61, 220, 132, .09); }
 .batch-list li[aria-current="step"] .batch-name { color: var(--green); font-weight: 650; }
 .batch-list li[data-state="attention"] { border-left-color: var(--yellow); background: rgba(227, 179, 65, .07); }
+
+.batch-list li[data-ai="true"][aria-current="step"] { border-left-color: var(--orange); background: rgba(245, 154, 69, .09); }
+.batch-list li[data-ai="true"][aria-current="step"] .batch-name,
+.batch-list li[data-ai="true"] .is-running { color: var(--orange); }
+.ai-batch-choice { display: grid; grid-template-columns: minmax(0, 1fr) minmax(150px, 1fr); gap: 10px; align-items: center; }
+.ai-batch-choice span { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-batch-choice select { min-width: 0; width: 100%; }
+@media (max-width: 700px) { .ai-batch-choice { grid-template-columns: minmax(0, 1fr); } }

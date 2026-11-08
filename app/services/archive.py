@@ -45,9 +45,10 @@ class ArchiveStore:
 
     @staticmethod
     def _result_filename(db, key, kind, digest):
-        label = 'AI-Translated' if kind == 'translation' else 'AI-Synced'
+        label = 'AI-Translated' if kind in {'translation', 'batch-translation'} else 'AI-Synced'
+        extension = '.zip' if kind.startswith('batch-') else '.pl.srt'
         prefix = Path(key).stem + '.' + label + '-v'
-        pattern = re.compile(re.escape(prefix) + r'(\d{3,})\.pl\.srt')
+        pattern = re.compile(re.escape(prefix) + r'(\d{3,})' + re.escape(extension))
         version = 0
         for row in db.execute('SELECT sha256,filename FROM archive_files WHERE title_key=? AND kind=?', (key,kind)):
             match = pattern.fullmatch(row['filename'])
@@ -55,7 +56,7 @@ class ArchiveStore:
                 if row['sha256'] == digest:
                     return row['filename']
                 version = max(version, int(match[1]))
-        return f'{prefix}{version+1:03d}.pl.srt'
+        return f'{prefix}{version+1:03d}{extension}'
 
     def result_filename(self, job, kind, digest):
         with self.connect() as db:
@@ -67,7 +68,7 @@ class ArchiveStore:
             return
         if not source.resolve().is_relative_to(directory.resolve()):
             return
-        suffix = '.zip' if kind == 'workpack' else '.srt'
+        suffix = '.zip' if kind == 'workpack' or kind.startswith('batch-') else '.srt'
         if source.suffix.lower() != suffix:
             return
         if expected_sha and re.fullmatch(r'[a-f0-9]{64}', expected_sha):
@@ -95,7 +96,7 @@ class ArchiveStore:
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
             name = (self._result_filename(db, title_key(job), kind, digest)
-                    if kind in {'synchronization','translation'} else source.name)
+                    if kind in {'synchronization','translation','batch-synchronization','batch-translation'} else source.name)
             db.execute('INSERT OR IGNORE INTO archive_files VALUES (?,?,?,?,?,?)',
                        (title_key(job), digest, kind, name, suffix, job['created_at']))
         return name
@@ -119,6 +120,15 @@ class ArchiveStore:
                     if result.get('sha256'):
                         self.record(job, directory / (stem + '.pl.srt'), kind, result['sha256'])
                 except (OSError, ValueError):
+                    pass
+            for stem, kind in [('ai-sync', 'batch-synchronization'), ('ai-translation', 'batch-translation')]:
+                summary = directory / (stem + '-batch.json')
+                if not summary.is_file() or summary.is_symlink():
+                    continue
+                try:
+                    result = json.loads(summary.read_text())
+                    self.record(job, directory / result['relative_path'], kind, result['sha256'])
+                except (OSError, ValueError, KeyError):
                     pass
 
     def prune(self, keys: set[str]):

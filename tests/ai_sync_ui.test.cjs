@@ -2,9 +2,9 @@ const assert=require('node:assert/strict');
 const {readFileSync}=require('node:fs');
 const {runInNewContext}=require('node:vm');
 const {test}=require('node:test');
-async function setup(response,state={status:'idle'}){
+async function setup(response,state={status:'idle'},directory=null){
   const elements=new Map();
-  function element(){return {setAttribute(name,value){this[name]=value},hidden:false,disabled:false,options:[],value:'',handlers:{},
+  function element(tag){return {tagName:tag?.toUpperCase(),dataset:{},get outerHTML(){return String(this.textContent??'')},querySelectorAll(selector){return this.options.flatMap(child=>[...(child.tagName===selector.toUpperCase()?[child]:[]),...child.querySelectorAll(selector)])},setAttribute(name,value){this[name]=value},hidden:false,disabled:false,options:[],value:'',handlers:{},
     contains(node){return this.options.includes(node)},
     remove(){for(const node of elements.values())node.options=node.options.filter(item=>item!==this)},
     addEventListener(name,handler){this.handlers[name]=handler},
@@ -13,8 +13,9 @@ async function setup(response,state={status:'idle'}){
   const get=selector=>{if(!elements.has(selector))elements.set(selector,element());return elements.get(selector)};
   get('#reference-source').value='embedded:4';
   const context={output:get('#console'),now:0,document:{querySelector:get,createElement:element},activeJobId:'job',form:get('#job-form'),
-    referenceSelect:get('#reference-source'),sourceId:item=>`embedded:${item.streamIndex}`,logs:[],line(...args){context.logs.push(args)},
-    fetch:(url,options)=>options?.method==='POST'?Promise.resolve(response):Promise.resolve({ok:true,json:async()=>url.endsWith('/ai-status')?state:{result:null}})};
+    referenceSelect:get('#reference-source'),sourceId:item=>`embedded:${item.streamIndex}`,logs:[],sent:[],progress:[],renderDirectoryAiProgress(state){context.progress.push(state)},line(...args){context.logs.push(args)},
+    fetch:(url,options)=>{if(options?.method==='POST'){context.sent.push({url,body:JSON.parse(options.body)});return Promise.resolve(response)}return Promise.resolve({ok:true,json:async()=>url.endsWith('/ai-inputs')?directory?.inputs:url.endsWith('/ai-status')?state:{result:null}})}};
+  if(directory?.fromCache)context.activeDirectoryJob=directory.job;
   context.Date={now:()=>context.now,parse:Date.parse};
   context.setInterval=(callback,ms)=>{if(ms===1000)context.timerCallback=callback;else context.pollCallback=callback;return ms};
   context.clearInterval=id=>{if(id===1000)context.timerCallback=null};
@@ -23,8 +24,9 @@ async function setup(response,state={status:'idle'}){
   runInNewContext(readFileSync('app/static/media-title.js','utf8'),context);
   runInNewContext(readFileSync('app/static/app.js','utf8').match(/^function referenceNeedsConfirmation.*$/m)[0],context);
   runInNewContext(script,context);
-  context.renderAiSync({jobId:'job',status:'WORKPACK_READY',displayTitle:'Come and See (1985)',report:{pipeline:'PREPARE_SYNC',
+  if(!directory?.fromCache)await context.renderAiSync(directory?.job||{jobId:'job',status:'WORKPACK_READY',displayTitle:'Come and See (1985)',report:{pipeline:'PREPARE_SYNC',
     selectedEnglish:{streamIndex:4},polishCandidates:[{archiveName:'polish/a.srt',originalName:'A'},{archiveName:'polish/b.srt'}]}});
+  if(directory?.fromCache)await new Promise(resolve=>setImmediate(resolve));
   await context.refreshAiStatus('job');
   return {context,get};
 }
@@ -262,4 +264,75 @@ test('202 acceptance waits for status instead of displaying an unfinished result
   assert.equal(get('#ai-download').hidden,true);
   assert.equal(get('#ai-sync-button-label').textContent,'Oczekuje w kolejce…');
   assert.equal(context.logs.filter(entry=>entry[1].endsWith('_SUMMARY')).length,0);
+});
+
+function directoryFixture(mode='PREPARE_SYNC',available=true){
+  return {job:{jobId:'job',status:'WORKPACK_READY',displayTitle:'Season 01',report:{mode,batch:{items:[]},workpack:{filename:'season.zip'}}},
+    inputs:{mode,items:[{job_id:'episode-1',name:'S01E01.mkv',available,reference_source_id:'embedded:2',
+      polish_candidates:mode==='PREPARE_SYNC'?[{archiveName:'polish/a.srt',originalName:'A'},{archiveName:'polish/b.srt',originalName:'B'}]:[]}]}};
+}
+test('prepared directory exposes the same AI action and submits each selected episode input',async()=>{
+  const directory=directoryFixture(),state={status:'idle'};
+  const queued={job_id:'job',operation_id:'directory-ai',batch:true,status:'queued',mode:'sync',title:'Season 01',
+    items:[{job_id:'episode-1',name:'S01E01.mkv',polish_file:'polish/b.srt',status:'pending'}]};
+  const {get,context}=await setup({ok:true,status:202,json:async()=>queued},state,directory);
+  assert.equal(get('#ai-sync-panel').hidden,false);
+  assert.equal(get('#ai-sync-button').hidden,false);
+  assert.equal(get('#ai-sync-button').disabled,false);
+  assert.equal(get('#ai-polish-field').hidden,true);
+  const select=get('#ai-directory-inputs').querySelectorAll('select')[0];
+  select.value='polish/b.srt';select.handlers.change();
+  Object.assign(state,queued);
+  await get('#ai-sync-button').handlers.click();
+  assert.equal(context.sent[0].url,'/api/tasks/job/ai-sync');
+  assert.deepEqual(context.sent[0].body,{items:[{job_id:'episode-1',reference_source_id:'embedded:2',polish_file:'polish/b.srt'}]});
+  assert.equal(get('#ai-sync-button').disabled,true);
+  assert.equal(select.disabled,true);
+  assert.equal(context.progress.at(-1).batch,true);
+});
+test('directory result restores choices, downloads ZIP and hides stale results after selection changes',async()=>{
+  const directory=directoryFixture();
+  const result={batch:true,mode:'sync',file_count:1,failed_count:0,cue_count:1,filename:'Season.AI-Synced-v001.zip',
+    outputs:[{job_id:'episode-1',polish_file:'polish/b.srt'}]};
+  const state={job_id:'job',batch:true,status:'completed',operation_id:'completed',mode:'sync',result,
+    items:[{job_id:'episode-1',name:'S01E01.mkv',polish_file:'polish/b.srt',status:'completed'}]};
+  const {get,context}=await setup(null,state,directory);
+  const select=get('#ai-directory-inputs').querySelectorAll('select')[0];
+  assert.equal(select.value,'polish/b.srt');
+  assert.equal(get('#ai-download').hidden,false);
+  assert.equal(get('#ai-download-label').textContent,'Pobierz wyniki ZIP');
+  assert.equal(get('#ai-download').download,result.filename);
+  assert.match(context.logs.at(-1)[2],/Wyniki AI: 1 plików SRT/);
+  assert.doesNotMatch(context.logs.at(-1)[2],/gotowy plik SRT/);
+  select.value='polish/a.srt';select.handlers.change();
+  context.applyAiState(state,'job');
+  assert.equal(select.value,'polish/a.srt');
+  assert.equal(get('#ai-download').hidden,true);
+});
+test('directory translation needs no Polish selection and all-skipped directories explain disabled AI',async()=>{
+  const translated=await setup(null,{status:'idle'},directoryFixture('PREPARE_TRANSLATION'));
+  assert.equal(translated.get('#ai-sync-button').disabled,false);
+  assert.equal(translated.get('#ai-directory-inputs').querySelectorAll('select').length,0);
+  const skipped=await setup(null,{status:'idle'},directoryFixture('PREPARE_SYNC',false));
+  assert.equal(skipped.get('#ai-sync-panel').hidden,false);
+  assert.equal(skipped.get('#ai-sync-button').disabled,true);
+  assert.match(skipped.get('#ai-sync-status').textContent,/Brak gotowych materiałów/);
+});
+test('partial directory AI failure keeps successful results downloadable',async()=>{
+  const directory=directoryFixture();
+  const state={job_id:'job',batch:true,status:'failed',operation_id:'partial',mode:'sync',error:{message:'Jeden odcinek nie powiódł się'},
+    items:[{job_id:'episode-1',name:'S01E01.mkv',polish_file:'polish/a.srt',status:'completed'}],
+    result:{batch:true,mode:'sync',file_count:1,failed_count:1,cue_count:1,filename:'partial.zip',outputs:[{job_id:'episode-1',polish_file:'polish/a.srt'}]}};
+  const {get}=await setup(null,state,directory);
+  assert.equal(get('#ai-download').hidden,false);
+  assert.equal(get('#ai-sync-button').disabled,false);
+  assert.match(get('#ai-sync-status').textContent,/Jeden odcinek/);
+});
+
+test('loading AI controls after a restored directory still exposes the handoff',async()=>{
+  const directory={...directoryFixture(),fromCache:true};
+  const {get}=await setup(null,{status:'idle'},directory);
+  assert.equal(get('#ai-sync-panel').hidden,false);
+  assert.equal(get('#ai-sync-button').hidden,false);
+  assert.equal(get('#ai-sync-button').disabled,false);
 });

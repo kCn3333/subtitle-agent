@@ -72,3 +72,18 @@ test('interrupted batch offers resume and safely renders filenames',()=>{
   assert.doesNotMatch(get('#batch-progress').innerHTML,/<img/);
   assert.match(get('#batch-progress').innerHTML,/&lt;img/);
 });
+
+test('directory AI highlights the current item while keeping user exclusions visible',()=>{
+  const prepared=job('WORKPACK_READY');
+  prepared.report.batch.items.push({name:'S01E03.mkv',jobId:'third',state:'skipped'});
+  prepared.report.batch.items[0].jobId='first';prepared.report.batch.items[1].jobId='second';
+  const {get,context}=setup(prepared);
+  context.renderDirectoryAiProgress({job_id:'batch',batch:true,status:'running',phase:'2/2 · S01E02',
+    items:[{job_id:'first',status:'completed'},{job_id:'second',status:'running'}]});
+  const html=get('#batch-progress').innerHTML;
+  assert.match(html,/AI: 1\/2 zakończonych/);
+  assert.match(html,/data-ai="true" aria-current="step".*S01E02/);
+  assert.match(html,/fa-play.* AI/);
+  assert.match(html,/data-state="skipped".*S01E03/);
+  assert.doesNotMatch(html,/0%/);
+});

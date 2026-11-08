@@ -76,6 +76,7 @@ async def task_report(job_id: str, request: Request) -> dict:
 async def continue_batch(job_id: str, payload: ContinueBatchRequest, request: Request) -> dict:
     try:
         after = await request.app.state.jobs.batches.continue_batch(job_id, payload.action, payload.reference_source_id)
+        request.app.state.ai_queue.forget_job(job_id)
     except UserInputError as exc:
         raise HTTPException(422, detail={'message': str(exc)}) from exc
     return {'jobId': job_id, 'afterSequence': after, 'status': 'QUEUED'}

@@ -11,6 +11,9 @@ from app.services.alignment import sha256, write_preview
 from app.services.ai_console import capture
 from app.services.artifact_retention import validated_job_directory
 from app.services.operation_queue import JobBusy
+from app.services.directory_ai import (DirectoryRequest, describe_inputs, process_directory,
+                                        directory_result, result_path, settings_digest)
+from app.services.workpack import safe_filename
 
 router = APIRouter(tags=["ai-sync"])
 
@@ -73,10 +76,12 @@ class SyncRequest(BaseModel):
     reference_source_id: str
 
 
-def prepared(request: Request, job_id: str, pipeline: str | None = None):
+def prepared(request: Request, job_id: str, pipeline: str | None = None, batch_parent: str | None = None):
     job = request.app.state.jobs.get(job_id)
     if not job or job.get("job_type") != "PREPARE_WORKPACK":
         raise error("Nie znaleziono zadania", 404)
+    if batch_parent and job.get('batch_parent_id') != batch_parent:
+        raise error('Plik nie należy do wybranego katalogu')
     report = job.get("report") or {}
     if (job["status"] != "WORKPACK_READY" or report.get("pipeline") not in {"PREPARE_SYNC", "PREPARE_TRANSLATION"}
             or (pipeline and report.get("pipeline") != pipeline)):
@@ -125,12 +130,12 @@ def saved_result(directory: Path, stem="ai-sync"):
 
 
 @router.post("/api/tasks/{job_id}/ai-sync", status_code=202)
-async def synchronize(job_id: str, payload: SyncRequest, request: Request):
+async def synchronize(job_id: str, payload: SyncRequest | DirectoryRequest, request: Request):
     return await process(job_id, payload, request, "PREPARE_SYNC")
 
 
 @router.post("/api/tasks/{job_id}/ai-translate", status_code=202)
-async def translate(job_id: str, payload: SyncRequest, request: Request):
+async def translate(job_id: str, payload: SyncRequest | DirectoryRequest, request: Request):
     return await process(job_id, payload, request, "PREPARE_TRANSLATION")
 
 
@@ -142,7 +147,14 @@ async def operation_status(job_id: str, request: Request):
     return request.app.state.ai_queue.status(state['operation_id']) if state else {"status":"idle"}
 
 
+@router.get('/api/tasks/{job_id}/ai-inputs')
+async def directory_inputs(job_id: str, request: Request):
+    return describe_inputs(request, job_id)
+
+
 async def process(job_id, payload, request, pipeline):
+    if isinstance(payload, DirectoryRequest):
+        return await process_directory(request, job_id, payload, pipeline)
     queue = request.app.state.ai_queue
     intent = {'pipeline':pipeline, **payload.model_dump()}
     duplicate = queue.existing(job_id, intent)
@@ -160,8 +172,8 @@ async def process(job_id, payload, request, pipeline):
     return queue.submit(state, lambda: execute(job_id, submitted, request, pipeline, settings, expected_manifest))
 
 
-def validate_inputs(job_id, payload, request, pipeline):
-    directory, report = prepared(request, job_id, pipeline)
+def validate_inputs(job_id, payload, request, pipeline, batch_parent=None):
+    directory, report = prepared(request, job_id, pipeline, batch_parent)
     data = manifest(directory)
     reference = data.get('reference') or {}
     selected = report.get('selectedReference') or report.get('selectedEnglish') or {}
@@ -185,10 +197,16 @@ def validate_inputs(job_id, payload, request, pipeline):
     return directory, report, data, reference, selected, english_entries, polish_entries
 
 
-async def execute(job_id, payload, request, pipeline, settings, expected_manifest):
+def set_phase(request, job_id, phase, batch_parent=None):
+    state = request.app.state.ai_operations[batch_parent or job_id]
+    prefix = f"{state['current_index'] + 1}/{len(state['items'])} · {state['current_item']} · " if batch_parent else ''
+    state['phase'] = prefix + phase
+
+
+async def execute(job_id, payload, request, pipeline, settings, expected_manifest, batch_parent=None):
     translation = pipeline == "PREPARE_TRANSLATION"
     stem = "ai-translation" if translation else "ai-sync"
-    directory, report, data, reference, selected, english_entries, polish_entries = validate_inputs(job_id, payload, request, pipeline)
+    directory, report, data, reference, selected, english_entries, polish_entries = validate_inputs(job_id, payload, request, pipeline, batch_parent)
     if sha256(directory / 'manifest.json') != expected_manifest:
         raise error('Dane workpacka zmieniły się podczas oczekiwania. Przygotuj go ponownie.', 409)
     english_path = input_file(directory, english_entries[0], "name")
@@ -205,7 +223,7 @@ async def execute(job_id, payload, request, pipeline, settings, expected_manifes
         (directory / name).unlink(missing_ok=True)
     elapsed, usage = None, None
     try:
-        with capture(request.app.state.ai_console, settings, "TRANSLATE" if translation else "SYNC", job_id,
+        with capture(request.app.state.ai_console, settings, "TRANSLATE" if translation else "SYNC", batch_parent or job_id,
                      request.app.state.jobs.get(job_id)["display_title"]):
             language = reference.get("language") or selected.get("language") or "eng"
             english = read_cues(english_path, "en" if language in {"eng", "en", "english"} else "ref")
@@ -214,24 +232,28 @@ async def execute(job_id, payload, request, pipeline, settings, expected_manifes
             polish = read_cues(polish_path, "pl") if polish_path else None
             if polish is not None:
                 data['polish'] = segments(polish)
-            request.app.state.ai_operations[job_id]["phase"] = "Oczekiwanie na odpowiedź modelu"
+            set_phase(request, job_id, 'Oczekiwanie na odpowiedź modelu', batch_parent)
             result, elapsed, usage = await chat_request(settings,
                 TRANSLATION_INSTRUCTION if translation else SYNC_INSTRUCTION, data)
-            request.app.state.ai_operations[job_id]["phase"] = "Sprawdzanie odpowiedzi modelu"
+            set_phase(request, job_id, 'Sprawdzanie odpowiedzi modelu', batch_parent)
             output = (validate_translation(result, english, duration) if translation
                       else validate_result(result, polish, duration))
-            prepared(request, job_id, pipeline)
+            prepared(request, job_id, pipeline, batch_parent)
             if digest != sha256(directory / "manifest.json"):
                 raise AiSyncError("Referencja zmieniła się podczas żądania; przygotuj dane ponownie")
             for entry, name_key in inputs:
                 input_file(directory, entry, name_key)
-            request.app.state.ai_operations[job_id]["phase"] = "Zapisywanie napisów SRT"
+            set_phase(request, job_id, 'Zapisywanie napisów SRT', batch_parent)
             target = directory / f"{stem}.pl.srt"
             write_preview(output, target)
             output_digest = sha256(target)
-            with request.app.state.jobs._lock:
-                filename = request.app.state.jobs.archive.record(request.app.state.jobs.get(job_id), target,
-                    'translation' if translation else 'synchronization', output_digest)
+            if batch_parent:
+                media_name = safe_filename(Path(request.app.state.jobs.get(job_id)['media_path']).stem)
+                filename = f"{media_name}.{'AI-Translated' if translation else 'AI-Synced'}-v001.pl.srt"
+            else:
+                with request.app.state.jobs._lock:
+                    filename = request.app.state.jobs.archive.record(request.app.state.jobs.get(job_id), target,
+                        'translation' if translation else 'synchronization', output_digest)
             if filename is None:
                 raise AiSyncError("Nie udało się zarchiwizować wyniku SRT")
             summary = {"model": settings.model, "elapsed_seconds": elapsed, "usage": usage,
@@ -241,11 +263,14 @@ async def execute(job_id, payload, request, pipeline, settings, expected_manifes
                        "filename": filename,
                        "inputs": [{"name": entry[name_key], "sha256": entry["sha256"]}
                                   for entry, name_key in inputs]}
+            if batch_parent:
+                summary['settings_sha256'] = settings_digest(settings)
             temporary = directory / f".{stem}.json.tmp"
             temporary.write_text(json.dumps(summary, ensure_ascii=False), encoding="utf-8")
             temporary.replace(directory / f"{stem}.json")
-            with request.app.state.jobs._lock:
-                request.app.state.jobs.archive.capture(request.app.state.jobs.get(job_id))
+            if not batch_parent:
+                with request.app.state.jobs._lock:
+                    request.app.state.jobs.archive.capture(request.app.state.jobs.get(job_id))
             return summary
     except AiSyncError as exc:
         raise error(str(exc), 502, exc.elapsed_seconds if exc.elapsed_seconds is not None else elapsed,
@@ -253,6 +278,8 @@ async def execute(job_id, payload, request, pipeline, settings, expected_manifes
 
 @router.get("/api/tasks/{job_id}/ai-sync")
 async def result(job_id: str, request: Request):
+    if (request.app.state.jobs.get(job_id) or {}).get('job_type') == 'DIRECTORY_WORKPACK':
+        return {'result': directory_result(request, job_id, 'PREPARE_SYNC')}
     directory, _ = prepared(request, job_id, "PREPARE_SYNC")
     return {"result": named_result(request, job_id, directory)}
 
@@ -268,6 +295,11 @@ def named_result(request, job_id, directory, stem='ai-sync'):
 
 @router.get("/api/tasks/{job_id}/ai-sync/download")
 async def download(job_id: str, request: Request):
+    if (request.app.state.jobs.get(job_id) or {}).get('job_type') == 'DIRECTORY_WORKPACK':
+        result = directory_result(request, job_id, 'PREPARE_SYNC')
+        if not result:
+            raise error('Brak wyniku AI katalogu', 404)
+        return FileResponse(result_path(request, job_id, result), media_type='application/zip', filename=result['filename'])
     directory, _ = prepared(request, job_id, "PREPARE_SYNC")
     result = named_result(request, job_id, directory)
     if not result:
@@ -278,12 +310,19 @@ async def download(job_id: str, request: Request):
 
 @router.get("/api/tasks/{job_id}/ai-translate")
 async def translation_result(job_id: str, request: Request):
+    if (request.app.state.jobs.get(job_id) or {}).get('job_type') == 'DIRECTORY_WORKPACK':
+        return {'result': directory_result(request, job_id, 'PREPARE_TRANSLATION')}
     directory, _ = prepared(request, job_id, "PREPARE_TRANSLATION")
     return {"result": named_result(request, job_id, directory, "ai-translation")}
 
 
 @router.get("/api/tasks/{job_id}/ai-translate/download")
 async def translation_download(job_id: str, request: Request):
+    if (request.app.state.jobs.get(job_id) or {}).get('job_type') == 'DIRECTORY_WORKPACK':
+        result = directory_result(request, job_id, 'PREPARE_TRANSLATION')
+        if not result:
+            raise error('Brak wyniku AI katalogu', 404)
+        return FileResponse(result_path(request, job_id, result), media_type='application/zip', filename=result['filename'])
     directory, _ = prepared(request, job_id, "PREPARE_TRANSLATION")
     result = named_result(request, job_id, directory, "ai-translation")
     if not result:

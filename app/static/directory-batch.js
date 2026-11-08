@@ -4,9 +4,9 @@ function batchRow(item){
   const incomplete=state==='ready'&&['WORKPACK_INCOMPLETE','NEEDS_OCR'].includes(item.resultStatus);
   const icons={pending:'clock',running:'play',attention:'pause',ready:'check',failed:'circle-exclamation',skipped:'minus'};
   const label=incomplete?'Niekompletne materiały':state==='ready'?'Zakończono':batchLabels[state];
-  const detail=[label,state==='running'?`${item.progress}% · ${item.stage||''}`:'',item.error||''].filter(Boolean).join(' · ');
+  const detail=[label,state==='running'?`${item.progress==null?'AI':item.progress+'%'} · ${item.stage||''}`:'',item.error||''].filter(Boolean).join(' · ');
   const attribute=value=>nodeText(value).replaceAll('"','&quot;');
-  return `<li data-state="${state}"${state==='running'?' aria-current="step"':''}><strong class="batch-name" title="${attribute(item.name)}">${nodeText(item.name)}</strong><span class="batch-state is-${incomplete?'incomplete':state}" role="img" aria-label="${attribute(detail)}" title="${attribute(detail)}"><i class="fa-solid fa-${incomplete?'triangle-exclamation':icons[state]}" aria-hidden="true"></i>${state==='running'?` ${nodeText(item.progress)}%`:''}</span></li>`;
+  return `<li data-state="${state}"${item.ai?' data-ai="true"':''}${state==='running'?' aria-current="step"':''}><strong class="batch-name" title="${attribute(item.name)}">${nodeText(item.name)}</strong><span class="batch-state is-${incomplete?'incomplete':state}" role="img" aria-label="${attribute(detail)}" title="${attribute(detail)}"><i class="fa-solid fa-${incomplete?'triangle-exclamation':icons[state]}" aria-hidden="true"></i>${state==='running'?` ${item.progress==null?'AI':nodeText(item.progress)+'%'}`:''}</span></li>`;
 }
 function renderDirectoryBatch(job){
   const report=job.report,batch=report.batch,items=batch.items||[],finished=items.filter(item=>['ready','failed','skipped'].includes(item.state)).length;
@@ -34,7 +34,7 @@ function renderDirectoryBatch(job){
     Object.entries(summary.differences||{}).map(([key,groups])=>`<details><summary>${nodeText(labels[key]||key)} — różnice (${groups.length} wariantów)</summary><ul>${groups.map(group=>`<li>${nodeText(valueText(group.value))}: ${nodeText(group.items.join(', '))}</li>`).join('')}</ul></details>`).join('')+
     `<div class="warning-box">${(report.warnings||[]).map(warning=>`<p>${nodeText(warning)}</p>`).join('')}${(summary.warnings||[]).map(item=>`<details><summary>${nodeText(item.message)} (${item.items.length})</summary><p>${nodeText(item.items.join(', '))}</p></details>`).join('')}</div>`;
   if(job.errorMessage)activityEl.textContent=job.errorMessage;
-  if(typeof hideAiHandoff==='function')hideAiHandoff();
+  if(typeof renderAiSync==='function')renderAiSync(job);else if(typeof hideAiHandoff==='function')hideAiHandoff();
 }
 async function continueDirectoryBatch(action){
   if(!activeDirectoryJob)return;
@@ -60,3 +60,18 @@ setInterval(async()=>{
   batchPollBusy=true;
   try{await load(job.jobId)}catch{if(activeDirectoryJob?.jobId===job.jobId)activityEl.textContent='Nie udało się odczytać stanu katalogu. Ponawiam…';}finally{batchPollBusy=false}
 },2000);
+
+function renderDirectoryAiProgress(state){
+  if(!activeDirectoryJob||state.job_id!==activeDirectoryJob.jobId)return;
+  const rows=state.items||[],byId=new Map(rows.map(row=>[row.job_id,row]));
+  const items=activeDirectoryJob.report.batch.items.map(item=>{
+    const row=byId.get(item.jobId);
+    if(!row)return item;
+    const status=row.status==='completed'?'ready':row.status==='failed'?'failed':
+      row.status==='running'?(state.status==='running'?'running':'failed'):'pending';
+    return {...item,state:status,ai:true,progress:null,stage:state.phase,error:row.error||'',resultStatus:undefined};
+  });
+  const finished=rows.filter(row=>['completed','failed'].includes(row.status)).length;
+  document.querySelector('#batch-progress').innerHTML=`<p class="batch-summary"><strong>AI: ${finished}/${rows.length} zakończonych</strong></p><ol class="batch-list">${items.map(batchRow).join('')}</ol>`;
+  activityEl.textContent=state.phase||'AI';
+}

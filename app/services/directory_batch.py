@@ -20,6 +20,24 @@ EXTRAS = {"extras", "trailers", "samples", "sample", "behind the scenes", "delet
 EXTRA_SUFFIX = re.compile(r"(?i)(?:[ ._-](?:trailer|sample|scene|clip|interview|behindthescenes|deletedscene|featurette|short|extra))$")
 
 
+def incomplete_batch(items):
+    return any(item['state'] not in {'ready', 'skipped'} or
+               (item['state'] == 'ready' and item.get('resultStatus') not in
+                {JobStatus.WORKPACK_READY, JobStatus.INSPECTION_READY}) for item in items)
+
+
+def normalize_completed_batch(job):
+    """Keep older completed batches readable without rewriting published ZIPs."""
+    report = job.get('report') or {}
+    batch = report.get('batch') or {}
+    if (job.get('job_type') == 'DIRECTORY_WORKPACK' and job['status'] == JobStatus.WORKPACK_INCOMPLETE
+            and batch.get('scanned') and batch.get('items') and not incomplete_batch(batch['items'])):
+        job['status'] = JobStatus.WORKPACK_READY
+        report['warnings'] = [warning for warning in report.get('warnings', [])
+                              if warning != 'Paczka zawiera pozycje niekompletne, pominięte lub błędne; sprawdź manifest.']
+    return job
+
+
 def scan_directory(root: Path, maximum: int) -> tuple[list[dict], int]:
     items, ignored = [], 0
     for current, directories, files in os.walk(root, followlinks=False):
@@ -124,6 +142,8 @@ class DirectoryBatch:
         job = manager.get(job_id)
         if not job or job['job_type'] != 'DIRECTORY_WORKPACK':
             raise UserInputError('Nie znaleziono zadania katalogowego')
+        if job_id in manager.reserved_jobs:
+            raise JobBusy('Katalog jest używany przez operację AI; poczekaj na jej zakończenie.')
         allowed = {JobStatus.BATCH_PAUSED, JobStatus.INTERRUPTED, JobStatus.FAILED}
         if action == 'retry':
             allowed.add(JobStatus.WORKPACK_INCOMPLETE)
@@ -238,9 +258,8 @@ class DirectoryBatch:
         reports = [(item['name'], manager.get(item['jobId'])['report']) for item in report['batch']['items']
                    if item['state'] == 'ready']
         report['summary'] = compact_summary(reports)
-        partial = any(item['state'] != 'ready' or item.get('resultStatus') not in
-                      {JobStatus.WORKPACK_READY, JobStatus.INSPECTION_READY} for item in report['batch']['items'])
-        report['warnings'] = ['Paczka zawiera pozycje niekompletne, pominięte lub błędne; sprawdź manifest.'] if partial else []
+        partial = incomplete_batch(report['batch']['items'])
+        report['warnings'] = ['Paczka zawiera błędne lub niekompletne materiały; sprawdź manifest.'] if partial else []
         self.save(job_id, report)
         if task_type in {WorkpackTaskType.INSPECT, WorkpackTaskType.INSPECT_SUBTITLES}:
             terminal = JobStatus.INSPECTION_READY
@@ -271,7 +290,7 @@ class DirectoryBatch:
             source_archive = Path(child['report']['workpack']['path'])
             with zipfile.ZipFile(source_archive) as source_bundle:
                 manifest = json.loads(source_bundle.read('manifest.json'))
-            prefix = f'items/{index:03d}-{safe_filename(Path(item["name"]).stem)}/'
+            prefix = f'items/{index:03d}-{safe_filename(Path(item["name"]).stem)[:160]}/'
             files = [name for name in manifest['files'] if name != 'checksums.sha256']
             with zipfile.ZipFile(source_archive) as source_bundle:
                 for name in files:
@@ -303,6 +322,8 @@ class DirectoryBatch:
             'Pozycje pominięte i błędne są jawnie oznaczone w manifest.json.\n', encoding='utf-8')
         write_json(directory / 'manifest.json', {'schema_version': SCHEMA_VERSION, 'kind': 'DIRECTORY',
                    'mode': report['mode'], 'name': root.name, 'items': manifests,
+                   'complete': not incomplete_batch(report['batch']['items']),
+                   'skippedCount': sum(item['state'] == 'skipped' for item in report['batch']['items']),
                    'warnings': report['warnings'], 'files': sorted(included | {'checksums.sha256'})})
         archive, version, digest, _ = build_zip(directory, root.name, manager.settings.directory_max_archive_bytes,
                                                manager.settings.directory_max_files, included, require_complete=True)

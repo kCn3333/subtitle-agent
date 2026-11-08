@@ -13,7 +13,7 @@ from typing import AsyncIterator
 
 from app.core.config import Settings
 from app.services.operation_queue import QueueBusy, JobBusy
-from app.services.directory_batch import DirectoryBatch
+from app.services.directory_batch import DirectoryBatch, normalize_completed_batch
 from app.models.job import AlignmentMode, JobEvent, JobStatus, WorkpackTaskType
 from app.models.media import MediaIdentity
 from app.services.media_analysis import (
@@ -320,7 +320,7 @@ class JobManager:
         result = dict(row)
         result["display_title"] = display_title(result["media_path"])
         result["report"] = json.loads(result.pop("report_json")) if result.get("report_json") else None
-        return result
+        return normalize_completed_batch(result)
 
     def list_jobs(self, limit: int | None = 100) -> list[dict]:
         with self._lock, self._connect() as db:

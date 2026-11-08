@@ -19,8 +19,8 @@ Aplikacja webowa do analizy napisów, synchronizacji i tłumaczenia na język po
 | Operacja | Dane wejściowe | Wynik |
 |---|---|---|
 | Analiza | Film, odcinek lub katalog | Raport ścieżek, referencji, kandydatów PL i zgodności czasowej |
-| Przygotowanie synchronizacji | Referencja i pasujące napisy PL | Workpack ZIP; dla pojedynczego pliku również synchronizacja przez AI |
-| Przygotowanie tłumaczenia | Referencja źródłowa | Workpack ZIP; dla pojedynczego pliku również tłumaczenie przez AI |
+| Przygotowanie synchronizacji | Referencja i pasujące napisy PL | Workpack ZIP i synchronizacja przez AI |
+| Przygotowanie tłumaczenia | Referencja źródłowa | Workpack ZIP i tłumaczenie przez AI |
 
 - **Referencje:** osadzone lub zewnętrzne, z preferencją języka angielskiego i PGS. Niejednoznaczny wybór oraz użycie zewnętrznego wzorca wymagają potwierdzenia.
 - **Formaty:** tekstowe SRT, ASS, SSA i VTT; referencje graficzne PGS/VobSub rozpoznawane przez osobny worker OCR z Tesseractem i seconv.
@@ -33,7 +33,7 @@ Po podaniu katalogu aplikacja skanuje podkatalogi, rozpoznaje filmy i odcinki or
 
 Panel statusu pokazuje listę plików i postęp bieżącej pozycji. Wymagany wybór referencji wstrzymuje całą partię przed ekstrakcją/OCR. Dostępne są potwierdzenie, pominięcie pliku, wznowienie po restarcie i ponowienie tylko błędnych pozycji.
 
-Przygotowanie kończy się **jednym ZIP-em dla katalogu**: osobne materiały każdego pliku, wspólny manifest i skrócony raport parametrów wspólnych oraz różnic. Analiza katalogu zwraca raport bez ZIP-a. Operacje AI w interfejsie dotyczą pojedynczych plików.
+Przygotowanie kończy się **jednym ZIP-em dla katalogu**: osobne materiały każdego pliku, wspólny manifest i skrócony raport parametrów wspólnych oraz różnic. Analiza katalogu zwraca raport bez ZIP-a. Przycisk „Przekaż do AI” przetwarza gotowe pozycje kolejno, osobnymi żądaniami, i udostępnia jeden ZIP z wynikami SRT. Pominięcie pliku przez użytkownika nie oznacza błędu zadania.
 
 Szczegóły dopasowania, limitów i struktury paczki: [przetwarzanie katalogów](docs/directory-batch.md).
 

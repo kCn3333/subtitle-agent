@@ -6,7 +6,7 @@ function archiveLinks(cell,files){
   for(const file of files){
     const item=document.createElement('li'),link=document.createElement('a'),icon=document.createElement('i');
     icon.className='fa-solid fa-download';icon.setAttribute('aria-hidden','true');link.append(icon);
-    const label=file.kind==='workpack'?'ZIP':file.kind==='translation'?'Tłumaczenie SRT':'Synchronizacja SRT';
+    const label=file.kind==='workpack'?'ZIP':file.kind==='batch-translation'?'Tłumaczenia ZIP':file.kind==='batch-synchronization'?'Synchronizacja ZIP':file.kind==='translation'?'Tłumaczenie SRT':'Synchronizacja SRT';
     link.href=file.url;link.download=file.filename;link.append(document.createTextNode(` ${label} · ${file.sha256.slice(0,8)}`));
     link.title=`${file.filename}\nSHA-256: ${file.sha256}`;link.setAttribute('aria-label',`Pobierz ${file.filename}`);item.append(link);
     list.append(item);

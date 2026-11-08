@@ -20,8 +20,14 @@ Tryb „Sprawdź napisy” zbiera raporty bez konieczności wyboru referencji i 
 
 Przygotowanie synchronizacji/tłumaczenia kończy się jednym ZIP-em: główny manifest, REQUEST.md, raport zbiorczy i katalogi `items/001-…`, `items/002-…` z materiałami poszczególnych plików. W paczce nie ma zagnieżdżonych ZIP-ów ani wideo. Ścieżki w manifestach odnoszą się do głównego katalogu paczki. Wszystkie zadeklarowane artefakty są sprawdzane przez walidator ZIP-a.
 
-Raport pokazuje wspólne parametry wideo/referencji, grupuje różnice i powtarzające się ostrzeżenia. Szczegóły pozostają w materiałach każdego pliku. Braki, błędy i pominięcia oznaczają wynik niekompletny. Przekroczenie limitów końcowej paczki blokuje jej publikację zamiast usuwać z niej pliki.
+Raport pokazuje wspólne parametry wideo/referencji, grupuje różnice i powtarzające się ostrzeżenia. Szczegóły pozostają w materiałach każdego pliku. Braki i błędy oznaczają wynik niekompletny. Świadome pominięcia przez użytkownika są zapisane w manifeście, ale nie oznaczają błędu: pozostałe poprawnie przygotowane materiały kończą się statusem WORKPACK_READY i postępem 100%. Przekroczenie limitów końcowej paczki blokuje jej publikację zamiast usuwać z niej pliki.
 
 Domyślne limity: `DIRECTORY_MAX_ITEMS=500`, `DIRECTORY_MAX_ARCHIVE_BYTES=1073741824` (1 GiB), `DIRECTORY_MAX_FILES=10000`. Limity `WORKPACK_MAX_*` nadal obowiązują materiały każdego pojedynczego pliku. Zadania wewnętrzne nie zajmują oddzielnych pozycji w archiwum 30 tytułów. Wstrzymane/przerwane katalogi i ich materiały są chronione przed retencją; gotowy katalog zajmuje jedną pozycję archiwum.
 
-Przycisk „Przekaż do AI” pozostaje operacją pojedynczego pliku. W tej wersji dla katalogu przygotowujemy zbiorczy workpack do dalszego przetwarzania; nie wysyłamy całego sezonu do modelu automatycznie.
+## Przekazanie katalogu do AI
+
+Po zbudowaniu workpacka dostępny jest przycisk „Przekaż do AI”. Obejmuje gotowe materiały; pliki świadomie pominięte lub niegotowe nie są wysyłane. Gdy istnieje kilka przygotowanych plików PL dla odcinka, interfejs umożliwia ich wybór. Cała partia zajmuje jedno miejsce w kolejce AI, a każdy odcinek jest przetwarzany osobnym żądaniem, z własną referencją i napisami PL.
+
+Lista pokazuje bieżący odcinek AI i zakończone pozycje. Wyniki można pobrać jako jeden ZIP z plikami SRT i manifestem oraz z archiwum katalogu. Koszty i tokeny są przypisane do katalogu. Błąd jednego odcinka nie usuwa gotowych wyników; częściowa paczka pozostaje dostępna do pobrania.
+
+Ponowne przekazanie tych samych materiałów wykorzystuje poprawne zapisane wyniki przy niezmienionych wejściach i ustawieniach modelu, wykonując pozostałe pozycje. Zmiana pliku PL lub ustawień modelu wymaga nowego przetworzenia odpowiednich materiałów. Po restarcie aplikacja nie ponawia żądań automatycznie — użytkownik musi ponownie kliknąć przycisk. W czasie oczekiwania i pracy AI przebudowa partii jest zablokowana.
