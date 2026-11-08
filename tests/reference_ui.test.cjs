@@ -94,3 +94,22 @@ for (const pending of [{workpack:{referenceAmbiguous:true}}, {externalReferenceC
     assert.equal(confirmed.get('#rebuild').textContent,'Zbuduj ponownie');
   });
 }
+
+test('weak winning model is presented as no credible hypothesis without a correction offset', () => {
+  const ui=renderReport({jobType:'PREPARE_WORKPACK', synchronizationHypotheses:[{
+    candidate:'episode.pl.srt',hypothesis:'stałe przesunięcie',offsetMs:-25228,
+    confidence:'LOW',sufficientAnchors:false,analysisCoverage:.2,
+    verification:'Hipotezy wymagają weryfikacji; nie są gotową synchronizacją.'
+  }]});
+  const html=ui.get('#result-content').innerHTML;
+  assert.match(html,/brak wiarygodnej hipotezy/);
+  assert.doesNotMatch(html,/stałe przesunięcie|-25228/);
+  assert.match(html,/wymagają weryfikacji/);
+});
+
+test('forced reference remains selected and exposes its completeness warning', () => {
+  const forced={...pgs,forced:true};
+  const ui=renderReport({jobType:'PREPARE_WORKPACK',referenceRanking:[forced],selectedReference:forced});
+  assert.match(ui.get('#reference-summary').textContent,/forced=true · kompletność wymaga oceny/);
+  assert.match(ui.get('#result-content').innerHTML,/forced=true/);
+});

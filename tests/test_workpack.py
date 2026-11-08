@@ -377,3 +377,104 @@ async def test_real_graphic_packet_timeline(require_tools, tmp_path):
     assert all(event['stream_index'] == 0 for event in result['events'])
     timestamps = [event['start_ms'] for event in result['events']]
     assert timestamps == sorted(timestamps)
+
+
+@pytest.mark.parametrize('failure', ['missing', 'hash', 'missing_hash', 'not_in_package'])
+def test_zip_validates_nested_reference_artifact_before_publication(tmp_path, failure):
+    ref = tmp_path / 'reference' / 'selected' / 'selected.original.ass'
+    ref.parent.mkdir(parents=True)
+    ref.write_bytes(b'original ASS')
+    name = ref.relative_to(tmp_path).as_posix()
+    manifest = {'files': ['manifest.json', 'checksums.sha256'],
+                'reference': {'files': [{'name': name, 'sha256': sha256_file(ref)}]}}
+    if failure != 'not_in_package' and failure != 'missing':
+        manifest['files'].append(name)
+    if failure == 'missing_hash':
+        del manifest['reference']['files'][0]['sha256']
+    if failure == 'missing':
+        ref.unlink()
+    elif failure == 'hash':
+        ref.write_bytes(b'changed')
+    (tmp_path / 'manifest.json').write_text(json.dumps(manifest))
+    include = {'manifest.json'} if failure == 'not_in_package' else None
+    with pytest.raises(ValueError, match='declared artifact|checksum mismatch'):
+        build_zip(tmp_path, 'Movie', 1000000, 100, include)
+    assert list(tmp_path.glob('*.zip')) == []
+
+
+def test_zip_omissions_update_all_artifact_declarations(tmp_path):
+    candidate = tmp_path / 'polish' / 'candidate.pl.srt'
+    candidate.parent.mkdir()
+    candidate.write_bytes(srt())
+    name = candidate.relative_to(tmp_path).as_posix()
+    manifest = {'files': ['manifest.json', name, 'checksums.sha256'],
+                'polish_candidates': [{'archiveName': name, 'sha256': sha256_file(candidate)}]}
+    (tmp_path / 'manifest.json').write_text(json.dumps(manifest))
+    archive, _, _, omitted = build_zip(tmp_path, 'Movie', 1000000, 2)
+    with zipfile.ZipFile(archive) as bundle:
+        published = json.loads(bundle.read('manifest.json'))
+        assert set(published['files']) == set(bundle.namelist())
+        assert published['polish_candidates'] == []
+        assert published['omitted_files'] == omitted == [name]
+
+
+def test_diagnostics_never_infer_dialogue_from_segment_positions(tmp_path):
+    from app.services.alignment import Cue, write_preview
+    from app.services.workpack import diagnostic_hypotheses
+    ref, pl = tmp_path / 'ref.srt', tmp_path / 'pl.srt'
+    def cues(prefix, scale):
+        return [Cue(str(i), i, round(i * 100000 * scale), round(i * 100000 * scale) + 2000,
+                    2000, f'{prefix} {i}', f'{prefix} {i}', 'test') for i in range(24)]
+    write_preview(cues('English dialogue without confirmed translation', .959040959), ref)
+    write_preview(cues('Polska kwestia bez potwierdzenia tłumaczenia', 1), pl)
+    result = diagnostic_hypotheses(ref, [{'path': str(pl)}], tmp_path, 2400000)[0]
+    assert result['anchorCount'] == 0
+    assert result['hypothesis'] == 'brak wiarygodnej hipotezy'
+    assert result['offsetMs'] is None
+    assert result['sufficientAnchors'] is False
+    assert result['readySynchronization'] is False
+    assert result['models'] == []
+
+
+def test_content_assessment_distinguishes_unconfirmed_lines_from_credits_and_cards():
+    from app.services.alignment import Cue
+    from app.services.workpack import content_assessment
+    texts = ['Tłumaczenie: Autor', 'DWA LATA PÓŹNIEJ', 'Nie wiem, dokąd poszedł.']
+    cues = [Cue(str(i), i, i * 1000, i * 1000 + 500, 500, text, text, 'pl')
+            for i, text in enumerate(texts)]
+    assessment = content_assessment(cues, [])
+    assert assessment['possibleAuthorCredits'] == ['0']
+    assert assessment['possibleTitleCards'] == ['1']
+    assert assessment['unconfirmedDialogue'] == ['2']
+    assert assessment['completeness'] == 'UNVERIFIED'
+
+
+@pytest.mark.parametrize('confirmed_count', [3, 24])
+def test_diagnostics_require_many_confirmed_dialogues_for_fps(tmp_path, confirmed_count):
+    from app.services.alignment import Cue, write_preview
+    from app.services.workpack import diagnostic_hypotheses
+    scale = 24000 / 1001 / 25
+    ref, pl = tmp_path / 'ref.srt', tmp_path / 'pl.srt'
+    english, polish = [], []
+    for i in range(24):
+        text = f'This is independent dialogue number {i}.'
+        source_time = i * 10000
+        reference_time = round(scale * source_time + 900)
+        english.append(Cue(str(i), i, reference_time, reference_time + 1000, 1000, text, text, 'ref'))
+        polish_text = text if i < confirmed_count else f'Inna polska kwestia w dialogu numer {i}.'
+        polish.append(Cue(str(i), i + 50, source_time, source_time + 1000, 1000,
+                          polish_text, polish_text, 'pl'))
+    write_preview(english, ref)
+    write_preview(polish, pl)
+    result = diagnostic_hypotheses(ref, [{'path': str(pl)}], tmp_path, round(scale * 230000 + 900))[0]
+    assert result['anchorCount'] == confirmed_count
+    assert result['readySynchronization'] is False
+    if confirmed_count == 3:
+        assert result['hypothesis'] == 'brak wiarygodnej hipotezy'
+        assert result['offsetMs'] is None
+        assert result['sufficientAnchors'] is False
+    else:
+        assert result['hypothesis'] == 'standardowa konwersja FPS'
+        assert result['offsetMs'] == 900
+        assert result['sufficientAnchors'] is True
+        assert any(m['strategy'] == 'STANDARD_FPS' and m['dialogueVerified'] for m in result['models'])

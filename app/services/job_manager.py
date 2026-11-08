@@ -555,7 +555,8 @@ class JobManager:
                              "Semantyka nieaktywna — użyto kotwic strukturalnych", 44)
         await self._emit(job_id, "INFO", JobStatus.FITTING_MODELS, f"Dopasowanie modeli do {len(anchors)} punktów", 45)
         models = fit_models(anchors, self.settings.alignment_min_scale, self.settings.alignment_max_scale,
-                            self.settings.alignment_max_segments, self.settings.alignment_min_points_per_segment)
+                            self.settings.alignment_max_segments, self.settings.alignment_min_points_per_segment,
+                            duration_ms=duration_ms)
         await self._emit(job_id, "INFO", JobStatus.SELECTING_STRATEGY, "Deterministyczny wybór najprostszego wiarygodnego modelu", 60)
         model = select_model(models); grade = quality(model)
         semantic_report["qualityAfter"] = grade
@@ -681,6 +682,9 @@ class JobManager:
                 40,
             )
         reference_files: list[Path] = []
+        if selected and selected.get("forced"):
+            warnings.append("Wybrana referencja ma forced=true. Kompletność wymaga oceny dialogów; "
+                            "flaga forced ani różna liczba segmentów nie dowodzą brakujących dialogów.")
         if (selected and requirements.extract_reference and
                 (selected.get("type") == "text" or requirements.accept_graphic_reference) and
                 not (requirements.name == "INSPECT" and selected.get("type") == "graphic")):
@@ -954,6 +958,9 @@ class JobManager:
             if requirements.name == "PREPARE_SYNC" and ocr_result:
                 package_files.add("analysis/reference-timeline.json")
         manifest["files"] = sorted(package_files | {"checksums.sha256"})
+        if reference_entry:
+            reference_entry["files"] = [item for item in reference_entry["files"] if item["name"] in package_files]
+            reference_entry["completeness"] = "UNVERIFIED"
         write_json(job_dir / "manifest.json", manifest)
         archive = None
         archive_hash = None
@@ -967,6 +974,7 @@ class JobManager:
             archive, version, archive_hash, omitted_files = await asyncio.to_thread(
                 build_zip, job_dir, media_path.stem, self.settings.workpack_max_archive_bytes,
                 self.settings.workpack_max_files, package_files)
+            manifest = json.loads((job_dir / "manifest.json").read_text(encoding="utf-8"))
             await self._emit(
                 job_id, "DEBUG", JobStatus.BUILDING_WORKPACK,
                 f"Archiwum: pliki={len(package_files)}, rozmiar={archive.stat().st_size}B, "

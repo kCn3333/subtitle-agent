@@ -803,3 +803,47 @@ def test_sync_pgs_show_hide_ocr_integration(client, settings, media_file, monkey
             assert hashlib.sha256(archive.read(file['name'])).hexdigest() == file['sha256']
     assert body['report']['synchronizationHypotheses'][0]['englishSegments'] == 2268
     assert body['report']['synchronizationHypotheses'][0]['structuralOnly'] is False
+
+
+@pytest.mark.parametrize('task', ['PREPARE_SYNC', 'PREPARE_TRANSLATION'])
+def test_ass_artifact_inventory_matches_zip_and_forced_reference_is_retained(client, media_file, monkeypatch, task):
+    from app.services import job_manager
+    _configure_probe(monkeypatch)
+    original_probe = job_manager.probe_media
+
+    async def forced_probe(path, timeout):
+        media = await original_probe(path, timeout)
+        media['embeddedSubtitles'][0].update(forced=True, codec='ass')
+        return media
+
+    async def extract(reference, media_path, target, timeout):
+        target.mkdir(parents=True, exist_ok=True)
+        original = target / 'selected.original.ass'
+        original.write_bytes(b'[Events]\nOriginal ASS')
+        converted = target / 'selected.eng.srt'
+        converted.write_text('1\n00:00:01,000 --> 00:00:02,000\nAn independent line of dialogue.\n')
+        return SubtitleExtractionResult([original, converted], [])
+
+    monkeypatch.setattr(job_manager, 'probe_media', forced_probe)
+    monkeypatch.setattr(job_manager, 'extract_embedded', extract)
+    response = client.post('/api/workpacks', json={'mediaPath': str(media_file), 'taskType': task})
+    job_id = response.json()['jobId']
+    body = wait_workpack(client, job_id)
+    assert body['report']['selectedReference']['forced'] is True
+    assert any('forced=true' in warning for warning in body['report']['warnings'])
+    import io
+    with zipfile.ZipFile(io.BytesIO(client.get(f'/api/workpacks/{job_id}/download').content)) as bundle:
+        manifest = json.loads(bundle.read('manifest.json'))
+        assert set(manifest['files']) == set(bundle.namelist())
+        reference = manifest['reference']
+        assert reference['forced'] is True
+        assert reference['completeness'] == 'UNVERIFIED'
+        for artifact in reference['files']:
+            assert hashlib.sha256(bundle.read(artifact['name'])).hexdigest() == artifact['sha256']
+        original_name = 'reference/selected/selected.original.ass'
+        assert (original_name in bundle.namelist()) == (task == 'PREPARE_TRANSLATION')
+        assert (original_name in {item['name'] for item in reference['files']}) == (task == 'PREPARE_TRANSLATION')
+        if task == 'PREPARE_SYNC':
+            comparison = json.loads(bundle.read('analysis/timing-comparison.json'))
+            assert comparison['readySynchronization'] is False
+            assert 'wymagają weryfikacji' in comparison['notice']

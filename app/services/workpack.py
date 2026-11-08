@@ -6,7 +6,8 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 from app.models.job import WorkpackTaskType
-from app.services.alignment import Cue, StructuralAnchorProvider, fit_models, parse_cues, public_model, quality, select_model
+from app.services.alignment import (Cue, ExactTextAnchorProvider, fit_models, parse_cues,
+                                    possible_non_dialogue, public_model, quality, select_model)
 from app.services.process_runner import ProcessTimeoutError, run_process
 from app.services.subtitle_extraction import SubtitleExtractionResult, extract_subtitle
 
@@ -185,6 +186,22 @@ def copy_polish_candidates(ranking: list[dict], target: Path, maximum: int) -> t
     return included, omitted
 
 
+def content_assessment(cues: list[Cue], anchors: list) -> dict:
+    confirmed = {anchor.polish_index for anchor in anchors}
+    categories = {"possibleAuthorCredits": [], "possibleTitleCards": [], "unconfirmedDialogue": []}
+    for index, cue in enumerate(cues):
+        category = possible_non_dialogue(cue)
+        if not category and index not in confirmed:
+            category = "unconfirmedDialogue"
+        if not category:
+            continue
+        categories[category].append(cue.cue_id)
+    return {**categories, "requiresReview": True, "completeness": "UNVERIFIED",
+            "notice": "Podpisy autorów i plansze są oznaczone heurystycznie i wymagają oceny. "
+                      "Kwestie bez potwierdzenia nie oznaczają brakującego dialogu w referencji. "
+                      "Różna liczba segmentów nie dowodzi niekompletności."}
+
+
 def diagnostic_hypotheses(reference_path: Path | None, polish: list[dict], job_dir: Path, duration_ms: int,
                           graphic_timestamps: list[int] | None = None) -> list[dict]:
     if reference_path and reference_path.suffix.lower() == ".srt":
@@ -202,13 +219,15 @@ def diagnostic_hypotheses(reference_path: Path | None, polish: list[dict], job_d
             continue
         candidate_name = item.get("archiveName") or item.get("name") or candidate.name
         cues = parse_cues(candidate, candidate_name)
-        anchors = StructuralAnchorProvider().provide(english, cues, duration_ms, {})
-        models = fit_models(anchors)
+        anchors = ExactTextAnchorProvider().provide(english, cues, duration_ms, {}) if not structural_only else []
+        models = fit_models(anchors, duration_ms=duration_ms)
         selected = select_model(models)
         measured_grade = quality(selected)
         grade = "LOW" if structural_only and measured_grade in {"HIGH", "MEDIUM"} else measured_grade
         model_names = {"IDENTITY": "zgodne osie czasu", "GLOBAL_OFFSET": "stałe przesunięcie",
-                       "AFFINE_DRIFT": "dryf liniowy", "PIECEWISE_LINEAR": "model odcinkowy"}
+                       "AFFINE_DRIFT": "dryf liniowy", "PIECEWISE_LINEAR": "model odcinkowy",
+                       "STANDARD_FPS": "standardowa konwersja FPS"}
+        credible = not structural_only and grade in {"HIGH", "MEDIUM"}
         results.append({
             "candidate": candidate_name, "originalName": item.get("originalName") or item.get("name"),
             "identityMatch": item.get("identityMatch"),
@@ -217,11 +236,14 @@ def diagnostic_hypotheses(reference_path: Path | None, polish: list[dict], job_d
             "compatibilityWarnings": item.get("compatibilityWarnings", []),
             "reasonCode": item.get("reasonCode"),
             "englishSegments": len(english), "polishSegments": len(cues), "anchorCount": len(anchors),
-            "hypothesis": model_names.get((selected or {}).get("strategy"), "brak wiarygodnej hipotezy"),
-            "offsetMs": (selected or {}).get("offsetMs"), "spreadMs": (selected or {}).get("p95ResidualMs"),
+            "hypothesis": model_names.get((selected or {}).get("strategy")) if credible else "brak wiarygodnej hipotezy",
+            "offsetMs": (selected or {}).get("offsetMs") if credible else None,
+            "spreadMs": (selected or {}).get("p95ResidualMs") if credible else None,
             "analysisCoverage": (selected or {}).get("coverage", 0), "confidence": grade,
             "sufficientAnchors": not structural_only and grade in {"HIGH", "MEDIUM"},
             "structuralOnly": structural_only,
+            "anchorEvidence": "EXACT_UNIQUE_TEXT", "readySynchronization": False,
+            "contentAssessment": content_assessment(cues, anchors),
             "verification": "Porównaj segmenty z początku, środka i końca",
             "models": [{**public_model(model),
                         "quality": ("LOW" if structural_only and quality(model) in {"HIGH", "MEDIUM"}
@@ -232,6 +254,41 @@ def diagnostic_hypotheses(reference_path: Path | None, polish: list[dict], job_d
                        for model in models],
         })
     return results
+
+
+def validate_zip(archive: Path) -> None:
+    """Validate actual published bytes, including nested artifact declarations."""
+    with zipfile.ZipFile(archive) as bundle:
+        names = set(bundle.namelist())
+        manifest = json.loads(bundle.read("manifest.json"))
+        for name in manifest.get("files", []):
+            if safe_archive_name(name) != name or name not in names:
+                raise ValueError(f"Missing declared artifact: {name}")
+        if "files" in manifest and set(manifest["files"]) != names:
+            raise ValueError("ZIP manifest artifact inventory mismatch")
+        sums = dict((name, digest) for digest, name in
+                    (line.split("  ", 1) for line in bundle.read("checksums.sha256").decode().splitlines()))
+        if set(sums) != names - {"checksums.sha256"}:
+            raise ValueError("ZIP checksum inventory mismatch")
+        for name, digest in sums.items():
+            if hashlib.sha256(bundle.read(name)).hexdigest() != digest:
+                raise ValueError(f"Artifact checksum mismatch: {name}")
+        def validate_entries(value, artifacts=False):
+            if isinstance(value, dict):
+                name = value.get("archiveName") or (value.get("name") if "sha256" in value or artifacts else None)
+                if name:
+                    if name not in names:
+                        raise ValueError(f"Missing declared artifact: {name}")
+                    if not value.get("sha256") or hashlib.sha256(bundle.read(name)).hexdigest() != value["sha256"]:
+                        raise ValueError(f"Artifact checksum mismatch: {name}")
+                for key, child in value.items():
+                    validate_entries(child, artifacts=key == "files")
+            elif isinstance(value, list):
+                for child in value:
+                    if artifacts and isinstance(child, str) and child not in names:
+                        raise ValueError(f"Missing declared artifact: {child}")
+                    validate_entries(child, artifacts=artifacts)
+        validate_entries(manifest)
 
 
 REQUESTS = {
@@ -340,6 +397,15 @@ def build_zip(job_dir: Path, media_stem: str, maximum_bytes: int, maximum_files:
         manifest = json.loads((job_dir / "manifest.json").read_text(encoding="utf-8"))
         manifest["omitted_files"] = sorted(set(omitted))
         manifest.setdefault("warnings", []).append(f"Pominięto {len(set(omitted))} plików z powodu limitów workpacka")
+        def prune(value):
+            if isinstance(value, list):
+                return [prune(item) for item in value if not (
+                    isinstance(item, str) and item in omitted or
+                    isinstance(item, dict) and (item.get("archiveName") or item.get("name")) in omitted)]
+            if isinstance(value, dict):
+                return {key: prune(child) if key != "omitted_files" else child for key, child in value.items()}
+            return value
+        manifest = prune(manifest)
         write_json(job_dir / "manifest.json", manifest)
     checksums = "".join(f"{sha256_file(path)}  {safe_archive_name(path.relative_to(job_dir).as_posix())}\n" for path in files)
     checksum_path = job_dir / "checksums.sha256"
@@ -355,4 +421,10 @@ def build_zip(job_dir: Path, media_stem: str, maximum_bytes: int, maximum_files:
                     "reference/selected/" in item.relative_to(job_dir).as_posix() and item.stat().st_size > maximum_bytes
                     for item in files):
                 raise ValueError("WORKPACK_MAX_ARCHIVE_BYTES exceeded")
+    try:
+        if (job_dir / "manifest.json") in files:
+            validate_zip(archive)
+    except Exception:
+        archive.unlink(missing_ok=True)
+        raise
     return archive, version, sha256_file(archive), omitted

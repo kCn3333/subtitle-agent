@@ -92,3 +92,39 @@ def test_normalization_does_not_modify_raw_value():
     assert "hello" in normalize_text(raw)
     assert "john" not in normalize_text(raw)
     assert raw == "<i>JOHN:</i> “Hello!”"
+
+
+@pytest.mark.parametrize('scale', [24000 / 1001 / 25, 24 / 25, 25 / (24000 / 1001), 25 / 24])
+def test_standard_fps_requires_independent_dialogues_across_full_duration(scale):
+    points = anchors(900, scale, count=24)
+    models = fit_models(points, duration_ms=round(scale * 230000 + 900))
+    fps = next(m for m in models if m['strategy'] == 'STANDARD_FPS' and m['scale'] == scale)
+    assert fps['dialogueVerified'] is True
+    assert quality(fps) == 'HIGH'
+    assert select_model(models)['strategy'] == 'STANDARD_FPS'
+    assert fps['offsetMs'] == 900
+    for unconfirmed in (
+        [Anchor(a.english_index, a.polish_index, a.reference_time, a.source_time, .95, 'structural') for a in points],
+        points[:8], points[8:16], points[-8:],
+        [Anchor(0, a.polish_index, a.reference_time, a.source_time, .95, 'semantic') for a in points],
+    ):
+        unconfirmed_models = fit_models(unconfirmed, duration_ms=round(scale * 230000 + 900))
+        assert all(quality(m) not in {'HIGH', 'MEDIUM'} for m in unconfirmed_models if m.get('fpsLike'))
+        candidate = next(m for m in unconfirmed_models
+                         if m['strategy'] == 'STANDARD_FPS' and m['scale'] == scale)
+        assert candidate['dialogueVerified'] is False
+        assert quality(candidate) not in {'HIGH', 'MEDIUM'}
+
+
+def test_exact_text_anchors_ignore_segment_numbers_repeats_and_credits():
+    from app.services.alignment import ExactTextAnchorProvider
+    def cue(number, text):
+        return Cue(str(number), number, number * 1000, number * 1000 + 1000, 1000,
+                   text, normalize_text(text), 'test')
+    ref = [cue(1, 'This is an independent dialogue.'), cue(2, 'Repeated dialogue with several words.'),
+           cue(3, 'Repeated dialogue with several words.'), cue(4, 'Tłumaczenie: Example Subtitle Author Team')]
+    pl = [cue(50, 'Zupełnie inna kwestia z dialogu.'), cue(80, ref[0].raw_text),
+          cue(81, ref[1].raw_text), cue(82, ref[3].raw_text)]
+    result = ExactTextAnchorProvider().provide(ref, pl, 100000, {})
+    assert len(result) == 1
+    assert (result[0].english_index, result[0].polish_index) == (0, 1)

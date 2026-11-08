@@ -16,6 +16,10 @@ Referencje osadzone są wybierane z preferencją języka angielskiego i PGS. Wyb
 
 Synchronizacja i tłumaczenie korzystają z API zgodnego z Chat Completions. Walidacja sprawdza kompletność segmentów, strukturę SRT i zakresy czasowe; trafność synchronizacji oraz jakość OCR i tłumaczenia wymagają oceny użytkownika.
 
+Hipotezy czasowe w raporcie pozostają diagnostyką (`readySynchronization=false`). Bez wiarygodnych kotwic interfejs pokazuje „brak wiarygodnej hipotezy”. Diagnostyka lokalna potwierdza wyłącznie unikalne, identyczne frazy; tłumaczone dialogi wymagają oceny semantycznej. Numery i stosunek liczby segmentów nie są dowodem dopasowania. Modele 24000/1001↔25 i 24↔25 wymagają co najmniej 9 niezależnych, potwierdzonych dialogów, po 3 w każdej tercji materiału, obejmujących co najmniej 80% czasu, z błędem do 750 ms.
+
+Flaga `forced` jest widoczna i nie wyklucza referencji; kompletność pozostaje niezweryfikowana. Raport osobno oznacza możliwe podpisy autorów, plansze i kwestie bez potwierdzenia. Różna liczba segmentów nie dowodzi brakujących dialogów. Manifest deklaruje tylko dołączone artefakty, a walidacja ZIP-a sprawdza ich obecność i SHA-256, również w `reference.files`. Pakiet synchronizacyjny zawiera konwersję SRT; oryginał tekstowy, np. ASS, jest dołączany do pakietu tłumaczeniowego.
+
 ## Wdrożenie
 
 [compose.example.yml](compose.example.yml) definiuje aplikację i worker OCR, trwały wolumen `/data` oraz bibliotekę mediów montowaną z `:ro`. Podstawowe parametry dostępu:

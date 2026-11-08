@@ -88,6 +88,15 @@ def parse_cues(path: Path, source: str) -> list[Cue]:
     return cues
 
 
+def possible_non_dialogue(cue: Cue) -> str | None:
+    text = HTML.sub("", ASS.sub("", cue.raw_text)).strip()
+    if re.search(r"(?i)\b(tłumaczenie|przekład|korekta|synchronizacja|napisy|translated|subtitles)\s*[:：]", text):
+        return "possibleAuthorCredits"
+    if text.isupper() and len(text.split()) <= 8 and not text.startswith(("-", "–", "—")):
+        return "possibleTitleCards"
+    return None
+
+
 class FixtureAnchorProvider:
     def __init__(self, anchors: list[Anchor]): self.anchors = anchors
     def provide(self, english: list[Cue], polish: list[Cue], duration_ms: int, sources: dict) -> list[Anchor]:
@@ -109,6 +118,22 @@ class StructuralAnchorProvider:
             confidence = max(0.15, min(0.72, 0.55 + duration_ratio * 0.17 - relative_gap))
             anchors.append(Anchor(ei, pi, e.start_ms, p.start_ms, confidence, "structural", "kolejność, położenie i czas wyświetlania"))
         return anchors
+
+
+class ExactTextAnchorProvider:
+    """Conservative evidence only; never infer translated dialogue from cue order."""
+    def provide(self, english: list[Cue], polish: list[Cue], duration_ms: int, sources: dict) -> list[Anchor]:
+        def unique(cues):
+            groups = {}
+            for index, cue in enumerate(cues):
+                text = cue.normalized_text
+                if len(text.split()) >= 4 and len(text) >= 20 and not possible_non_dialogue(cue):
+                    groups.setdefault(text, []).append(index)
+            return {text: indexes[0] for text, indexes in groups.items() if len(indexes) == 1}
+        reference, candidate = unique(english), unique(polish)
+        return [Anchor(ei, candidate[text], english[ei].start_ms, polish[candidate[text]].start_ms,
+                       .95, "exact_text", "unikalny identyczny tekst; bez dopasowania po numerach segmentów")
+                for text, ei in reference.items() if text in candidate]
 
 
 def percentile(values: list[float], fraction: float) -> float:
@@ -145,7 +170,7 @@ def _robust_affine(anchors: list[Anchor], min_scale: float, max_scale: float) ->
 
 
 def fit_models(anchors: list[Anchor], min_scale: float = .94, max_scale: float = 1.06,
-               max_segments: int = 3, min_points: int = 4) -> list[dict]:
+               max_segments: int = 3, min_points: int = 4, duration_ms: int | None = None) -> list[dict]:
     if not anchors: return []
     offset = statistics.median([a.reference_time - a.source_time for a in anchors])
     models = [_metrics("IDENTITY", anchors, lambda value: value, {"offsetMs": 0, "scale": 1.0, "segments": []}, 0),
@@ -153,6 +178,39 @@ def fit_models(anchors: list[Anchor], min_scale: float = .94, max_scale: float =
     scale, affine_offset = _robust_affine(anchors, min_scale, max_scale)
     models.append(_metrics("AFFINE_DRIFT", anchors, lambda value, s=scale, o=affine_offset: s * value + o,
                            {"offsetMs": round(affine_offset), "scale": round(scale, 8), "segments": []}, 5))
+    for source_fps, target_fps, fps_scale in (
+            ("24000/1001", "25", 24000 / 1001 / 25), ("24", "25", 24 / 25),
+            ("25", "24000/1001", 25 / (24000 / 1001)), ("25", "24", 25 / 24)):
+        if not min_scale <= fps_scale <= max_scale:
+            continue
+        fps_offset = statistics.median(a.reference_time - fps_scale * a.source_time for a in anchors)
+        predict = lambda value, s=fps_scale, o=fps_offset: s * value + o
+        # Count independent confirmed dialogues, never structural/index-based pairs.
+        confirmed = {(a.english_index, a.polish_index): a for a in anchors
+                     if a.origin != "structural" and a.confidence >= .8
+                     and abs(a.reference_time - predict(a.source_time)) <= 750}
+        points = list(confirmed.values())
+        extent = duration_ms or max(a.reference_time for a in anchors)
+        regions = [sum(0 <= a.reference_time <= extent and
+                       min(2, int(3 * a.reference_time / max(1, extent))) == i
+                       for a in points) for i in range(3)]
+        independent = (len({a.english_index for a in points}) == len(points)
+                       and len({a.polish_index for a in points}) == len(points))
+        confirmed_span = ((max(a.reference_time for a in points) - min(a.reference_time for a in points))
+                          / max(1, extent)) if points else 0
+        verified = (independent and len(points) >= 9 and min(regions) >= 3
+                    and confirmed_span >= .8 and len(points) / len(anchors) >= .8)
+        models.append(_metrics("STANDARD_FPS", anchors, predict,
+                               {"offsetMs": round(fps_offset), "scale": fps_scale, "segments": [],
+                                "sourceFps": source_fps, "targetFps": target_fps,
+                                "dialogueVerified": verified, "confirmedDialogueCount": len(points),
+                                "confirmedRegions": regions}, 3))
+    fps_like = [model for model in models if model["strategy"] == "STANDARD_FPS"
+                and abs(model["scale"] - scale) <= .0001]
+    if fps_like:
+        # A free affine fit must not bypass the confirmation required for FPS conversion.
+        models[2]["fpsLike"] = True
+        models[2]["dialogueVerified"] = any(model["dialogueVerified"] for model in fps_like)
     ordered = sorted(anchors, key=lambda a: a.source_time)
     best_piece = None
     for parts in range(2, min(max_segments, len(ordered) // min_points) + 1):
@@ -169,12 +227,20 @@ def fit_models(anchors: list[Anchor], min_scale: float = .94, max_scale: float =
         model = _metrics("PIECEWISE_LINEAR", anchors, piece, {"offsetMs": None, "scale": None,
                          "segments": [{**x, "scale": round(x["scale"], 8), "offsetMs": round(x["offsetMs"])} for x in segments]}, 10 * (parts - 1))
         if best_piece is None or model["score"] > best_piece["score"]: best_piece = model
-    if best_piece: models.append(best_piece)
+    if best_piece:
+        if fps_like and all(abs(segment["scale"] - scale) <= .0001 and
+                            abs(segment["offsetMs"] - affine_offset) <= 750
+                            for segment in best_piece["segments"]):
+            best_piece["fpsLike"] = True
+            best_piece["dialogueVerified"] = models[2]["dialogueVerified"]
+        models.append(best_piece)
     return models
 
 
 def select_model(models: list[dict]) -> dict | None:
     if not models: return None
+    verified = [model for model in models if quality(model) in {"HIGH", "MEDIUM"}]
+    models = verified or models
     best = max(models, key=lambda model: (model["score"], -model["complexityPenalty"]))
     simpler = [model for model in models if model["complexityPenalty"] < best["complexityPenalty"] and best["score"] - model["score"] < 2]
     return max(simpler, key=lambda model: model["score"], default=best)
@@ -182,6 +248,8 @@ def select_model(models: list[dict]) -> dict | None:
 
 def quality(model: dict | None) -> str:
     if not model or model["pointCount"] < 4 or model["coverage"] < .25: return "UNUSABLE"
+    if (model.get("strategy") == "STANDARD_FPS" or model.get("fpsLike")) and not model.get("dialogueVerified"): return "LOW"
+    if model["inlierRatio"] < .6: return "LOW"
     if model["inlierCount"] >= 10 and model["coverage"] >= .7 and model["p95ResidualMs"] <= 750: return "HIGH"
     if model["inlierCount"] >= 6 and model["coverage"] >= .5 and model["p95ResidualMs"] <= 1500: return "MEDIUM"
     return "LOW"
