@@ -1,78 +1,101 @@
 # Subtitle Agent
 
-Subtitle Agent to aplikacja webowa do analizy napisów, przygotowania materiału referencyjnego oraz synchronizacji i tłumaczenia na język polski. Obsługuje napisy tekstowe i graficzne PGS/VobSub, przetwarzane przez osobny worker OCR.
+[![Python 3.12](https://img.shields.io/badge/Python-3.12-74c7ec?style=flat-square&logo=python&logoColor=74c7ec&labelColor=131b26)](Dockerfile)
+[![FastAPI](https://img.shields.io/badge/FastAPI-backend-3ddc84?style=flat-square&logo=fastapi&logoColor=3ddc84&labelColor=131b26)](requirements.txt)
+[![SQLite](https://img.shields.io/badge/SQLite-storage-74c7ec?style=flat-square&logo=sqlite&logoColor=74c7ec&labelColor=131b26)](app/services/job_manager.py)
+[![FFmpeg](https://img.shields.io/badge/FFmpeg-media-3ddc84?style=flat-square&logo=ffmpeg&logoColor=3ddc84&labelColor=131b26)](Dockerfile)
+[![Tesseract OCR](https://img.shields.io/badge/Tesseract-OCR-f59a45?style=flat-square&labelColor=131b26)](Dockerfile.ocr)
+[![JavaScript](https://img.shields.io/badge/JavaScript-UI-f59a45?style=flat-square&logo=javascript&logoColor=f59a45&labelColor=131b26)](app/static/)
+[![Docker Compose](https://img.shields.io/badge/Docker-Compose-74c7ec?style=flat-square&logo=docker&logoColor=74c7ec&labelColor=131b26)](compose.example.yml)
 
-Aplikacja tworzy pakiety ZIP z napisami i metadanymi oraz pliki wynikowe SRT. Biblioteka mediów jest montowana wyłącznie do odczytu.
+Aplikacja webowa do analizy napisów, synchronizacji i tłumaczenia na język polski. Przyjmuje ścieżkę do filmu, odcinka lub katalogu. Przygotowuje workpacki ZIP z materiałami źródłowymi i metadanymi oraz pliki wynikowe SRT z API modelu.
 
-Można też podać katalog: aplikacja kolejkuje zawarte w nim filmy/odcinki, wstrzymuje partię przy wymaganym wyborze referencji i przygotowuje jeden wspólny workpack. [Opis przetwarzania katalogów](docs/directory-batch.md).
+**Biblioteka mediów jest montowana tylko do odczytu.** Wyniki trafiają do osobnego wolumenu danych i są dostępne do pobrania.
 
-## Funkcje
+[Uruchomienie](#uruchomienie) · [Przetwarzanie katalogów](docs/directory-batch.md) · [Konfiguracja AI](docs/ai-api-sync.md) · [Wdrożenie](docs/deployment.md)
 
-| Tryb | Wymagane dane | Wynik |
+## Możliwości
+
+| Operacja | Dane wejściowe | Wynik |
 |---|---|---|
-| Analiza napisów | Plik filmu lub odcinka | Raport ścieżek, referencji i kandydatów PL |
-| Przygotowanie do synchronizacji | Referencja źródłowa i pasujące napisy PL | Pakiet ZIP; po przetworzeniu przez AI — SRT z poprawionymi czasami |
-| Przygotowanie do tłumaczenia | Referencja źródłowa | Pakiet ZIP; po przetworzeniu przez AI — polski SRT z czasami referencji |
+| Analiza | Film, odcinek lub katalog | Raport ścieżek, referencji, kandydatów PL i zgodności czasowej |
+| Przygotowanie synchronizacji | Referencja i pasujące napisy PL | Workpack ZIP; dla pojedynczego pliku również synchronizacja przez AI |
+| Przygotowanie tłumaczenia | Referencja źródłowa | Workpack ZIP; dla pojedynczego pliku również tłumaczenie przez AI |
 
-Referencje osadzone są wybierane z preferencją języka angielskiego i PGS. Wybór niejednoznaczny oraz użycie napisów zewnętrznych wymagają zatwierdzenia. Dostępna jest ręczna zmiana referencji i przebudowa pakietu.
+- **Referencje:** osadzone lub zewnętrzne, z preferencją języka angielskiego i PGS. Niejednoznaczny wybór oraz użycie zewnętrznego wzorca wymagają potwierdzenia.
+- **Formaty:** tekstowe SRT, ASS, SSA i VTT; referencje graficzne PGS/VobSub rozpoznawane przez osobny worker OCR z Tesseractem i seconv.
+- **AI:** API zgodne z Chat Completions, z konfiguracją adresu, modelu i klucza w interfejsie. Synchronizacja zachowuje polski tekst; tłumaczenie zachowuje czasy referencji.
+- **Wyniki:** wersjonowane pliki SRT, manifesty, sumy SHA-256 i archiwum pobrań. Konsola pokazuje przebieg pracy, czas, tokeny i koszt, jeśli dostawca go zwraca.
 
-Synchronizacja i tłumaczenie korzystają z API zgodnego z Chat Completions. Walidacja sprawdza kompletność segmentów, strukturę SRT i zakresy czasowe; trafność synchronizacji oraz jakość OCR i tłumaczenia wymagają oceny użytkownika.
+## Przetwarzanie katalogów
 
-Hipotezy czasowe w raporcie pozostają diagnostyką (`readySynchronization=false`). Bez wiarygodnych kotwic interfejs pokazuje „brak wiarygodnej hipotezy”. Diagnostyka lokalna potwierdza wyłącznie unikalne, identyczne frazy; tłumaczone dialogi wymagają oceny semantycznej. Numery i stosunek liczby segmentów nie są dowodem dopasowania. Modele 24000/1001↔25 i 24↔25 wymagają co najmniej 9 niezależnych, potwierdzonych dialogów, po 3 w każdej tercji materiału, obejmujących co najmniej 80% czasu, z błędem do 750 ms.
+Po podaniu katalogu aplikacja skanuje podkatalogi, rozpoznaje filmy i odcinki oraz tworzy trwałą kolejkę. Napisy przypisuje najpierw według pełnej nazwy bazowej wideo, następnie według tożsamości materiału i numeru odcinka. Różne wydania tego samego odcinka nie otrzymują automatycznie niejednoznacznych napisów.
 
-Flaga `forced` jest widoczna i nie wyklucza referencji; kompletność pozostaje niezweryfikowana. Raport osobno oznacza możliwe podpisy autorów, plansze i kwestie bez potwierdzenia. Różna liczba segmentów nie dowodzi brakujących dialogów. Manifest deklaruje tylko dołączone artefakty, a walidacja ZIP-a sprawdza ich obecność i SHA-256, również w `reference.files`. Pakiet synchronizacyjny zawiera konwersję SRT; oryginał tekstowy, np. ASS, jest dołączany do pakietu tłumaczeniowego.
+Panel statusu pokazuje listę plików i postęp bieżącej pozycji. Wymagany wybór referencji wstrzymuje całą partię przed ekstrakcją/OCR. Dostępne są potwierdzenie, pominięcie pliku, wznowienie po restarcie i ponowienie tylko błędnych pozycji.
 
-## Wdrożenie
+Przygotowanie kończy się **jednym ZIP-em dla katalogu**: osobne materiały każdego pliku, wspólny manifest i skrócony raport parametrów wspólnych oraz różnic. Analiza katalogu zwraca raport bez ZIP-a. Operacje AI w interfejsie dotyczą pojedynczych plików.
 
-[compose.example.yml](compose.example.yml) definiuje aplikację i worker OCR, trwały wolumen `/data` oraz bibliotekę mediów montowaną z `:ro`. Podstawowe parametry dostępu:
+Szczegóły dopasowania, limitów i struktury paczki: [przetwarzanie katalogów](docs/directory-batch.md).
 
-| Zmienna | Znaczenie |
+## Uruchomienie
+
+Wymagany jest Docker z Compose. Zestaw obejmuje aplikację i worker OCR; obrazy są pobierane z GHCR.
+
+```bash
+cp .env.example .env
+```
+
+Uzupełnij `.env` i dostosuj ścieżki biblioteki w [compose.example.yml](compose.example.yml):
+
+| Ustawienie | Wartość |
 |---|---|
 | `AUTH_USERNAME` | Login do aplikacji |
-| `AUTH_PASSWORD` | Hasło o długości 16–1024 znaków |
-| `AUTH_PUBLIC_URL` | Publiczny adres HTTPS, bez ścieżki |
-| `AUTH_TRUSTED_PROXIES` | Zaufane adresy/CIDR proxy; za proxy wymagane do poprawnego ustalania IP klienta |
-
-Po uzupełnieniu konfiguracji:
+| `AUTH_PASSWORD` | Własne hasło o długości 16–1024 znaków |
+| `AUTH_PUBLIC_URL` | Publiczny adres HTTPS aplikacji, bez ścieżki |
+| `AUTH_TRUSTED_PROXIES` | Adresy/CIDR zaufanych pośredników, jeśli aplikacja działa za proxy |
+| Mounty mediów | Katalogi hosta dostępne w kontenerze jako `/media/movies` i `/media/shows`, z `:ro` |
 
 ```bash
 docker compose -f compose.example.yml up -d
 ```
 
-Port HTTP aplikacji to `8080`; przykładowy Compose wiąże go z `127.0.0.1`. Dostęp publiczny wymaga reverse proxy lub Cloudflare Tunnel z HTTPS. Worker OCR pozostaje dostępny w sieci wewnętrznej.
+Domyślny adres nasłuchu to `127.0.0.1:8080`. Dostęp przez HTTPS zapewnia reverse proxy lub Cloudflare Tunnel. Worker OCR jest dostępny tylko w sieci wewnętrznej stosu. Wolumen `/data` przechowuje bazę SQLite, ustawienia, pliki robocze i archiwum.
 
-Pełna konfiguracja: [.env.example](.env.example). Topologie proxy, ustawienia dostępu i trwałość danych: [instrukcja wdrożenia](docs/deployment.md).
+Pełna lista zmiennych: [.env.example](.env.example). Ustawienia proxy, dostępu i wolumenów: [instrukcja wdrożenia](docs/deployment.md).
 
-## Wykonywanie zadań
+## Kolejki i przechowywanie
 
-Przygotowanie materiału i operacje AI korzystają z niezależnych kolejek. Oczekiwanie na model nie blokuje przygotowania kolejnego filmu.
-
-| Kolejka | Zakres | Domyślny limit |
+| Kolejka | Zakres | Domyślnie |
 |---|---|---|
-| Przygotowanie | Analiza, ekstrakcja, OCR, pakowanie i przebudowy | 1 operacja wykonywana, 5 oczekujących |
-| AI | Synchronizacja, tłumaczenie i test połączenia | 1 operacja wykonywana, 5 oczekujących |
+| Przygotowanie | Analiza, ekstrakcja, OCR, pakowanie i przebudowy | 1 wykonywana operacja + 5 oczekujących |
+| AI | Synchronizacja, tłumaczenie i test połączenia | 1 wykonywana operacja + 5 oczekujących |
 
-Powtórne zgłoszenie tej samej aktywnej operacji zadania zwraca istniejące zlecenie. Rezerwacja zadania chroni przed równoczesną zmianą referencji i przetwarzaniem AI. Po restarcie niedokończone operacje są oznaczane jako przerwane; żądania AI nie są automatycznie ponawiane.
+Katalog zajmuje jedno miejsce w kolejce przygotowania. Oczekiwanie na odpowiedź AI nie blokuje przygotowania kolejnych materiałów. Aplikacja działa jako jeden proces; kolejki nie są współdzielone między instancjami.
 
-Archiwum przechowuje wyniki ostatnich 30 tytułów. Starsze dane są usuwane, z wyjątkiem plików używanych przez oczekujące lub aktywne operacje.
+Archiwum obejmuje ostatnie 30 tytułów lub katalogów. Pliki partii nie zajmują osobnych pozycji archiwum. Dane aktywnych operacji oraz wstrzymanych i przerwanych partii są chronione przed usunięciem. Żądania AI nie są automatycznie ponawiane po restarcie.
 
-## Dostęp i architektura
+## Walidacja wyników
 
-Strony, API i wyniki są chronione logowaniem. Trzy błędne próby blokują IP na godzinę. Sesja trwa domyślnie 8 godzin lub 30 dni po wybraniu opcji zapamiętania. Żądania zmieniające dane wymagają tokenu CSRF.
+- **ZIP:** obecność i SHA-256 deklarowanych artefaktów, również zagnieżdżonych w manifestach. Przekroczenie limitów końcowej paczki katalogowej blokuje jej publikację.
+- **SRT z AI:** kompletność identyfikatorów segmentów, format, zakresy czasowe i zachowanie wymaganych danych wejściowych.
+- **Diagnostyka czasowa:** hipotezy wymagają potwierdzenia dialogami. Numery i liczba segmentów nie dowodzą zgodności; słaby model jest oznaczany jako „brak wiarygodnej hipotezy”.
+- **Kompletność referencji:** flaga `forced` pozostaje widoczna i wymaga oceny. Raport rozróżnia możliwe podpisy autorów, plansze i kwestie bez potwierdzenia.
 
-Backend wykorzystuje Python 3.12, FastAPI, SQLite, FFmpeg i mkvtoolnix. Worker OCR korzysta z Tesseracta i seconv. Aplikacja działa jako jeden proces; kolejki nie są współdzielone między instancjami.
+Trafność synchronizacji, kompletność dialogów oraz jakość OCR i tłumaczenia wymagają oceny użytkownika.
 
-## Dokumentacja
+## Dokumentacja i rozwój
 
-- [Wdrożenie i konfiguracja](docs/deployment.md)
-- [Konfiguracja AI, kontrakt API i diagnostyka](docs/ai-api-sync.md)
-- [Próbka VobSub używana w testach](tests/fixtures/README.md)
+| Dokument | Zakres |
+|---|---|
+| [Wdrożenie](docs/deployment.md) | Dostęp, proxy, uwierzytelnianie, dane i zasoby |
+| [AI i API](docs/ai-api-sync.md) | Ustawienia dostawcy, kontrakt odpowiedzi i diagnostyka |
+| [Katalogi](docs/directory-batch.md) | Dopasowanie plików, kolejka, decyzje i wspólny workpack |
 
-## Testy
-
-Testy backendu są uruchamiane w obrazie Python 3.12. Testy interfejsu wymagają Node.js.
+Testy backendu uruchamiane są w kontenerze Python 3.12; testy interfejsu wymagają Node.js:
 
 ```bash
 podman build --target test -t subtitle-agent:test .
 node --test tests/*_ui.test.cjs
 ```
+
+Licencja: [MIT](LICENSE).
