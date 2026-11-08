@@ -187,7 +187,16 @@ button:focus-visible, a:focus-visible, .console:focus-visible { outline: 3px sol
 .login-form button { width: 100%; }
 #login-status { margin: 0; color: var(--yellow); }
 
-.batch-list { max-height: 260px; margin: 0 0 16px; padding-left: 24px; overflow: auto; }
-.batch-list li { padding: 5px 0; }
-.batch-list li span { margin: 0; font-size: 12px; }
-.batch-list li[aria-current="step"] { color: var(--green); }
+.batch-summary { margin: 8px 0; }
+.batch-summary strong { font-size: 13px; }
+.batch-list { max-height: 260px; margin: 0 0 16px; padding: 0; overflow: auto; list-style: none; }
+.batch-list li { display: flex; align-items: center; gap: 10px; min-height: 30px; padding: 3px 8px; border-left: 3px solid transparent; border-radius: 5px; }
+.batch-list .batch-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 500; }
+.batch-list .batch-state { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: flex-end; gap: 6px; margin: 0; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.batch-list .is-ready, .batch-list .is-running { color: var(--green); }
+.batch-list .is-ready { font-size: 16px; }
+.batch-list .is-attention, .batch-list .is-incomplete { color: var(--yellow); }
+.batch-list .is-failed { color: var(--red); }
+.batch-list li[aria-current="step"] { border-left-color: var(--green); background: rgba(61, 220, 132, .09); }
+.batch-list li[aria-current="step"] .batch-name { color: var(--green); font-weight: 650; }
+.batch-list li[data-state="attention"] { border-left-color: var(--yellow); background: rgba(227, 179, 65, .07); }

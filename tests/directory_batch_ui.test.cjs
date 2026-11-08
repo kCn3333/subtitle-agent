@@ -27,6 +27,9 @@ test('batch status lists current episode, keeps aggregate download disabled and 
   const {get}=setup(job());
   assert.match(get('#batch-progress').innerHTML,/1\/2 zakończonych/);
   assert.match(get('#batch-progress').innerHTML,/aria-current="step".*S01E02/);
+  assert.match(get('#batch-progress').innerHTML,/batch-state is-ready.*aria-label="Zakończono".*fa-check/);
+  assert.match(get('#batch-progress').innerHTML,/batch-state is-running.*fa-play.*35%/);
+  assert.doesNotMatch(get('#batch-progress').innerHTML,/>Gotowe</);
   assert.equal(get('#download')['aria-disabled'],'true');
   assert.equal(get('#ai-sync-panel').hidden,true);
   assert.match(get('#current-activity').textContent,/S01E02/);

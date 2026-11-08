@@ -1,10 +1,19 @@
 const batchLabels={pending:'Oczekuje',running:'Przetwarzanie',attention:'Wymaga wyboru referencji',ready:'Gotowe',failed:'Błąd',skipped:'Pominięto'};
+function batchRow(item){
+  const state=Object.hasOwn(batchLabels,item.state)?item.state:'pending';
+  const incomplete=state==='ready'&&['WORKPACK_INCOMPLETE','NEEDS_OCR'].includes(item.resultStatus);
+  const icons={pending:'clock',running:'play',attention:'pause',ready:'check',failed:'circle-exclamation',skipped:'minus'};
+  const label=incomplete?'Niekompletne materiały':state==='ready'?'Zakończono':batchLabels[state];
+  const detail=[label,state==='running'?`${item.progress}% · ${item.stage||''}`:'',item.error||''].filter(Boolean).join(' · ');
+  const attribute=value=>nodeText(value).replaceAll('"','&quot;');
+  return `<li data-state="${state}"${state==='running'?' aria-current="step"':''}><strong class="batch-name" title="${attribute(item.name)}">${nodeText(item.name)}</strong><span class="batch-state is-${incomplete?'incomplete':state}" role="img" aria-label="${attribute(detail)}" title="${attribute(detail)}"><i class="fa-solid fa-${incomplete?'triangle-exclamation':icons[state]}" aria-hidden="true"></i>${state==='running'?` ${nodeText(item.progress)}%`:''}</span></li>`;
+}
 function renderDirectoryBatch(job){
   const report=job.report,batch=report.batch,items=batch.items||[],finished=items.filter(item=>['ready','failed','skipped'].includes(item.state)).length;
   activeDirectoryJob=job;activeJobId=job.jobId;activeMediaTitle=job.displayTitle;
   setDownload(job,report.workpack);
   const panel=document.querySelector('#batch-progress');panel.hidden=false;
-  panel.innerHTML=`<p><strong>${finished}/${items.length} zakończonych</strong>${batch.scanned?'':' · Skanowanie katalogu…'}</p><ol class="batch-list">${items.map(item=>`<li${item.state==='running'?' aria-current="step"':''}><strong>${nodeText(item.name)}</strong><span>${nodeText(batchLabels[item.state]||item.state)}${item.state==='running'?` · ${item.progress}% · ${nodeText(item.stage||'')}`:''}${item.resultStatus==='WORKPACK_INCOMPLETE'||item.resultStatus==='NEEDS_OCR'?' · niekompletne materiały':''}${item.error?` · ${nodeText(item.error)}`:''}</span></li>`).join('')}</ol>`;
+  panel.innerHTML=`<p class="batch-summary"><strong>${finished}/${items.length} zakończonych</strong>${batch.scanned?'':' · Skanowanie katalogu…'}</p><ol class="batch-list">${items.map(batchRow).join('')}</ol>`;
   const attention=report.attention||{};
   referenceControls(attention);
   document.querySelector('#batch-skip').hidden=!['BATCH_PAUSED','INTERRUPTED'].includes(job.status)||batch.current==null;
