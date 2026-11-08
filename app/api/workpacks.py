@@ -3,7 +3,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import FileResponse
 
-from app.models.job import CreateTaskRequest, PrepareWorkpackRequest, RebuildWorkpackRequest, WorkpackTaskType
+from app.models.job import ContinueBatchRequest, CreateTaskRequest, PrepareWorkpackRequest, RebuildWorkpackRequest, WorkpackTaskType
 from app.services.media_analysis import UserInputError, rank_references
 from app.services.ocr_client import worker_available
 from app.services.workpack import sha256_file
@@ -36,23 +36,29 @@ async def ocr_health(request: Request) -> dict:
 
 @router.post("", status_code=status.HTTP_202_ACCEPTED)
 async def create_workpack(payload: PrepareWorkpackRequest, request: Request) -> dict:
-    job = await request.app.state.jobs.create_workpack(payload.media_path, payload.task_type)
-    return {"jobId": job["id"], "displayTitle": job["display_title"], "status": job["status"], "jobType": "PREPARE_WORKPACK", "taskType": payload.task_type}
+    try:
+        job = await request.app.state.jobs.create_workpack(payload.media_path, payload.task_type)
+    except UserInputError as exc:
+        raise HTTPException(422, detail={"message": str(exc)}) from exc
+    return {"jobId": job["id"], "displayTitle": job["display_title"], "status": job["status"], "jobType": job['job_type'], "taskType": payload.task_type}
 
 
 @tasks_router.post("", status_code=status.HTTP_202_ACCEPTED)
 async def create_task(payload: CreateTaskRequest, request: Request) -> dict:
     task_type = WorkpackTaskType(payload.mode.value)
-    job = await request.app.state.jobs.create_workpack(payload.media_path, task_type)
-    return {"jobId": job["id"], "displayTitle": job["display_title"], "status": job["status"], "jobType": "PREPARE_WORKPACK", "mode": payload.mode}
+    try:
+        job = await request.app.state.jobs.create_workpack(payload.media_path, task_type)
+    except UserInputError as exc:
+        raise HTTPException(422, detail={"message": str(exc)}) from exc
+    return {"jobId": job["id"], "displayTitle": job["display_title"], "status": job["status"], "jobType": job['job_type'], "mode": payload.mode}
 
 
 @router.get("/{job_id}")
 async def report(job_id: str, request: Request) -> dict:
     job = request.app.state.jobs.get(job_id)
-    if not job or job.get("job_type") != "PREPARE_WORKPACK": raise missing()
+    if not job or job.get("job_type") not in {"PREPARE_WORKPACK", "DIRECTORY_WORKPACK"}: raise missing()
     report_data = job.get("report")
-    if report_data and "referenceRanking" not in report_data:
+    if report_data and not report_data.get('batch') and "referenceRanking" not in report_data:
         report_data = {**report_data, "referenceRanking": rank_references(
             report_data.get("media", {}).get("embeddedSubtitles", []), report_data.get("externalSubtitles", [])),
             "selectedReference": report_data.get("selectedEnglish")}
@@ -64,6 +70,15 @@ async def report(job_id: str, request: Request) -> dict:
 @tasks_router.get("/{job_id}")
 async def task_report(job_id: str, request: Request) -> dict:
     return await report(job_id, request)
+
+
+@tasks_router.post('/{job_id}/batch', status_code=status.HTTP_202_ACCEPTED)
+async def continue_batch(job_id: str, payload: ContinueBatchRequest, request: Request) -> dict:
+    try:
+        after = await request.app.state.jobs.batches.continue_batch(job_id, payload.action, payload.reference_source_id)
+    except UserInputError as exc:
+        raise HTTPException(422, detail={'message': str(exc)}) from exc
+    return {'jobId': job_id, 'afterSequence': after, 'status': 'QUEUED'}
 
 
 @router.post("/{job_id}/reference", status_code=status.HTTP_202_ACCEPTED)
@@ -80,7 +95,7 @@ async def rebuild(job_id: str, payload: RebuildWorkpackRequest, request: Request
 async def download(job_id: str, request: Request) -> FileResponse:
     job = request.app.state.jobs.get(job_id)
     workpack = ((job or {}).get("report") or {}).get("workpack") if job else None
-    if not job or job.get("job_type") != "PREPARE_WORKPACK" or not workpack: raise missing()
+    if not job or job.get("job_type") not in {"PREPARE_WORKPACK", "DIRECTORY_WORKPACK"} or not workpack: raise missing()
     if workpack.get("artifactExpired"):
         raise HTTPException(status_code=410, detail={"code": "ARTIFACT_EXPIRED",
                                                      "message": "Artefakt wygasł; raport pozostaje dostępny"})

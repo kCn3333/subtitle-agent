@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     workpack_max_polish_candidates: int = 10
     workpack_max_archive_bytes: int = 104857600
     workpack_max_files: int = 100
+    directory_max_items: int = Field(default=500, ge=1, le=10000)
+    directory_max_archive_bytes: int = Field(default=1073741824, ge=4096)
+    directory_max_files: int = Field(default=10000, ge=3)
     workpack_retention_hours: int = 72
     workpack_cleanup_interval_hours: int = 6
     ffprobe_timeout_seconds: float = 30

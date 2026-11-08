@@ -1,0 +1,53 @@
+const batchLabels={pending:'Oczekuje',running:'Przetwarzanie',attention:'Wymaga wyboru referencji',ready:'Gotowe',failed:'Błąd',skipped:'Pominięto'};
+function renderDirectoryBatch(job){
+  const report=job.report,batch=report.batch,items=batch.items||[],finished=items.filter(item=>['ready','failed','skipped'].includes(item.state)).length;
+  activeDirectoryJob=job;activeJobId=job.jobId;activeMediaTitle=job.displayTitle;
+  setDownload(job,report.workpack);
+  const panel=document.querySelector('#batch-progress');panel.hidden=false;
+  panel.innerHTML=`<p><strong>${finished}/${items.length} zakończonych</strong>${batch.scanned?'':' · Skanowanie katalogu…'}</p><ol class="batch-list">${items.map(item=>`<li${item.state==='running'?' aria-current="step"':''}><strong>${nodeText(item.name)}</strong><span>${nodeText(batchLabels[item.state]||item.state)}${item.state==='running'?` · ${item.progress}% · ${nodeText(item.stage||'')}`:''}${item.resultStatus==='WORKPACK_INCOMPLETE'||item.resultStatus==='NEEDS_OCR'?' · niekompletne materiały':''}${item.error?` · ${nodeText(item.error)}`:''}</span></li>`).join('')}</ol>`;
+  const attention=report.attention||{};
+  referenceControls(attention);
+  document.querySelector('#batch-skip').hidden=!['BATCH_PAUSED','INTERRUPTED'].includes(job.status)||batch.current==null;
+  document.querySelector('#batch-resume').hidden=!['INTERRUPTED','FAILED'].includes(job.status);
+  document.querySelector('#batch-retry').hidden=!['WORKPACK_INCOMPLETE','FAILED'].includes(job.status)||!items.some(item=>item.state==='failed');
+  activityEl.textContent=job.status==='BATCH_PAUSED'?'Kolejka wstrzymana — wybierz referencję lub pomiń bieżący plik.':
+    batch.current!=null?`${items[batch.current]?.name} · ${items[batch.current]?.stage||'Oczekiwanie'}`:
+    `${finished}/${items.length} zakończonych`;
+  if(job.status==='BATCH_PAUSED'&&!attention.referenceRanking?.length){
+    currentStatus.hidden=false;activityEl.textContent='Brak referencji. Pomiń bieżący plik, aby kontynuować.';
+  }
+  results.hidden=false;
+  function valueText(value){return value&&typeof value==='object'?JSON.stringify(value):String(value??'—')}
+  const summary=report.summary||{},labels={container:'Kontener',width:'Szerokość',height:'Wysokość',video_codec:'Kodek wideo',fps:'FPS',referenceCodec:'Kodek referencji',referenceLanguage:'Język referencji',referenceType:'Typ referencji',referenceForced:'Flaga forced referencji'};
+  content.innerHTML=`<p>Katalog: ${nodeText(job.displayTitle)} · pliki: ${items.length} · pominięte dodatki: ${batch.ignoredFiles||0}</p>`+
+    (report.workpack?`<p>ZIP: ${fileSize(report.workpack.sizeBytes)} · SHA-256: ${nodeText(report.workpack.sha256)}</p>`:'')+
+    `<dl>${Object.entries(summary.common||{}).map(([key,value])=>`<dt>${nodeText(labels[key]||key)}</dt><dd>${nodeText(valueText(value))}</dd>`).join('')}</dl>`+
+    Object.entries(summary.differences||{}).map(([key,groups])=>`<details><summary>${nodeText(labels[key]||key)} — różnice (${groups.length} wariantów)</summary><ul>${groups.map(group=>`<li>${nodeText(valueText(group.value))}: ${nodeText(group.items.join(', '))}</li>`).join('')}</ul></details>`).join('')+
+    `<div class="warning-box">${(report.warnings||[]).map(warning=>`<p>${nodeText(warning)}</p>`).join('')}${(summary.warnings||[]).map(item=>`<details><summary>${nodeText(item.message)} (${item.items.length})</summary><p>${nodeText(item.items.join(', '))}</p></details>`).join('')}</div>`;
+  if(job.errorMessage)activityEl.textContent=job.errorMessage;
+  if(typeof hideAiHandoff==='function')hideAiHandoff();
+}
+async function continueDirectoryBatch(action){
+  if(!activeDirectoryJob)return;
+  const jobId=activeDirectoryJob.jobId;
+  const controls=['#rebuild','#batch-skip','#batch-resume','#batch-retry'].map(selector=>document.querySelector(selector));
+  controls.forEach(button=>button.disabled=true);
+  try{
+    const response=await fetch(`/api/tasks/${jobId}/batch`,{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({action,referenceSourceId:action==='reference'?referenceSelect.value:null})});
+    const body=await response.json();
+    if(!response.ok)throw new Error(body.detail?.message||'Nie udało się wznowić katalogu');
+    await load(jobId);connect(jobId,body.afterSequence);
+  }catch(error){line('ERROR','BATCH',error.message)}
+  finally{controls.forEach(button=>button.disabled=false)}
+}
+document.querySelector('#batch-skip').addEventListener('click',()=>continueDirectoryBatch('skip'));
+document.querySelector('#batch-resume').addEventListener('click',()=>continueDirectoryBatch('resume'));
+document.querySelector('#batch-retry').addEventListener('click',()=>continueDirectoryBatch('retry'));
+let batchPollBusy=false;
+setInterval(async()=>{
+  const job=activeDirectoryJob;
+  if(batchPollBusy||!job||job.jobId!==activeJobId||['WORKPACK_READY','WORKPACK_INCOMPLETE','INSPECTION_READY','BATCH_PAUSED','FAILED','INTERRUPTED'].includes(job.status))return;
+  batchPollBusy=true;
+  try{await load(job.jobId)}catch{if(activeDirectoryJob?.jobId===job.jobId)activityEl.textContent='Nie udało się odczytać stanu katalogu. Ponawiam…';}finally{batchPollBusy=false}
+},2000);

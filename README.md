@@ -4,6 +4,8 @@ Subtitle Agent to aplikacja webowa do analizy napisów, przygotowania materiału
 
 Aplikacja tworzy pakiety ZIP z napisami i metadanymi oraz pliki wynikowe SRT. Biblioteka mediów jest montowana wyłącznie do odczytu.
 
+Można też podać katalog: aplikacja kolejkuje zawarte w nim filmy/odcinki, wstrzymuje partię przy wymaganym wyborze referencji i przygotowuje jeden wspólny workpack. [Opis przetwarzania katalogów](docs/directory-batch.md).
+
 ## Funkcje
 
 | Tryb | Wymagane dane | Wynik |

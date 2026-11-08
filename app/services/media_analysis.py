@@ -29,7 +29,7 @@ class UserInputError(ValueError):
     pass
 
 
-def validate_media_path(value: str, roots: list[Path]) -> Path:
+def validate_media_path(value: str, roots: list[Path], allow_directory: bool = False) -> Path:
     if not value or "\x00" in value:
         raise UserInputError("Ścieżka nie może być pusta ani zawierać znaku NUL")
     candidate = Path(value)
@@ -47,6 +47,8 @@ def validate_media_path(value: str, roots: list[Path]) -> Path:
             continue
     if not any(resolved.is_relative_to(root) for root in allowed):
         raise UserInputError("Ścieżka po rozwiązaniu dowiązań znajduje się poza dozwolonymi katalogami")
+    if allow_directory and resolved.is_dir():
+        return resolved
     if not resolved.is_file():
         raise UserInputError("Ścieżka musi wskazywać istniejący zwykły plik")
     if resolved.suffix.lower() not in SUPPORTED_MEDIA:
@@ -194,16 +196,21 @@ def match_media_identity(media: MediaIdentity, candidate: MediaIdentity) -> Medi
     return MediaMatch(accepted=True, automatic=True, confidence=.85, reasons=reasons)
 
 
-def _flags(name: str) -> dict:
+def _flags(name: str, suffix_only: bool = False) -> dict:
     lowered = name.casefold()
     tokens = set(re.split(r"[. _\-\[\]()]+", lowered))
     language_tags = "|".join(re.escape(alias) for aliases in ALIASES.values() for alias in aliases)
     suffix = re.search(rf"[._ -]({language_tags})(?:[._ -]+(?:sdh|cc|forced))*$", Path(lowered).stem)
     suffix_hint = next((aliases[0] for aliases in ALIASES.values() if suffix and suffix[1] in aliases), None)
+    parts = Path(lowered).stem.split('.')
+    fields = {field.strip() for field in (parts if suffix_only else parts[1:])}
+    field_hint = next((aliases[0] for aliases in ALIASES.values() if fields.intersection(aliases)), None)
     return {
-        "languageHint": suffix_hint or ("pl" if tokens & {"pl", "pol", "polish"}
+        "languageHint": suffix_hint or field_hint or ("pl" if tokens & {"pl", "pol", "polish"}
                                        else "en" if tokens & {"en", "eng", "english"} else None),
-        "forced": "forced" in tokens, "sdh": "sdh" in tokens, "cc": "cc" in tokens,
+        "forced": bool(tokens & {"forced", "foreign"}), "sdh": "sdh" in tokens, "cc": "cc" in tokens,
+        "default": "default" in tokens,
+        "hearingImpaired": bool(tokens & {"sdh", "cc"}) or bool(field_hint and "hi" in fields),
         "commentary": "commentary" in tokens or "director" in tokens, "aiSync": "ai-sync" in lowered,
     }
 
@@ -218,6 +225,8 @@ def discover_external_subtitles_with_rejections(
     media_identity = known_media_identity or parse_media_identity(
         media_path.name, [parent.name for parent in list(media_path.parents)[:3]]
     )
+    siblings = [entry for entry in media_path.parent.iterdir()
+                if entry.is_file() and not entry.is_symlink() and entry.suffix.lower() in SUPPORTED_MEDIA]
     for entry in media_path.parent.iterdir():
         if not entry.is_file() or entry.suffix.lower() not in SUPPORTED_EXTERNAL:
             continue
@@ -229,16 +238,39 @@ def discover_external_subtitles_with_rejections(
             continue
         candidate_identity = parse_media_identity(entry.name)
         match = match_media_identity(media_identity, candidate_identity)
+        # Jellyfin sidecars start with the complete video stem, followed by dot-separated
+        # language/flags/title fields. Prefer the longest exact stem before episode fallback.
+        exact = [video for video in siblings if entry.stem.casefold().startswith(video.stem.casefold() + ".")
+                 or entry.stem.casefold() == video.stem.casefold()]
+        if exact:
+            longest = max(len(video.stem) for video in exact)
+            owners = [video for video in exact if len(video.stem) == longest]
+        else:
+            owners = [video for video in siblings if match_media_identity(
+                parse_media_identity(video.name), candidate_identity).accepted]
+        if owners and not any(video == media_path for video in owners):
+            ignored += 1
+            continue
+        if exact and len(owners) == 1:
+            match = MediaMatch(accepted=True, automatic=True,
+                               confidence=match.confidence if match.accepted and match.automatic else 1,
+                               reasons=(match.reasons if match.accepted else []) +
+                                       ["pełna nazwa bazowa pliku wideo (Jellyfin)"])
         if not match.accepted:
             # Explicitly different episodes/movies are not candidates for this
             # medium. Keep only an aggregate count to avoid huge season reports.
             ignored += 1
             continue
+        if len(owners) > 1:
+            match = MediaMatch(accepted=True, automatic=False, confidence=.4,
+                               reasons=["kilka wersji wideo pasuje do identyfikatora; brak jednoznacznej nazwy bazowej"])
         identity_match = {"status": "MATCH" if match.accepted else "NO_MATCH", "confidence": match.confidence,
                           "automatic": match.automatic, "reasons": match.reasons}
+        flag_name = (entry.stem[len(owners[0].stem):].lstrip('.') + entry.suffix
+                     if exact and len(owners) == 1 else entry.name)
         item = {"path": str(resolved_entry), "name": entry.name, "format": entry.suffix.lower().lstrip("."),
                 "mediaIdentity": candidate_identity.model_dump(mode="json"),
-                "identityMatch": identity_match, **_flags(entry.name)}
+                "identityMatch": identity_match, **_flags(flag_name, suffix_only=bool(exact and len(owners) == 1))}
         if entry.suffix.lower() == ".srt":
             try:
                 item["analysis"] = parse_srt(resolved_entry).to_dict()
