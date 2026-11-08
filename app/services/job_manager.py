@@ -13,6 +13,7 @@ from typing import AsyncIterator
 
 from app.core.config import Settings
 from app.services.operation_queue import QueueBusy, JobBusy
+from app.services.directory_batch import DirectoryBatch
 from app.models.job import AlignmentMode, JobEvent, JobStatus, WorkpackTaskType
 from app.models.media import MediaIdentity
 from app.services.media_analysis import (
@@ -48,6 +49,7 @@ TERMINAL = {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.INTERRUPTED, JobSta
             JobStatus.PUBLISH_PERMISSION_DENIED, JobStatus.PUBLISH_UNSUPPORTED_FILESYSTEM, JobStatus.PUBLISH_FAILED}
 TERMINAL.update({JobStatus.WORKPACK_READY, JobStatus.WORKPACK_INCOMPLETE})
 TERMINAL.add(JobStatus.INSPECTION_READY)
+TERMINAL.add(JobStatus.BATCH_PAUSED)
 LEGACY_EVENT_STAGES = {
     "INSPECTING": JobStatus.VALIDATING_PATH,
     "CHECKING_TOOLS": JobStatus.PROBING_MEDIA,
@@ -98,6 +100,7 @@ class JobManager:
         self._init_db()
         self.archive = ArchiveStore(db_path, settings.data_root)
         self.artifact_users: set[str] = set()
+        self.batches = DirectoryBatch(self)
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.db_path, timeout=30)
@@ -114,7 +117,7 @@ class JobManager:
                     progress INTEGER NOT NULL CHECK(progress BETWEEN 0 AND 100),
                     created_at TEXT NOT NULL, started_at TEXT, finished_at TEXT, error_message TEXT,
                     resolved_media_path TEXT, report_json TEXT, job_type TEXT NOT NULL DEFAULT 'ANALYZE_MEDIA',
-                    task_type TEXT
+                    task_type TEXT, batch_parent_id TEXT
                 );
                 CREATE TABLE IF NOT EXISTS events (
                     job_id TEXT NOT NULL, sequence INTEGER NOT NULL, timestamp TEXT NOT NULL,
@@ -140,6 +143,8 @@ class JobManager:
                 db.execute("ALTER TABLE jobs ADD COLUMN job_type TEXT NOT NULL DEFAULT 'ANALYZE_MEDIA'")
             if "task_type" not in columns:
                 db.execute("ALTER TABLE jobs ADD COLUMN task_type TEXT")
+            if "batch_parent_id" not in columns:
+                db.execute("ALTER TABLE jobs ADD COLUMN batch_parent_id TEXT")
             for legacy, current in LEGACY_EVENT_STAGES.items():
                 db.execute("UPDATE events SET stage=? WHERE stage=?", (current, legacy))
             stamp = now().isoformat()
@@ -179,16 +184,21 @@ class JobManager:
         """Retain thirty distinct media paths, including all versions of each title."""
         with self._lock:
             jobs = self.list_jobs(limit=None)
-            keys = list(dict.fromkeys(title_key(job) for job in jobs))[:ARCHIVE_LIMIT]
+            keys = list(dict.fromkeys(title_key(job) for job in jobs if not job.get('batch_parent_id')))[:ARCHIVE_LIMIT]
             retained = set(keys)
             # Running work and AI requests must finish before their files can be removed.
             retained.update(title_key(job) for job in jobs
                             if job['status'] not in TERMINAL or job['id'] in self.artifact_users)
+            retained.update(title_key(job) for job in jobs if job['job_type'] == 'DIRECTORY_WORKPACK'
+                            and job['status'] in {JobStatus.BATCH_PAUSED, JobStatus.INTERRUPTED})
+            parent_ids = {job['id'] for job in jobs if title_key(job) in retained and not job.get('batch_parent_id')}
+            retained.update(title_key(job) for job in jobs if job.get('batch_parent_id') in parent_ids)
             removed = 0
             jobs_root = self.settings.data_root / 'work' / 'jobs'
             for job in jobs:
                 if title_key(job) in retained:
-                    self.archive.capture(job)
+                    if not job.get('batch_parent_id'):
+                        self.archive.capture(job)
                     continue
                 directory = jobs_root / job['id']
                 if directory.exists() or directory.is_symlink():
@@ -212,6 +222,8 @@ class JobManager:
             job = self.get(job_id)
             if not job or job['status'] not in TERMINAL or job_id in self.reserved_jobs:
                 raise JobBusy('Zadanie jest już w kolejce lub jest przetwarzane.')
+            if job.get('batch_parent_id'):
+                raise JobBusy('To plik wewnętrzny zadania katalogowego; użyj jego wspólnego workpacka.')
             self.reserved_jobs[job_id] = purpose
             self.artifact_users.add(job_id)
 
@@ -223,7 +235,7 @@ class JobManager:
 
     def pending_duplicate(self, media_path, task_type=None):
         with self._lock, self._connect() as db:
-            terminal = tuple(str(value) for value in TERMINAL)
+            terminal = tuple(str(value) for value in TERMINAL if value != JobStatus.BATCH_PAUSED)
             row = db.execute(f"SELECT id FROM jobs WHERE media_path=? AND COALESCE(task_type,'')=? AND status NOT IN ({','.join('?' for _ in terminal)}) ORDER BY created_at DESC LIMIT 1",
                              (media_path, task_type or '', *terminal)).fetchone()
         return self.get(row['id']) if row else None
@@ -250,9 +262,13 @@ class JobManager:
         return self.get(job_id)
 
     async def create_workpack(self, media_path: str, task_type: WorkpackTaskType) -> dict:
+        if Path(media_path).is_dir():
+            media_path = str(validate_media_path(media_path, self.settings.media_roots, allow_directory=True))
         duplicate = self.pending_duplicate(media_path, task_type.value)
         if duplicate:
             return duplicate
+        if Path(media_path).is_dir():
+            return await self.batches.create(media_path, task_type)
         self.require_queue_space()
         job_id = str(uuid.uuid4()); stamp = now().isoformat()
         with self._lock, self._connect() as db:
@@ -273,6 +289,8 @@ class JobManager:
         job = self.get(job_id)
         if not job or job.get('job_type') != 'PREPARE_WORKPACK' or not job.get('report'):
             raise UserInputError('Nie znaleziono danych workpacka')
+        if job.get('batch_parent_id'):
+            raise UserInputError('Referencję odcinka wybierz w zadaniu katalogowym')
         self.reserve_job(job_id, purpose)
         try:
             detected = rank_references(job['report']['media'].get('embeddedSubtitles', []), job['report'].get('externalSubtitles', []))
@@ -291,6 +309,7 @@ class JobManager:
         condition = self._conditions.setdefault(job_id, asyncio.Condition())
         async with condition:
             condition.notify_all()
+
         return after
 
     def get(self, job_id: str) -> dict | None:
@@ -329,7 +348,7 @@ class JobManager:
 
     async def _emit(self, job_id: str, level: str, stage: JobStatus, message: str, progress: int) -> None:
         stamp = now().isoformat()
-        started = stamp if stage == JobStatus.VALIDATING_PATH else None
+        started = stamp if stage in {JobStatus.VALIDATING_PATH, JobStatus.SCANNING_DIRECTORY, JobStatus.BATCH_PROCESSING} else None
         finished = stamp if stage in TERMINAL else None
         with self._lock, self._connect() as db:
             self._insert_event(db, job_id, level, stage, message, progress)
@@ -338,13 +357,18 @@ class JobManager:
         condition = self._conditions.setdefault(job_id, asyncio.Condition())
         async with condition:
             condition.notify_all()
+        child = self.get(job_id)
+        if child and child.get('batch_parent_id'):
+            await self.batches.forward(child, level, stage, message, progress)
 
     def _save_report(self, job_id: str, report: dict, resolved_path: str) -> None:
         with self._lock:
             with self._connect() as db:
                 db.execute("UPDATE jobs SET report_json=?, resolved_media_path=? WHERE id=?",
                            (json.dumps(report, ensure_ascii=False), resolved_path, job_id))
-            self.archive.capture(self.get(job_id))
+            job = self.get(job_id)
+            if not job.get('batch_parent_id'):
+                self.archive.capture(job)
 
     def _audit_publication(self, job_id: str, mode: str, result: str, quality: str | None,
                            automatic: bool, details: dict | None = None, error: str | None = None) -> None:
@@ -661,6 +685,19 @@ class JobManager:
                          english_ranking[1].get("sourceType") == "embedded" and
                          selected.get("language") == english_ranking[1].get("language") and
                          selected.get("score", 0) - english_ranking[1].get("score", 0) < margin)
+        if job.get('batch_parent_id') and requirements.name != 'INSPECT' and (ambiguous or external_confirmation or not selected):
+            pending = {'jobType': 'PREPARE_WORKPACK', 'pipeline': requirements.name,
+                       'media': media, 'mediaInspection': media_summary(media),
+                       'externalSubtitles': external, 'referenceRanking': english_ranking,
+                       'selectedReference': selected, 'externalReferenceConfirmationRequired': external_confirmation,
+                       'rejectedSubtitleCandidates': rejected_external,
+                       'ignoredUnrelatedSubtitleFiles': ignored_external,
+                       'batchReferencePending': True, 'warnings': [],
+                       'workpack': {'referenceAmbiguous': True}}
+            self._save_report(job_id, pending, str(media_path))
+            await self._emit(job_id, 'WARNING', JobStatus.REVIEW_REQUIRED,
+                             'Wybór referencji wymaga decyzji; przetwarzanie katalogu wstrzymane', 35)
+            return
         alternatives = []
         if ambiguous and self.settings.workpack_include_reference_alternatives:
             alternatives = [item for item in english_ranking if item is not selected and item.get("sourceType") == "embedded"][
@@ -968,7 +1005,8 @@ class JobManager:
         omitted_files: list[str] = []
         if requirements.name != "INSPECT":
             with self._lock:
-                self.archive.capture(self.get(job_id))
+                if not job.get('batch_parent_id'):
+                    self.archive.capture(self.get(job_id))
             await asyncio.to_thread(remove_previous_archives, self.settings.data_root / "work" / "jobs", job_dir)
             await self._emit(job_id, "INFO", JobStatus.BUILDING_WORKPACK, "Pakowanie ZIP i obliczanie SHA-256", 90)
             archive, version, archive_hash, omitted_files = await asyncio.to_thread(
@@ -1041,6 +1079,9 @@ class JobManager:
             job_id, requested_reference, previous_report = await self._queue.get()
             try:
                 job = self.get(job_id)
+                if job.get('job_type') == 'DIRECTORY_WORKPACK':
+                    await self.batches.run(job_id)
+                    continue
                 if job.get("job_type") == "PREPARE_WORKPACK":
                     task_type = WorkpackTaskType(job.get("task_type") or WorkpackTaskType.SYNC_AND_LANGUAGE_REVIEW)
                     await workpack_service(task_type).prepare(self, job_id, previous_report, requested_reference)

@@ -14,6 +14,9 @@ API_MODEL_CONFIG = ConfigDict(populate_by_name=True, alias_generator=to_camel)
 
 class JobStatus(StrEnum):
     QUEUED = "QUEUED"
+    SCANNING_DIRECTORY = "SCANNING_DIRECTORY"
+    BATCH_PROCESSING = "BATCH_PROCESSING"
+    BATCH_PAUSED = "BATCH_PAUSED"
     VALIDATING_PATH = "VALIDATING_PATH"
     PROBING_MEDIA = "PROBING_MEDIA"
     DISCOVERING_SUBTITLES = "DISCOVERING_SUBTITLES"
@@ -113,6 +116,12 @@ class PrepareWorkpackRequest(BaseModel):
 class RebuildWorkpackRequest(BaseModel):
     model_config = API_MODEL_CONFIG
     reference_source_id: str = Field(min_length=1)
+
+
+class ContinueBatchRequest(BaseModel):
+    model_config = API_MODEL_CONFIG
+    action: str = Field(pattern="^(resume|skip|reference|retry)$")
+    reference_source_id: str | None = None
 
 
 class PublishMode(StrEnum):

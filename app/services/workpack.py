@@ -362,7 +362,7 @@ def request_text(task: WorkpackTaskType, manifest: dict) -> str:
 
 
 def build_zip(job_dir: Path, media_stem: str, maximum_bytes: int, maximum_files: int,
-              include_paths: set[str] | None = None) -> tuple[Path, int, str, list[str]]:
+              include_paths: set[str] | None = None, require_complete: bool = False) -> tuple[Path, int, str, list[str]]:
     version = 1
     while (job_dir / f"{safe_filename(media_stem)}.subtitle-workpack-v{version:03d}.zip").exists():
         version += 1
@@ -393,6 +393,8 @@ def build_zip(job_dir: Path, media_stem: str, maximum_bytes: int, maximum_files:
         else:
             omitted.append(path.relative_to(job_dir).as_posix())
     files = sorted(selected_files, key=lambda path: path.relative_to(job_dir).as_posix())
+    if require_complete and omitted:
+        raise ValueError("Limity archiwum katalogowego przekroczone; nie opublikowano niekompletnego ZIP-a")
     if omitted and (job_dir / "manifest.json") in files:
         manifest = json.loads((job_dir / "manifest.json").read_text(encoding="utf-8"))
         manifest["omitted_files"] = sorted(set(omitted))
@@ -417,9 +419,9 @@ def build_zip(job_dir: Path, media_stem: str, maximum_bytes: int, maximum_files:
             info = zipfile.ZipInfo(name, (2020, 1, 1, 0, 0, 0)); info.compress_type = zipfile.ZIP_DEFLATED
             info.external_attr = 0o100644 << 16
             bundle.writestr(info, path.read_bytes())
-            if archive.stat().st_size > maximum_bytes and not any(
+            if archive.stat().st_size > maximum_bytes and (require_complete or not any(
                     "reference/selected/" in item.relative_to(job_dir).as_posix() and item.stat().st_size > maximum_bytes
-                    for item in files):
+                    for item in files)):
                 raise ValueError("WORKPACK_MAX_ARCHIVE_BYTES exceeded")
     try:
         if (job_dir / "manifest.json") in files:

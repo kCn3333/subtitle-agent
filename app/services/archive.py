@@ -132,6 +132,7 @@ class ArchiveStore:
                 path.unlink()
 
     def list_titles(self, jobs: list[dict]):
+        jobs = [job for job in jobs if not job.get('batch_parent_id')]
         titles = {}
         for job in sorted(jobs, key=lambda j: j['created_at'], reverse=True):
             key = title_key(job)

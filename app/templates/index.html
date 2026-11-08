@@ -2,12 +2,12 @@
 <html lang="pl">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>{{ app_name }}</title><link rel="stylesheet" href="/static/styles.css?v=ai-console-2">
+  <title>{{ app_name }}</title><link rel="stylesheet" href="/static/styles.css?v=directory-1">
 <link rel="stylesheet" href="/static/fontawesome/css/fontawesome.min.css"><link rel="stylesheet" href="/static/fontawesome/css/solid.min.css">{% include "auth-head.html" %}</head>
 <body data-app-mode="{{ app_mode }}"><main>
   {% include 'header.html' %}
   <section class="card"><form id="job-form">
-    <label for="media-path">Pełna ścieżka do filmu lub odcinka</label>
+    <label for="media-path">Pełna ścieżka do filmu, odcinka lub katalogu</label>
     <div class="row"><input id="media-path" required placeholder="/media/shows/Example/Season 1/example.mkv">
       <span class="select-wrap"><select id="task-type" aria-label="Tryb zadania">
           <option value="INSPECT">Sprawdź napisy</option>
@@ -19,6 +19,7 @@
     <div class="status-content">
       <div class="status-head"><div><span id="job-status-title">Status zadania</span><strong id="status">BRAK ZADANIA</strong></div><strong id="progress">0%</strong></div>
       <div class="progress-track" role="progressbar" aria-label="Postęp zadania" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="progress-bar"></span></div>
+      <div id="batch-progress" hidden aria-label="Lista plików w katalogu"></div>
       <div id="current-status" class="current"><span>Aktualnie</span><strong id="current-activity">Oczekiwanie</strong></div>
       <div id="reference-choice" class="action-panel reference-panel" hidden>
         <div class="action-content"><p id="reference-summary" hidden></p><p id="reference-question" hidden>Brak wbudowanej referencji. Czy użyć wybranych zewnętrznych napisów jako wzorca?</p><label id="reference-field">Wybierz wykrytą referencję<span class="select-wrap"><select id="reference-source"></select></span></label></div>
@@ -26,6 +27,9 @@
     </div>
     <div class="status-actions"><a id="download" class="button download-button" aria-disabled="true"><i class="fa-solid fa-file-zipper" aria-hidden="true"></i><span id="download-label">Pobierz pakiet ZIP</span></a>
       <div id="reference-actions" hidden><button id="rebuild" type="button"><i class="fa-solid fa-rotate" aria-hidden="true"></i> Zbuduj ponownie</button></div>
+      <button id="batch-skip" type="button" hidden>Pomiń bieżący plik</button>
+      <button id="batch-resume" type="button" hidden>Wznów katalog</button>
+      <button id="batch-retry" type="button" hidden>Ponów błędne pliki</button>
     </div>
   </section>
   <section id="ai-sync-panel" class="card action-panel" hidden>
@@ -45,4 +49,4 @@
     <p class="safe-note">Film i biblioteka mediów pozostają tylko do odczytu. Paczka powstaje wyłącznie w /data.</p></section>
   {% if app_mode == "ADVANCED" %}<section class="card"><h2>Tryb ADVANCED</h2><p>Historyczne endpointy analizy, semantyki i publikacji są aktywne. Podstawowy ekran nadal tworzy workpack.</p></section>{% endif %}
   <footer>kCn &amp; Codex 2026</footer>
-</main><script src="/static/header.js?v=console-health-1"></script><script src="/static/media-title.js?v=console-health-1"></script><script src="/static/app.js?v=ai-console-2"></script><script src="/static/ai-metrics.js?v=ai-summary-1"></script><script src="/static/ai-sync.js?v=queues-1"></script><script src="/static/console-tools.js?v=gui-compact-2"></script></body></html>
+</main><script src="/static/header.js?v=console-health-1"></script><script src="/static/media-title.js?v=console-health-1"></script><script src="/static/app.js?v=directory-1"></script><script src="/static/directory-batch.js?v=directory-1"></script><script src="/static/ai-metrics.js?v=ai-summary-1"></script><script src="/static/ai-sync.js?v=queues-1"></script><script src="/static/console-tools.js?v=gui-compact-2"></script></body></html>

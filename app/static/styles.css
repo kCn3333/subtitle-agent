@@ -186,3 +186,8 @@ button:focus-visible, a:focus-visible, .console:focus-visible { outline: 3px sol
 .login-form .remember-login input { display: inline-block; width: 18px; height: 18px; flex: 0 0 18px; margin: 0; padding: 0; accent-color: var(--blue); }
 .login-form button { width: 100%; }
 #login-status { margin: 0; color: var(--yellow); }
+
+.batch-list { max-height: 260px; margin: 0 0 16px; padding-left: 24px; overflow: auto; }
+.batch-list li { padding: 5px 0; }
+.batch-list li span { margin: 0; font-size: 12px; }
+.batch-list li[aria-current="step"] { color: var(--green); }
