@@ -8,6 +8,7 @@
   --blue: #74c7ec;
   --green: #3ddc84;
   --yellow: #e3b341;
+  --orange: #f59a45;
   --red: #ff7b72;
   --gray: #8b949e;
 }
@@ -166,9 +167,16 @@ button:focus-visible, a:focus-visible, .console:focus-visible { outline: 3px sol
 
 .ai-console-activity { display: flex; align-items: center; gap: 10px; }
 .ai-spinner { width: 14px; height: 14px; flex: 0 0 14px; border: 2px solid var(--line); border-top-color: var(--blue); border-radius: 50%; animation: ai-spin 0.8s linear infinite; }
+.console .ai-console-activity,
+.console .ai-event:not(.ERROR):not(.WARNING),
+#ai-console .INFO, #ai-console .SUCCESS, #ai-console .SUMMARY { color: var(--orange); }
+.console .ai-console-activity .ai-spinner { border-top-color: var(--orange); }
+.console .ai-event.operation-summary:not(.ERROR):not(.WARNING),
+#ai-console .SUMMARY { border-color: #704622; border-left-color: var(--orange); background: #2b2016; }
 @keyframes ai-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .ai-spinner { animation: none; } }
 
+#ai-sync-button { background: var(--orange); color: var(--bg); }
 #ai-sync-button:disabled { background: #28323e; color: #8491a1; opacity: 1; filter: none; }
 
 .login-page { max-width: 460px; padding-top: 8vh; }
