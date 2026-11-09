@@ -4,14 +4,14 @@ const {runInNewContext}=require('node:vm');
 const {test}=require('node:test');
 function setup(job){
   const elements=new Map(),requests=[],connections=[];
-  function element(){return {hidden:false,disabled:false,options:[],handlers:{},setAttribute(name,value){this[name]=value},
+  function element(){return {querySelector(){return null},hidden:false,disabled:false,options:[],handlers:{},setAttribute(name,value){this[name]=value},
     removeAttribute(name){delete this[name]},addEventListener(name,handler){this.handlers[name]=handler},
     replaceChildren(){this.options=[]},append(...items){this.options.push(...items)},
     get outerHTML(){return String(this.textContent??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')}}}
   const get=selector=>{if(!elements.has(selector))elements.set(selector,element());return elements.get(selector)};
   const context={document:{querySelector:get,createElement:element},job,requests,connections,
     fetch:async(url,options)=>{requests.push([url,JSON.parse(options.body)]);return {ok:true,json:async()=>({afterSequence:42})}},
-    setInterval(callback){context.poll=callback},load:async()=>{},connect:(...args)=>connections.push(args),line(){},
+    requestAnimationFrame(callback){callback()},setInterval(callback){context.poll=callback},load:async()=>{},connect:(...args)=>connections.push(args),line(){},
     hideAiHandoff(){get('#ai-sync-panel').hidden=true;get('#ai-sync-button').hidden=true}};
   runInNewContext(readFileSync('app/static/media-title.js','utf8'),context);
   runInNewContext(readFileSync('app/static/app.js','utf8').split('async function load(')[0],context);
@@ -116,4 +116,43 @@ test('inspection report summarizes subtitle findings and exposes per-file issues
   assert.match(html,/S01E01.pl.srt/);
   assert.match(html,/Brak wskazanej referencji/);
   assert.match(html,/Nie potwierdza zgodności dialogów ani poprawnej synchronizacji/);
+});
+
+function scrollViewport(get,previous,offset,state='running'){
+  const viewport={scrollTop:0,getBoundingClientRect(){return {top:100,bottom:200}},
+    querySelector(selector){return (state==='running'&&selector.includes('aria-current'))||(state==='attention'&&selector.includes('attention'))?row:null}};
+  const row={getBoundingClientRect(){return {top:100+offset-viewport.scrollTop,bottom:130+offset-viewport.scrollTop}}};
+  let reads=0;
+  get('#batch-progress').querySelector=()=>++reads===1?{scrollTop:previous}:viewport;
+  return viewport;
+}
+test('preparation scrolls an offscreen episode into the list viewport',()=>{
+  const current=job(),{get,context}=setup(current);
+  const viewport=scrollViewport(get,120,350);
+  context.renderDirectoryBatch(current);
+  assert.equal(viewport.scrollTop,280);
+});
+test('AI keeps its active episode visible when restarting from earlier episodes',()=>{
+  const current=job('WORKPACK_READY');
+  current.report.batch.items.forEach(item=>item.state='ready');
+  current.report.batch.items[0].jobId='first';
+  const {get,context}=setup(current),viewport=scrollViewport(get,300,20);
+  context.renderDirectoryAiProgress({job_id:'batch',status:'running',phase:'AI',items:[{job_id:'first',status:'running'}]});
+  assert.equal(viewport.scrollTop,20);
+});
+test('visible active episodes and completed lists retain their scroll position across refreshes',()=>{
+  const current=job(),{get,context}=setup(current);
+  const visible=scrollViewport(get,100,120);
+  context.renderDirectoryBatch(current);
+  assert.equal(visible.scrollTop,100);
+  const completed=scrollViewport(get,280,0,'completed');
+  const done={...current,status:'WORKPACK_READY',report:{...current.report,batch:{...current.report.batch,items:current.report.batch.items.map(item=>({...item,state:'ready'}))}}};
+  context.renderDirectoryBatch(done);
+  assert.equal(completed.scrollTop,280);
+});
+test('a reference confirmation also scrolls to the episode awaiting attention',()=>{
+  const current=job('BATCH_PAUSED'),{get,context}=setup(current);
+  const viewport=scrollViewport(get,0,400,'attention');
+  context.renderDirectoryBatch(current);
+  assert.equal(viewport.scrollTop,330);
 });

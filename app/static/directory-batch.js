@@ -58,12 +58,29 @@ function batchRow(item){
   const attribute=value=>nodeText(value).replaceAll('"','&quot;');
   return `<li data-state="${state}"${item.ai?' data-ai="true"':''}${state==='running'?' aria-current="step"':''}><strong class="batch-name" title="${attribute(item.name)}">${nodeText(item.name)}</strong><span class="batch-state is-${incomplete?'incomplete':state}" role="img" aria-label="${attribute(detail)}" title="${attribute(detail)}"><i class="fa-solid fa-${incomplete?'triangle-exclamation':icons[state]}" aria-hidden="true"></i>${state==='running'?` ${item.progress==null?'AI':nodeText(item.progress)+'%'}`:''}</span></li>`;
 }
+let renderedBatchJob=null;
+function renderBatchList(panel,html){
+  const previous=renderedBatchJob===activeJobId?panel.querySelector('.batch-list')?.scrollTop||0:0;
+  renderedBatchJob=activeJobId;
+  panel.innerHTML=html;
+  requestAnimationFrame(()=>{
+    if(panel.hidden)return;
+    const list=panel.querySelector('.batch-list');
+    if(!list)return;
+    list.scrollTop=previous;
+    const current=list.querySelector('[aria-current="step"]')||list.querySelector('[data-state="attention"]');
+    if(!current)return;
+    const viewport=list.getBoundingClientRect(),row=current.getBoundingClientRect();
+    if(row.top<viewport.top)list.scrollTop+=row.top-viewport.top;
+    else if(row.bottom>viewport.bottom)list.scrollTop+=row.bottom-viewport.bottom;
+  });
+}
 function renderDirectoryBatch(job){
   const report=job.report,batch=report.batch,items=batch.items||[],finished=items.filter(item=>['ready','failed','skipped'].includes(item.state)).length;
   activeDirectoryJob=job;activeJobId=job.jobId;activeMediaTitle=job.displayTitle;
   setDownload(job,report.workpack);
   const panel=document.querySelector('#batch-progress');panel.hidden=false;
-  panel.innerHTML=`<p class="batch-summary"><strong>${finished}/${items.length} zakończonych</strong>${batch.scanned?'':' · Skanowanie katalogu…'}</p><ol class="batch-list">${items.map(batchRow).join('')}</ol>`;
+  renderBatchList(panel,`<p class="batch-summary"><strong>${finished}/${items.length} zakończonych</strong>${batch.scanned?'':' · Skanowanie katalogu…'}</p><ol class="batch-list">${items.map(batchRow).join('')}</ol>`);
   const attention=report.attention||{};
   referenceControls(attention);
   document.querySelector('#batch-skip').hidden=!['BATCH_PAUSED','INTERRUPTED'].includes(job.status)||batch.current==null;
@@ -121,6 +138,6 @@ function renderDirectoryAiProgress(state){
     return {...item,state:status,ai:true,progress:null,stage:state.phase,error:row.error||'',resultStatus:undefined};
   });
   const finished=rows.filter(row=>['completed','failed'].includes(row.status)).length;
-  document.querySelector('#batch-progress').innerHTML=`<p class="batch-summary"><strong>AI: ${finished}/${rows.length} zakończonych</strong></p><ol class="batch-list">${items.map(batchRow).join('')}</ol>`;
+  renderBatchList(document.querySelector('#batch-progress'),`<p class="batch-summary"><strong>AI: ${finished}/${rows.length} zakończonych</strong></p><ol class="batch-list">${items.map(batchRow).join('')}</ol>`);
   activityEl.textContent=state.phase||'AI';
 }
