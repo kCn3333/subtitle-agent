@@ -197,7 +197,7 @@ async function renderDirectoryHandoff(job){
       label.append(name,select);container.append(label);
     }
     const ready=aiDirectoryInputs.filter(item=>item.available).length;
-    aiMessage.textContent=ready?`Do AI: ${ready} plików. Każdy będzie przetwarzany osobnym żądaniem. Pominięte lub niegotowe: ${body.items.length-ready}.`:'Brak gotowych materiałów do AI. Sprawdź raport plików.';
+    aiMessage.textContent=ready?`${ready} plików. Każdy będzie przetwarzany osobnym żądaniem. Pominięte lub niegotowe: ${body.items.length-ready}.`:'Brak gotowych materiałów do AI. Sprawdź raport plików.';
     await refreshAiStatus(job.jobId,true);
   }catch(error){if(version===aiDirectoryVersion&&job.jobId===activeJobId){aiMessage.textContent=error.message;aiChecking=false;aiControls()}}
 }

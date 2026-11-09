@@ -2,7 +2,7 @@
 <html lang="pl">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>{{ app_name }}</title><link rel="stylesheet" href="/static/styles.css?v=logout-icon-1">
+  <title>{{ app_name }}</title><link rel="stylesheet" href="/static/styles.css?v=ai-panel-1">
 <link rel="stylesheet" href="/static/fontawesome/css/fontawesome.min.css"><link rel="stylesheet" href="/static/fontawesome/css/solid.min.css">{% include "auth-head.html" %}</head>
 <body data-app-mode="{{ app_mode }}"><main>
   {% include 'header.html' %}
@@ -33,7 +33,8 @@
     </div>
   </section>
   <section id="ai-sync-panel" class="card action-panel" hidden>
-    <div class="action-content"><h2><i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i> <span id="ai-panel-title">Synchronizacja przez AI</span>{% if ai_model %} ({{ ai_model }}){% endif %}</h2>
+    <div class="action-content"><h2><i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i> <span id="ai-panel-title">Synchronizacja przez AI</span></h2>
+      {% if ai_model %}<p class="ai-model">{{ ai_model }}</p>{% endif %}
       <label id="ai-polish-field">Istniejące napisy PL <span class="select-wrap"><select id="ai-polish"></select></span></label>
       <div id="ai-directory-inputs" hidden></div>
       <p id="ai-sync-status" role="status"></p>
@@ -50,4 +51,4 @@
     <p class="safe-note">Film i biblioteka mediów pozostają tylko do odczytu. Paczka powstaje wyłącznie w /data.</p></section>
   {% if app_mode == "ADVANCED" %}<section class="card"><h2>Tryb ADVANCED</h2><p>Historyczne endpointy analizy, semantyki i publikacji są aktywne. Podstawowy ekran nadal tworzy workpack.</p></section>{% endif %}
   <footer>kCn &amp; Codex 2026</footer>
-</main><script src="/static/header.js?v=console-health-1"></script><script src="/static/media-title.js?v=console-health-1"></script><script src="/static/app.js?v=diagnostic-pl-1"></script><script src="/static/directory-batch.js?v=batch-scroll-1"></script><script src="/static/ai-metrics.js?v=batch-ai-1"></script><script src="/static/ai-sync.js?v=diagnostic-pl-1"></script><script src="/static/console-tools.js?v=gui-compact-2"></script></body></html>
+</main><script src="/static/header.js?v=console-health-1"></script><script src="/static/media-title.js?v=console-health-1"></script><script src="/static/app.js?v=diagnostic-pl-1"></script><script src="/static/directory-batch.js?v=batch-scroll-1"></script><script src="/static/ai-metrics.js?v=batch-ai-1"></script><script src="/static/ai-sync.js?v=ai-panel-1"></script><script src="/static/console-tools.js?v=gui-compact-2"></script></body></html>

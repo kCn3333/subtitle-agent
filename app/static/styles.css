@@ -116,6 +116,7 @@ button .fa-solid, .button .fa-solid { margin-right: 5px; }
 
 .action-panel { display: grid; grid-template-columns: minmax(0, 1fr) 205px; align-items: center; gap: 28px; }
 .action-content { min-width: 0; }
+.ai-model { margin: -8px 0 16px; color: var(--muted); font-size: 14px; overflow-wrap: anywhere; }
 .action-content label { margin-bottom: 0; }
 .action-content .select-wrap { margin-top: 6px; }
 .panel-actions { display: flex; flex-direction: column; gap: 9px; }
