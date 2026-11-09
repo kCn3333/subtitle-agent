@@ -95,7 +95,7 @@ def test_sync_is_ready_with_english_and_matched_polish(client, media_file, monke
                 "polishCandidates", "rejectedPolishCandidates", "synchronizationHypotheses"} <= inspection.keys()
 
 
-def test_same_episode_title_from_different_production_is_blocked(client, settings, monkeypatch):
+def test_raw_overrun_is_reviewable_and_does_not_establish_different_production(client, settings, monkeypatch):
     media = settings.media_roots[0] / "Scenes From A Marriage - S01E01 - Innocence and Panic Bluray-1080p.mkv"
     media.write_bytes(b"media")
     subtitle = media.with_name("Scenes From A Marriage - S01E01 - Innocence and Panic Bluray-1080p.pol.srt")
@@ -133,14 +133,14 @@ def test_same_episode_title_from_different_production_is_blocked(client, setting
     response = client.post("/api/workpacks", json={"mediaPath": str(media), "taskType": "PREPARE_SYNC"})
     body = wait_workpack(client, response.json()["jobId"])
     assert body["status"] == "NEEDS_OCR"
-    assert body["report"]["polishCandidates"] == []
-    suspect = body["report"]["incompatiblePolishCandidates"][0]
-    assert suspect["timingCompatibility"] == "INCOMPATIBLE"
-    assert suspect["reasonCode"] == "LIKELY_DIFFERENT_EDITION"
+    assert len(body["report"]["polishCandidates"]) == 1
+    suspect = body["report"]["polishCandidateInspection"][0]
+    assert suspect["timingCompatibility"] == "UNKNOWN"
+    assert suspect["reasonCode"] == "RAW_TIMING_OVERRUN"
+    assert suspect["contentCompatibility"] == "UNDETERMINED"
     assert suspect["eligibleByDefault"] is False
     assert body["report"]["incompleteReasons"] == [
-        "Znaleziony polski plik prawdopodobnie pochodzi z innej wersji lub produkcji. "
-        "Automatyczna synchronizacja została zablokowana."
+        "Polskie materiały dołączono do ręcznej weryfikacji; automatyczne użycie zablokowane."
     ]
     assert body["report"]["synchronizationHypotheses"] == []
     with zipfile.ZipFile(body["report"]["workpack"]["path"]) as archive:
@@ -148,11 +148,13 @@ def test_same_episode_title_from_different_production_is_blocked(client, setting
         assert manifest["reference"]["cueCount"] == 760
         assert manifest["reference"]["firstMs"] == 46_463
         assert manifest["reference"]["lastMs"] == 3_057_388
-        assert manifest["polish_candidates"] == []
+        assert manifest["polish_candidates"][0]["exportPurpose"] == "MANUAL_REVIEW"
+        assert manifest["polish_candidates"][0]["eligibleByDefault"] is False
         assert manifest["expected_output"]["preserve_timing"] is False
         assert manifest["expected_output"]["preserve_text"] is True
         assert "AI-Synced" in manifest["expected_output"]["filename"]
-        assert not any(name.startswith("polish/") for name in archive.namelist())
+        assert archive.read(manifest["polish_candidates"][0]["archiveName"]) == subtitle.read_bytes()
+        assert manifest["polish_candidates"][0]["archiveName"] in archive.read("REQUEST.md").decode()
 
 
 def test_workpack_process_error_is_visible_in_failed_event(client, media_file, monkeypatch):
@@ -847,3 +849,59 @@ def test_ass_artifact_inventory_matches_zip_and_forced_reference_is_retained(cli
             comparison = json.loads(bundle.read('analysis/timing-comparison.json'))
             assert comparison['readySynchronization'] is False
             assert 'wymagają weryfikacji' in comparison['notice']
+
+
+def test_sync_exports_review_candidate_unchanged_with_no_content_model(client, settings, monkeypatch, tmp_path):
+    from app.services.workpack import validate_zip
+    _configure_probe(monkeypatch); _configure_extraction(monkeypatch)
+    media = settings.media_roots[0] / 'Example.Show.S04E01.mkv'
+    media.write_bytes(b'media')
+    raw = b'1\n00:04:21,612 --> 00:04:24,272\nNie znam tej drogi.\n'
+    source = media.with_suffix('.pl.srt'); source.write_bytes(raw)
+    for episode in (2, 3):
+        media.with_name(f'Example.Show.S04E{episode:02d}.pl.srt').write_bytes(raw)
+    before = {path: path.read_bytes() for path in media.parent.iterdir()}
+    created = client.post('/api/tasks', json={'mediaPath': str(media), 'mode': 'PREPARE_SYNC'})
+    body = wait_workpack(client, created.json()['jobId'])
+    assert body['status'] == 'WORKPACK_INCOMPLETE', body
+    report = body['report']
+    assert report['synchronizationHypotheses'][0]['readySynchronization'] is False
+    assert report['synchronizationHypotheses'][0]['proposedCorrectedRange'] is None
+    candidate = report['polishCandidates'][0]
+    assert candidate['eligibleByDefault'] is False
+    assert candidate['exportPurpose'] == 'MANUAL_REVIEW'
+    assert candidate['contentCompatibility'] == 'UNDETERMINED'
+    assert candidate['timingCompatibility'] == 'UNKNOWN'
+    assert candidate['reasonCode'] == 'RAW_TIMING_OVERRUN'
+    assert candidate['identityMatch']['status'] == 'MATCH'
+    assert candidate['cueCount'] == 1
+    assert report['incompatiblePolishCandidates'] == []
+    result = client.get(f"/api/tasks/{body['jobId']}/download")
+    assert result.status_code == 200
+    archive_path = tmp_path / 'review.zip'; archive_path.write_bytes(result.content)
+    validate_zip(archive_path)
+    with zipfile.ZipFile(archive_path) as archive:
+        manifest = json.loads(archive.read('manifest.json'))
+        assert len(manifest['polish_candidates']) == 1
+        entry = manifest['polish_candidates'][0]
+        assert archive.read(entry['archiveName']) == raw
+        assert entry['sha256'] == hashlib.sha256(raw).hexdigest()
+        request = archive.read('REQUEST.md').decode()
+        assert entry['archiveName'] in request and 'automatyczne użycie zablokowane' in request
+        assert str(settings.media_roots[0]) not in archive.read('manifest.json').decode()
+    assert before == {path: path.read_bytes() for path in media.parent.iterdir()}
+
+
+def test_diagnostic_candidate_cannot_be_submitted_to_ai_in_mixed_ready_pack(client, media_file, monkeypatch):
+    _configure_probe(monkeypatch); _configure_extraction(monkeypatch)
+    media_file.with_suffix('.pl.srt').write_text('1\n00:00:01,000 --> 00:00:02,000\nDobry tekst.\n')
+    media_file.with_suffix('.pl.review.srt').write_text('1\n00:04:21,000 --> 00:04:24,000\nDo przeglądu.\n')
+    created = client.post('/api/tasks', json={'mediaPath': str(media_file), 'mode': 'PREPARE_SYNC'})
+    body = wait_workpack(client, created.json()['jobId'])
+    assert body['status'] == 'WORKPACK_READY'
+    candidate = next(item for item in body['report']['polishCandidates'] if not item['eligibleByDefault'])
+    result = client.post(f"/api/tasks/{body['jobId']}/ai-sync", json={
+        'reference_source_id': 'embedded:2', 'polish_file': candidate['archiveName']})
+    assert result.status_code == 422
+    assert 'Wybierz przygotowany polski plik SRT' in result.json()['detail']['message']
+    assert not (Path(body['report']['workpack']['path']).parent / 'ai-sync.pl.srt').exists()

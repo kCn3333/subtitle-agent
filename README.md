@@ -76,6 +76,7 @@ Archiwum obejmuje ostatnie 30 tytułów lub katalogów. Pliki partii nie zajmuj�
 
 ## Walidacja wyników
 
+- **Diagnostyka PL:** niepewne materiały mogą trafić do ZIP-a z blokadą automatycznego użycia. [Kontrakt kandydatów](docs/polish-candidates.md).
 - **ZIP:** obecność i SHA-256 deklarowanych artefaktów, również zagnieżdżonych w manifestach. Przekroczenie limitów końcowej paczki katalogowej blokuje jej publikację.
 - **SRT z AI:** kompletność identyfikatorów segmentów, format, zakresy czasowe i zachowanie wymaganych danych wejściowych.
 - **Diagnostyka czasowa:** hipotezy wymagają potwierdzenia dialogami. Numery i liczba segmentów nie dowodzą zgodności; słaby model jest oznaczany jako „brak wiarygodnej hipotezy”.

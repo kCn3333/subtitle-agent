@@ -336,3 +336,12 @@ test('loading AI controls after a restored directory still exposes the handoff',
   assert.equal(get('#ai-sync-button').hidden,false);
   assert.equal(get('#ai-sync-button').disabled,false);
 });
+
+test('diagnostic Polish materials are excluded from AI choices in a mixed workpack',async()=>{
+  const {get,context}=await setup();
+  context.renderAiSync({jobId:'job',status:'WORKPACK_READY',report:{pipeline:'PREPARE_SYNC',
+    selectedEnglish:{streamIndex:4},polishCandidates:[
+      {archiveName:'polish/review.srt',originalName:'review.srt',eligibleByDefault:false},
+      {archiveName:'polish/ready.srt',originalName:'ready.srt',eligibleByDefault:true}]}});
+  assert.deepEqual(Array.from(get('#ai-polish').options,item=>item.value),['polish/ready.srt']);
+});

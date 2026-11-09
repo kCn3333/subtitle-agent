@@ -115,7 +115,7 @@ function renderAiSync(job){
   aiJobId=job.jobId;aiPreparedReference=(report.selectedReference||report.selectedEnglish)?sourceId(report.selectedReference||report.selectedEnglish):null;
   polishSelect.replaceChildren();
   for(const item of report.polishCandidates||[]){
-    if(!item.archiveName?.toLowerCase().endsWith('.srt'))continue;
+    if(!item.archiveName?.toLowerCase().endsWith('.srt')||item.eligibleByDefault===false)continue;
     const option=document.createElement('option');option.value=item.archiveName;option.textContent=item.originalName||item.archiveName;polishSelect.append(option);
   }
   aiChecking=true;aiControls();

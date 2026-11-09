@@ -183,7 +183,7 @@ def validate_inputs(job_id, payload, request, pipeline, batch_parent=None):
         raise error('Wybrano inną referencję; najpierw zbuduj ponownie workpack z tą referencją')
     english_entries = [entry for entry in reference.get('files', [])
                        if Path(entry.get('name', '')).name in {'selected.eng.srt','selected.eng.ocr.srt','selected.ref.srt','selected.ref.ocr.srt'}]
-    polish_entries = [entry for entry in data.get('polish_candidates', []) if entry.get('archiveName') == payload.polish_file]
+    polish_entries = [entry for entry in data.get('polish_candidates', []) if entry.get('archiveName') == payload.polish_file and entry.get('eligibleByDefault', True)]
     if len(english_entries) != 1:
         raise error('Brak przygotowanej tekstowej referencji; zakończ ekstrakcję/OCR')
     if pipeline != 'PREPARE_TRANSLATION' and len(polish_entries) != 1:

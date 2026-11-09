@@ -8,6 +8,7 @@ from pathlib import Path, PurePosixPath
 from app.models.job import WorkpackTaskType
 from app.services.alignment import (Cue, ExactTextAnchorProvider, fit_models, parse_cues,
                                     possible_non_dialogue, public_model, quality, select_model)
+from app.services.srt_parser import parse_srt
 from app.services.process_runner import ProcessTimeoutError, run_process
 from app.services.subtitle_extraction import SubtitleExtractionResult, extract_subtitle
 
@@ -112,6 +113,8 @@ def inspection_report(media: dict, english_ranking: list[dict], polish_ranking: 
             "identityMatch": item.get("identityMatch"),
             "timingCompatibility": item.get("timingCompatibility"),
             "eligibleByDefault": item.get("eligibleByDefault", False),
+            "contentCompatibility": item.get("contentCompatibility", "UNDETERMINED"),
+            "completeness": item.get("completeness", "UNVERIFIED"),
             "compatibilityWarnings": item.get("compatibilityWarnings", []),
             "reasonCode": item.get("reasonCode"), "segments": analysis.get("segment_count"),
             "firstTimestamp": analysis.get("first_time"), "lastTimestamp": analysis.get("last_time"),
@@ -163,17 +166,32 @@ async def graphic_timeline(media_path: Path, stream_index: int, timeout: float) 
     return {"event_count": len(events), "events": events}
 
 
-def copy_polish_candidates(ranking: list[dict], target: Path, maximum: int) -> tuple[list[dict], list[dict]]:
+def copy_polish_candidates(ranking: list[dict], target: Path, maximum: int,
+                           include_review: bool = False, maximum_bytes: int = 104857600) -> tuple[list[dict], list[dict]]:
     target.mkdir(parents=True, exist_ok=True)
-    candidates = [item for item in ranking if item.get("sourceType") == "external" and item.get("eligibleByDefault", True) and
+    candidates = [item for item in ranking if item.get("sourceType") == "external" and
+                  (item.get("eligibleByDefault", True) or include_review) and
+                  item.get("identityMatch", {}).get("status", "MATCH") != "NO_MATCH" and
                   (item.get("languageHint") == "pl" or
                    item.get("analysis", {}).get("detected_language") == "pl")]
-    selected = candidates[:maximum]
-    included = []
-    for number, item in enumerate(selected, 1):
+    included, omitted = [], []
+    for item in candidates:
         source = Path(item["path"])
-        if source.is_symlink() or not source.is_file():
+        reason = None
+        if source.is_symlink() or any(parent.is_symlink() for parent in source.parents) or not source.is_file():
+            reason = "UNSAFE_OR_UNAVAILABLE_SOURCE"
+        elif include_review and source.stat().st_size > maximum_bytes:
+            reason = "WORKPACK_MAX_ARCHIVE_BYTES"
+        elif include_review and source.suffix.lower() == ".srt":
+            analysis = parse_srt(source).to_dict()
+            if not analysis["segment_count"] or analysis["malformed_segments"] or analysis["reversed_intervals"]:
+                reason = "INVALID_SRT"
+        if not reason and len(included) >= maximum:
+            reason = "WORKPACK_MAX_POLISH_CANDIDATES"
+        if reason:
+            omitted.append(dict(item, omissionReason=reason))
             continue
+        number = len(included) + 1
         extension = source.suffix.lower() if source.suffix.lower() in {".srt", ".ass", ".ssa", ".vtt"} else ".sub"
         archive_name = f"polish/candidate-{number:03d}.pl{extension}"
         destination = target.parent / archive_name
@@ -181,8 +199,10 @@ def copy_polish_candidates(ranking: list[dict], target: Path, maximum: int) -> t
         shutil.copyfile(source, destination)
         included.append({**item, "archiveName": archive_name, "originalName": source.name,
                          "sizeBytes": destination.stat().st_size, "sha256": sha256_file(destination),
-                         "generatedResult": bool(item.get("aiSync"))})
-    omitted = [dict(item, omissionReason="WORKPACK_MAX_POLISH_CANDIDATES") for item in candidates[maximum:]]
+                         "generatedResult": bool(item.get("aiSync")),
+                         "exportPurpose": "SYNCHRONIZATION" if item.get("eligibleByDefault", True) else "MANUAL_REVIEW",
+                         "contentCompatibility": item.get("contentCompatibility", "UNDETERMINED"),
+                         "completeness": item.get("completeness", "UNVERIFIED")})
     return included, omitted
 
 
@@ -228,6 +248,12 @@ def diagnostic_hypotheses(reference_path: Path | None, polish: list[dict], job_d
                        "AFFINE_DRIFT": "dryf liniowy", "PIECEWISE_LINEAR": "model odcinkowy",
                        "STANDARD_FPS": "standardowa konwersja FPS"}
         credible = not structural_only and grade in {"HIGH", "MEDIUM"}
+        corrected_range = None
+        if credible and cues:
+            starts = [selected["predict"](cue.start_ms) for cue in cues]
+            ends = [selected["predict"](cue.end_ms) for cue in cues]
+            corrected_range = {"firstMs": round(min(starts)), "lastMs": round(max(ends)),
+                               "withinMedia": min(starts) >= 0 and max(ends) <= duration_ms}
         results.append({
             "candidate": candidate_name, "originalName": item.get("originalName") or item.get("name"),
             "identityMatch": item.get("identityMatch"),
@@ -244,6 +270,7 @@ def diagnostic_hypotheses(reference_path: Path | None, polish: list[dict], job_d
             "structuralOnly": structural_only,
             "anchorEvidence": "EXACT_UNIQUE_TEXT", "readySynchronization": False,
             "contentAssessment": content_assessment(cues, anchors),
+            "proposedCorrectedRange": corrected_range,
             "verification": "Porównaj segmenty z początku, środka i końca",
             "models": [{**public_model(model),
                         "quality": ("LOW" if structural_only and quality(model) in {"HIGH", "MEDIUM"}
@@ -309,7 +336,10 @@ def write_json(path: Path, value: object) -> None:
 
 
 def request_text(task: WorkpackTaskType, manifest: dict) -> str:
-    polish = "\n".join(f"- {item['archiveName']} ({item['originalName']})" for item in manifest["polish_candidates"]) or "- brak"
+    polish = "\n".join(f"- {item['archiveName']} ({item['originalName']})"
+                       + (" — tylko ręczna weryfikacja; automatyczne użycie zablokowane: "
+                          + str(item.get("reasonCode") or "niejednoznaczna kwalifikacja")
+                          if item.get("eligibleByDefault") is False else "") for item in manifest["polish_candidates"]) or "- brak"
     warnings = "\n".join(f"- {item}" for item in manifest["warnings"]) or "- brak"
     if task in {WorkpackTaskType.INSPECT, WorkpackTaskType.INSPECT_SUBTITLES}:
         return (f"# Zadanie: {task.value}\n\n{REQUESTS[task]}\n\nNie generuj ani nie synchronizuj napisów. "
@@ -322,7 +352,7 @@ def request_text(task: WorkpackTaskType, manifest: dict) -> str:
                 "Brak poprawnej referencji tekstowej. Najpierw wykonaj OCR wybranej ścieżki "
                 "graficznej; nie synchronizuj na podstawie technicznych pakietów napisów. "
                 "Oryginały graficzne są dołączane tylko przy INCLUDE_GRAPHIC_REFERENCE=true.\n\n"
-                f"## Ostrzeżenia\n{warnings}\n")
+                f"## Polskie materiały\n{polish}\n\n## Ostrzeżenia\n{warnings}\n")
     if task == WorkpackTaskType.PREPARE_SYNC and reference.get("ocr"):
         return (f"# Zadanie: {task.value}\n\n{REQUESTS[task]}\n\n"
                 f"Użyj referencji `reference/selected/{prefix}.ocr.srt`. "

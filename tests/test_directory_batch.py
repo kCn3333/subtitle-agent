@@ -364,3 +364,30 @@ def test_cached_inspection_report_gains_subtitle_summary_without_rescanning(clie
     restored = client.get(f'/api/tasks/{job_id}').json()['report']['summary']['subtitleInspection']
     assert restored['total'] == restored['withPolish'] == restored['withReference'] == 2
     assert len(probes) == 2
+
+
+def test_directory_retains_diagnostic_and_eligible_polish_materials(client, settings, monkeypatch, tmp_path):
+    directory = season(settings, 2)
+    configure(monkeypatch)
+    source = next(directory.glob('*E01*.srt'))
+    source.write_text('1\n00:04:21,000 --> 00:04:24,000\nNie znam tej drogi.\n')
+    before = {path: path.read_bytes() for path in directory.iterdir()}
+    job_id = submit(client, directory)
+    body = wait_batch(client, job_id)
+    assert body['status'] == 'WORKPACK_INCOMPLETE'
+    assert all(item['state'] == 'ready' for item in body['report']['batch']['items'])
+    result = client.get(f'/api/tasks/{job_id}/download')
+    assert result.status_code == 200
+    path = tmp_path / 'review-batch.zip'; path.write_bytes(result.content)
+    validate_zip(path)
+    with zipfile.ZipFile(path) as archive:
+        manifest = json.loads(archive.read('manifest.json'))
+        entries = [item['manifest']['polish_candidates'][0] for item in manifest['items']]
+        assert [entry['exportPurpose'] for entry in entries] == ['MANUAL_REVIEW', 'SYNCHRONIZATION']
+        assert archive.read(entries[0]['archiveName']) == source.read_bytes()
+        for item in manifest['items']:
+            child = item['manifest']
+            for artifact in child['reference']['files'] + child['polish_candidates']:
+                name = artifact.get('archiveName') or artifact['name']
+                assert hashlib.sha256(archive.read(name)).hexdigest() == artifact['sha256']
+    assert before == {path: path.read_bytes() for path in directory.iterdir()}

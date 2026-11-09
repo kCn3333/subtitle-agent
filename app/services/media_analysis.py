@@ -10,6 +10,7 @@ from app.services.srt_parser import parse_srt
 from app.services.subtitle_languages import ALIASES, normalize_language
 
 SUPPORTED_MEDIA = {".mkv", ".mp4", ".m4v", ".avi", ".mov", ".ts", ".m2ts"}
+MAX_EXTERNAL_SUBTITLE_BYTES = 100 * 1024 * 1024
 SUPPORTED_EXTERNAL = {".srt", ".ass", ".ssa", ".vtt"}
 TEXT_SUBTITLES = {"subrip", "ass", "ssa", "webvtt", "mov_text"}
 GRAPHIC_SUBTITLES = {"hdmv_pgs_subtitle", "dvd_subtitle", "dvb_subtitle"}
@@ -228,7 +229,12 @@ def discover_external_subtitles_with_rejections(
     siblings = [entry for entry in media_path.parent.iterdir()
                 if entry.is_file() and not entry.is_symlink() and entry.suffix.lower() in SUPPORTED_MEDIA]
     for entry in media_path.parent.iterdir():
-        if not entry.is_file() or entry.suffix.lower() not in SUPPORTED_EXTERNAL:
+        if entry.suffix.lower() not in SUPPORTED_EXTERNAL:
+            continue
+        if entry.is_symlink():
+            rejected.append({"name": entry.name, **_flags(entry.name), "reason": "UNSAFE_SYMLINK"})
+            continue
+        if not entry.is_file():
             continue
         try:
             resolved_entry = entry.resolve(strict=True)
@@ -271,6 +277,9 @@ def discover_external_subtitles_with_rejections(
         item = {"path": str(resolved_entry), "name": entry.name, "format": entry.suffix.lower().lstrip("."),
                 "mediaIdentity": candidate_identity.model_dump(mode="json"),
                 "identityMatch": identity_match, **_flags(flag_name, suffix_only=bool(exact and len(owners) == 1))}
+        if entry.stat().st_size > MAX_EXTERNAL_SUBTITLE_BYTES:
+            rejected.append({"name": entry.name, **_flags(flag_name), "reason": "SUBTITLE_SIZE_LIMIT"})
+            continue
         if entry.suffix.lower() == ".srt":
             try:
                 item["analysis"] = parse_srt(resolved_entry).to_dict()
@@ -377,18 +386,19 @@ def rank_polish(media: dict, external: list[dict], embedded: list[dict]) -> list
                     f"Napisy kończą się {overrun:.3f} s po zakończeniu materiału"
                 )
             if overrun > max(60.0, duration * 0.03):
-                timing_compatibility = "INCOMPATIBLE"
-                reason_code = "LIKELY_DIFFERENT_EDITION"
+                timing_compatibility = "UNKNOWN"
+                reason_code = "RAW_TIMING_OVERRUN"
                 score -= 80
-                reasons.append("-80 prawdopodobnie inna wersja lub produkcja")
+                reasons.append("-80 surowy zakres czasu wymaga weryfikacji offsetu lub tempa")
         identity_automatic = item.get("identityMatch", {}).get("automatic", True)
         if item.get("sourceType") == "external" and identity_automatic is False:
             score -= 80; reasons.append("-80 niejednoznaczna tożsamość medium")
-        eligible = not item.get("aiSync", False) and identity_automatic and timing_compatibility != "INCOMPATIBLE"
+        eligible = not item.get("aiSync", False) and identity_automatic and reason_code is None and timing_compatibility != "INCOMPATIBLE"
         ranked.append({**item, "score": score, "reasons": reasons,
                        "timingCompatibility": timing_compatibility,
                        "compatibilityWarnings": compatibility_warnings,
-                       "reasonCode": reason_code, "eligibleByDefault": eligible})
+                       "reasonCode": reason_code, "eligibleByDefault": eligible,
+                       "contentCompatibility": "UNDETERMINED", "completeness": "UNVERIFIED"})
     return sorted(ranked, key=lambda item: (-item["score"], str(item.get("name") or item.get("streamIndex"))))
 
 

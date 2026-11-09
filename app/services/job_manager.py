@@ -746,11 +746,18 @@ class JobManager:
             await self._emit(job_id, "INFO", JobStatus.COLLECTING_POLISH_CANDIDATES,
                              "Kopiowanie prawidłowo dopasowanych polskich kandydatów byte-for-byte", 58)
             polish, omitted_polish = await asyncio.to_thread(copy_polish_candidates, polish_ranking, job_dir / "polish",
-                                                             self.settings.workpack_max_polish_candidates)
+                                                             self.settings.workpack_max_polish_candidates,
+                                                             task_type == WorkpackTaskType.PREPARE_SYNC,
+                                                             self.settings.workpack_max_archive_bytes)
         else:
             await self._emit(job_id, "INFO", JobStatus.COLLECTING_POLISH_CANDIDATES,
                              f"Pipeline {requirements.name}: materiały PL pozostają wyłącznie w raporcie", 58)
-        if omitted_polish: warnings.append(f"Pominięto {len(omitted_polish)} kandydatów z powodu limitu")
+        for omitted in omitted_polish:
+            warnings.append(f"Pominięto {omitted.get('name')}: {omitted.get('omissionReason')}")
+        for candidate in polish:
+            if candidate.get("eligibleByDefault") is False:
+                warnings.append(f"{candidate['originalName']}: dołączono do ręcznej weryfikacji; "
+                                "automatyczne użycie zablokowane. Sprawdź tożsamość, offset i tempo.")
         await self._emit(
             job_id, "DEBUG", JobStatus.COLLECTING_POLISH_CANDIDATES,
             f"Kandydaci PL: ocenione={len(polish_ranking)}, dołączone={len(polish)}, "
@@ -770,7 +777,7 @@ class JobManager:
                 delta = f"{hours:02d}:{minutes:02d}:{seconds:02d}.{millis:03d}"
                 warnings.append(
                     f"Polskie napisy {candidate.get('name')} kończą się {delta} po zakończeniu materiału. "
-                    "Możliwa inna wersja odcinka lub dodatkowy materiał w napisach."
+                    "Mogą wymagać przesunięcia lub korekty tempa; zgodność treści pozostaje nieustalona."
                 )
         await self._emit(job_id, "INFO", JobStatus.BUILDING_TIMELINES, "Budowanie technicznych timeline'ów", 68)
         selected_srt = next((path for path in reference_files if path.name == f"{reference_prefix(selected)}.srt"), None)
@@ -902,6 +909,11 @@ class JobManager:
         write_json(analysis / "synchronization-hypotheses.json", hypotheses)
         inspection = inspection_report(media, english_ranking, polish_ranking, rejected_external, hypotheses,
                                        ignored_external)
+        for entry in inspection["polishCandidates"] + inspection["incompatiblePolishCandidates"]:
+            exported = next((item for item in polish if item["originalName"] == entry["name"]), None)
+            if exported:
+                entry["archiveName"] = exported["archiveName"]
+                entry["exportPurpose"] = exported["exportPurpose"]
         write_json(analysis / "inspection-report.json", inspection)
         if requirements.name == "PREPARE_SYNC":
             write_json(analysis / "timing-comparison.json", {
@@ -951,14 +963,11 @@ class JobManager:
         expected_kind = ("AI-Synced" if requirements.name == "PREPARE_SYNC" else
                          "AI-Translated" if requirements.name == "PREPARE_TRANSLATION" else "AI-Reviewed")
         expected = f"{safe_filename(media_path.stem)}.{expected_kind}-v001.pl.srt"
-        incompatible_polish = [item for item in polish_ranking
-                               if item.get("sourceType") == "external"
-                               and item.get("timingCompatibility") == "INCOMPATIBLE"]
         manifest = {"schema_version": SCHEMA_VERSION, "job_id": job_id, "mode": requirements.name,
                     "task_type": task_type.value,
                     "media": media_summary(media), "reference": reference_entry,
                     "reference_alternatives": ranking_safe[1:1 + len(alternatives)],
-                    "polish_candidates": [{key: item.get(key) for key in ("archiveName", "originalName", "languageHint", "encoding", "sizeBytes", "cueCount", "firstMs", "lastMs", "coverage", "parserWarnings", "score", "sha256", "generatedResult", "identityMatch", "timingCompatibility", "eligibleByDefault", "compatibilityWarnings", "reasonCode")} for item in polish],
+                    "polish_candidates": [{key: item.get(key) for key in ("archiveName", "originalName", "languageHint", "encoding", "sizeBytes", "cueCount", "firstMs", "lastMs", "coverage", "parserWarnings", "score", "sha256", "generatedResult", "identityMatch", "timingCompatibility", "eligibleByDefault", "compatibilityWarnings", "reasonCode", "exportPurpose", "contentCompatibility", "completeness")} for item in polish],
                     "omitted_polish_candidates": [{"originalName": item.get("name"), "reason": item.get("omissionReason")} for item in omitted_polish],
                     "timing_analysis": {"hypothesisCount": len(hypotheses)},
                     "expected_output": {"filename": expected, "encoding": "UTF-8", "format": "SRT",
@@ -1030,11 +1039,10 @@ class JobManager:
             not selected or (requirements.name == "PREPARE_TRANSLATION" and not reference_files)
         ):
             blocking_requirements.append("Brak wymaganej referencji")
-        if requirements.require_polish and not polish:
+        if requirements.require_polish and not any(item.get("eligibleByDefault", True) for item in polish):
             blocking_requirements.append(
-                "Znaleziony polski plik prawdopodobnie pochodzi z innej wersji lub produkcji. "
-                "Automatyczna synchronizacja została zablokowana."
-                if incompatible_polish else "Brak prawidłowo dopasowanego kandydata polskiego"
+                "Polskie materiały dołączono do ręcznej weryfikacji; automatyczne użycie zablokowane."
+                if polish else "Brak prawidłowo dopasowanego kandydata polskiego"
             )
         report = {"reportVersion": 2, "pipeline": requirements.name,
                   "jobType": "PREPARE_WORKPACK", "taskType": task_type.value, "media": media,

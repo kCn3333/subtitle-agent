@@ -58,7 +58,7 @@ def describe_inputs(request, job_id):
         data = (child or {}).get('report') or {}
         selected = data.get('selectedReference') or data.get('selectedEnglish') or {}
         candidates = [{'archiveName': entry['archiveName'], 'originalName': entry.get('originalName') or entry['archiveName']}
-                      for entry in data.get('polishCandidates', []) if entry['archiveName'].lower().endswith('.srt')]
+                      for entry in data.get('polishCandidates', []) if entry['archiveName'].lower().endswith('.srt') and entry.get('eligibleByDefault', True)]
         reference = (f"external:{selected.get('name')}" if selected.get('sourceType') == 'external'
                      else f"embedded:{selected.get('streamIndex')}")
         available = (item['state'] == 'ready' and child and child['status'] == 'WORKPACK_READY'

@@ -478,3 +478,47 @@ def test_diagnostics_require_many_confirmed_dialogues_for_fps(tmp_path, confirme
         assert result['offsetMs'] == 900
         assert result['sufficientAnchors'] is True
         assert any(m['strategy'] == 'STANDARD_FPS' and m['dialogueVerified'] for m in result['models'])
+
+
+def test_large_offset_diagnostic_reports_corrected_range_without_changing_source(tmp_path):
+    from app.services.alignment import Cue, write_preview
+    from app.services.media_analysis import rank_polish
+    from app.services.workpack import diagnostic_hypotheses
+    from app.services.srt_parser import parse_srt
+    reference, source = tmp_path / 'ref.srt', tmp_path / 'Show.S04E01.pl.srt'
+    english, polish = [], []
+    for index in range(16):
+        start = 6000 + index * 193000
+        text = f'This is independent dialogue number {index}.'
+        for cues, offset in ((english, 0), (polish, 255000)):
+            cues.append(Cue(str(index), index + 1, start + offset, start + offset + 2000, 2000, text, text, 'test'))
+    write_preview(english, reference); write_preview(polish, source)
+    raw = source.read_bytes()
+    duration = 3058325
+    ranking = rank_polish({'durationSeconds': duration / 1000}, [{
+        'path': str(source), 'name': source.name, 'format': 'srt', 'languageHint': 'pl',
+        'identityMatch': {'status': 'MATCH', 'automatic': True}, 'analysis': parse_srt(source).to_dict()}], [])
+    assert ranking[0]['reasonCode'] == 'RAW_TIMING_OVERRUN'
+    assert ranking[0]['eligibleByDefault'] is False
+    assert ranking[0]['contentCompatibility'] == 'UNDETERMINED'
+    result = diagnostic_hypotheses(reference, ranking, tmp_path, duration)[0]
+    assert result['sufficientAnchors'] is True
+    assert result['offsetMs'] == -255000
+    assert result['proposedCorrectedRange']['withinMedia'] is True
+    assert result['readySynchronization'] is False
+    assert source.read_bytes() == raw
+
+
+def test_review_export_preserves_identity_and_source_safety_checks(tmp_path):
+    invalid = tmp_path / 'invalid.pl.srt'; invalid.write_bytes(b'not a subtitle')
+    valid = tmp_path / 'valid.pl.srt'; valid.write_bytes(srt())
+    link = tmp_path / 'link.pl.srt'; link.symlink_to(valid)
+    ranking = [{'sourceType': 'external', 'path': str(path), 'name': path.name, 'languageHint': 'pl',
+                'eligibleByDefault': False, 'identityMatch': {'status': identity}, 'format': 'srt'}
+               for path, identity in ((invalid, 'MATCH'), (link, 'MATCH'), (valid, 'NO_MATCH'))]
+    included, omitted = copy_polish_candidates(ranking, tmp_path / 'job' / 'polish', 10, True)
+    assert included == []
+    assert {item['omissionReason'] for item in omitted} == {'INVALID_SRT', 'UNSAFE_OR_UNAVAILABLE_SOURCE'}
+    ranking = [{**ranking[-1], 'identityMatch': {'status': 'MATCH'}}]
+    included, omitted = copy_polish_candidates(ranking, tmp_path / 'other' / 'polish', 10, True, 1)
+    assert included == [] and omitted[0]['omissionReason'] == 'WORKPACK_MAX_ARCHIVE_BYTES'
