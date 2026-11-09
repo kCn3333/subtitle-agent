@@ -17,8 +17,8 @@
       try{
         const response=await fetch('/api/auth/logout',{method:'POST'});
         if(response.ok||response.status===401)window.location.replace('/login');
-        else{logout.disabled=false;logout.textContent='Wyloguj — spróbuj ponownie'}
-      }catch{logout.disabled=false;logout.textContent='Wyloguj — spróbuj ponownie'}
+        else{logout.disabled=false;logout.title='Wyloguj — spróbuj ponownie';logout.setAttribute('aria-label',logout.title)}
+      }catch{logout.disabled=false;logout.title='Wyloguj — spróbuj ponownie';logout.setAttribute('aria-label',logout.title)}
     });
   });
 })();

@@ -4,6 +4,6 @@
     {% if request.url.path != '/' %}<a href="/" class="button"><i class="fa-solid fa-house" aria-hidden="true"></i> Aplikacja</a>{% endif %}
     <a href="/settings" class="button" {% if request.url.path == '/settings' %}aria-current="page"{% endif %}><i class="fa-solid fa-gear" aria-hidden="true"></i> Ustawienia AI</a>
     <a href="/archive" class="button" {% if request.url.path == '/archive' %}aria-current="page"{% endif %}><i class="fa-solid fa-box-archive" aria-hidden="true"></i> Archiwum</a>
-    <button id="logout" type="button">Wyloguj</button>
+    <button id="logout" type="button" title="Wyloguj" aria-label="Wyloguj"><i class="fa-solid fa-right-from-bracket" aria-hidden="true"></i></button>
   </nav>
 </header>

@@ -91,6 +91,8 @@ footer { padding: 22px 0 8px; color: var(--muted); font-size: 13px; text-align: 
 .app-nav { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
 .app-nav .button { background: #263244; }
 .app-nav [aria-current="page"] { background: #1c6ba5; }
+#logout { display: inline-flex; align-items: center; justify-content: center; width: 44px; background: #4b5058; color: var(--text); }
+#logout .fa-solid { margin-right: 0; }
 button .fa-solid, .button .fa-solid { margin-right: 5px; }
 
 #ai-sync-status:empty { display: none; }
