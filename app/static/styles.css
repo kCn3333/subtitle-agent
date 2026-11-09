@@ -206,7 +206,11 @@ button:focus-visible, a:focus-visible, .console:focus-visible { outline: 3px sol
 
 .batch-list li[data-ai="true"][aria-current="step"] { border-left-color: var(--orange); background: rgba(245, 154, 69, .09); }
 .batch-list li[data-ai="true"][aria-current="step"] .batch-name,
-.batch-list li[data-ai="true"] .is-running { color: var(--orange); }
+.batch-list li[data-ai="true"] .is-running,
+.batch-list li[data-ai="true"] .is-ready { color: var(--orange); }
+.ai-progress-track { margin: 10px 0; border-color: #694522; background: #21170d; }
+.ai-progress-track span { background: linear-gradient(90deg, #df7e27, var(--orange)); box-shadow: 0 0 12px rgba(245, 154, 69, .22); }
+.ai-batch-phase { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
 .ai-batch-choice { display: grid; grid-template-columns: minmax(0, 1fr) minmax(150px, 1fr); gap: 10px; align-items: center; }
 .ai-batch-choice span { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ai-batch-choice select { min-width: 0; width: 100%; }

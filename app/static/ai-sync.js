@@ -101,6 +101,7 @@ function showAiResult(result,jobId,mode=aiMode){
 }
 function renderAiSync(job){
   const report=job.report||{};
+  document.querySelector('#ai-batch-progress').hidden=true;
   if(report.batch)return renderDirectoryHandoff(job);
   aiDirectory=false;document.querySelector('#ai-directory-inputs').hidden=true;
   document.querySelector('#ai-download-label').textContent='Pobierz wynik SRT';
@@ -163,6 +164,7 @@ aiDownload.addEventListener('click',()=>line('INFO','DOWNLOAD',`Pobieranie wynik
 
 async function renderDirectoryHandoff(job){
   const report=job.report||{},version=++aiDirectoryVersion;
+  document.querySelector('#ai-batch-progress').hidden=true;
   if(aiJobId!==job.jobId)aiDirectoryChoices=new Map();
   aiDirectory=true;aiJobId=job.jobId;aiReferencePending=false;aiPreparedReference=null;
   aiPanel.hidden=!(['WORKPACK_READY','WORKPACK_INCOMPLETE'].includes(job.status)&&['PREPARE_SYNC','PREPARE_TRANSLATION'].includes(report.mode)&&report.workpack);

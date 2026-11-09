@@ -78,14 +78,20 @@ test('directory AI highlights the current item while keeping user exclusions vis
   prepared.report.batch.items.push({name:'S01E03.mkv',jobId:'third',state:'skipped'});
   prepared.report.batch.items[0].jobId='first';prepared.report.batch.items[1].jobId='second';
   const {get,context}=setup(prepared);
+  const workpackHtml=get('#batch-progress').innerHTML,workpackActivity=get('#current-activity').textContent;
   context.renderDirectoryAiProgress({job_id:'batch',batch:true,status:'running',phase:'2/2 · S01E02',
     items:[{job_id:'first',status:'completed'},{job_id:'second',status:'running'}]});
-  const html=get('#batch-progress').innerHTML;
+  const html=get('#ai-batch-progress').innerHTML;
   assert.match(html,/AI: 1\/2 zakończonych/);
   assert.match(html,/data-ai="true" aria-current="step".*S01E02/);
   assert.match(html,/fa-play.* AI/);
   assert.match(html,/data-state="skipped".*S01E03/);
-  assert.doesNotMatch(html,/0%/);
+  assert.match(html,/aria-valuenow="50"/);
+  assert.match(html,/width: 50%/);
+  assert.match(html,/ai-batch-phase.*2\/2 · S01E02/);
+  assert.equal(get('#ai-batch-progress').hidden,false);
+  assert.equal(get('#batch-progress').innerHTML,workpackHtml);
+  assert.equal(get('#current-activity').textContent,workpackActivity);
 });
 
 test('inspection report uses readable shared parameters instead of JSON and raw metadata',()=>{
@@ -118,12 +124,12 @@ test('inspection report summarizes subtitle findings and exposes per-file issues
   assert.match(html,/Nie potwierdza zgodności dialogów ani poprawnej synchronizacji/);
 });
 
-function scrollViewport(get,previous,offset,state='running'){
+function scrollViewport(get,previous,offset,state='running',selector='#batch-progress'){
   const viewport={scrollTop:0,getBoundingClientRect(){return {top:100,bottom:200}},
     querySelector(selector){return (state==='running'&&selector.includes('aria-current'))||(state==='attention'&&selector.includes('attention'))?row:null}};
   const row={getBoundingClientRect(){return {top:100+offset-viewport.scrollTop,bottom:130+offset-viewport.scrollTop}}};
   let reads=0;
-  get('#batch-progress').querySelector=()=>++reads===1?{scrollTop:previous}:viewport;
+  get(selector).querySelector=()=>++reads===1?{scrollTop:previous}:viewport;
   return viewport;
 }
 test('preparation scrolls an offscreen episode into the list viewport',()=>{
@@ -136,8 +142,11 @@ test('AI keeps its active episode visible when restarting from earlier episodes'
   const current=job('WORKPACK_READY');
   current.report.batch.items.forEach(item=>item.state='ready');
   current.report.batch.items[0].jobId='first';
-  const {get,context}=setup(current),viewport=scrollViewport(get,300,20);
-  context.renderDirectoryAiProgress({job_id:'batch',status:'running',phase:'AI',items:[{job_id:'first',status:'running'}]});
+  const {get,context}=setup(current);
+  const state={job_id:'batch',status:'running',phase:'AI',items:[{job_id:'first',status:'running'}]};
+  context.renderDirectoryAiProgress(state);
+  const viewport=scrollViewport(get,300,20,'running','#ai-batch-progress');
+  context.renderDirectoryAiProgress(state);
   assert.equal(viewport.scrollTop,20);
 });
 test('visible active episodes and completed lists retain their scroll position across refreshes',()=>{
@@ -155,4 +164,23 @@ test('a reference confirmation also scrolls to the episode awaiting attention',(
   const viewport=scrollViewport(get,0,400,'attention');
   context.renderDirectoryBatch(current);
   assert.equal(viewport.scrollTop,330);
+});
+
+test('AI progress starts from zero and counts completed and failed episodes independently of workpack progress',()=>{
+  const prepared=job('WORKPACK_READY');
+  prepared.report.batch.items[0].jobId='first';prepared.report.batch.items[1].jobId='second';
+  const {get,context}=setup(prepared);
+  get('#progress').textContent='100%';
+  const state={job_id:'batch',batch:true,status:'queued',phase:'Oczekiwanie w kolejce AI',
+    items:[{job_id:'first',status:'pending'},{job_id:'second',status:'pending'}]};
+  context.renderDirectoryAiProgress(state);
+  assert.match(get('#ai-batch-progress').innerHTML,/aria-valuenow="0"/);
+  state.status='completed';state.items[0].status='completed';state.items[1].status='failed';
+  context.renderDirectoryAiProgress(state);
+  const html=get('#ai-batch-progress').innerHTML;
+  assert.match(html,/2\/2 zakończonych · 100% · błędy: 1/);
+  assert.match(html,/aria-valuenow="100"/);
+  assert.match(html,/data-ai="true".*fa-check/);
+  assert.match(html,/is-failed/);
+  assert.equal(get('#progress').textContent,'100%');
 });

@@ -58,10 +58,10 @@ function batchRow(item){
   const attribute=value=>nodeText(value).replaceAll('"','&quot;');
   return `<li data-state="${state}"${item.ai?' data-ai="true"':''}${state==='running'?' aria-current="step"':''}><strong class="batch-name" title="${attribute(item.name)}">${nodeText(item.name)}</strong><span class="batch-state is-${incomplete?'incomplete':state}" role="img" aria-label="${attribute(detail)}" title="${attribute(detail)}"><i class="fa-solid fa-${incomplete?'triangle-exclamation':icons[state]}" aria-hidden="true"></i>${state==='running'?` ${item.progress==null?'AI':nodeText(item.progress)+'%'}`:''}</span></li>`;
 }
-let renderedBatchJob=null;
+const renderedBatchJobs=new WeakMap();
 function renderBatchList(panel,html){
-  const previous=renderedBatchJob===activeJobId?panel.querySelector('.batch-list')?.scrollTop||0:0;
-  renderedBatchJob=activeJobId;
+  const previous=renderedBatchJobs.get(panel)===activeJobId?panel.querySelector('.batch-list')?.scrollTop||0:0;
+  renderedBatchJobs.set(panel,activeJobId);
   panel.innerHTML=html;
   requestAnimationFrame(()=>{
     if(panel.hidden)return;
@@ -132,12 +132,14 @@ function renderDirectoryAiProgress(state){
   const rows=state.items||[],byId=new Map(rows.map(row=>[row.job_id,row]));
   const items=activeDirectoryJob.report.batch.items.map(item=>{
     const row=byId.get(item.jobId);
-    if(!row)return item;
+    if(!row)return {...item,state:'skipped',ai:true,error:'Poza kolejką AI',resultStatus:undefined};
     const status=row.status==='completed'?'ready':row.status==='failed'?'failed':
       row.status==='running'?(state.status==='running'?'running':'failed'):'pending';
     return {...item,state:status,ai:true,progress:null,stage:state.phase,error:row.error||'',resultStatus:undefined};
   });
   const finished=rows.filter(row=>['completed','failed'].includes(row.status)).length;
-  renderBatchList(document.querySelector('#batch-progress'),`<p class="batch-summary"><strong>AI: ${finished}/${rows.length} zakończonych</strong></p><ol class="batch-list">${items.map(batchRow).join('')}</ol>`);
-  activityEl.textContent=state.phase||'AI';
+  const progress=rows.length?Math.round(finished/rows.length*100):0;
+  const failed=rows.filter(row=>row.status==='failed').length;
+  const panel=document.querySelector('#ai-batch-progress');panel.hidden=false;
+  renderBatchList(panel,`<p class="batch-summary"><strong>AI: ${finished}/${rows.length} zakończonych · ${progress}%${failed?` · błędy: ${failed}`:''}</strong></p><div class="progress-track ai-progress-track" role="progressbar" aria-label="Postęp kolejki AI" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress}"><span style="width: ${progress}%"></span></div><p class="ai-batch-phase">${nodeText(state.phase||'AI')}</p><ol class="batch-list">${items.map(batchRow).join('')}</ol>`);
 }
