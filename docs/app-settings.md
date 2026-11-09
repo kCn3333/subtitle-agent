@@ -1,7 +1,8 @@
 # Ustawienia aplikacji bez restartu
 
-Zakładka **Ustawienia** zawiera konfigurację dostawcy AI, konsolę AI oraz panel
-**Ustawienia aplikacji** z osobnym przyciskiem zapisu. Rozmiary w GUI są podane w MiB.
+Zakładka **Ustawienia** (`/settings`) zawiera panel **Ustawienia aplikacji**.
+Konfiguracja dostawcy i konsola znajdują się w osobnej zakładce **AI** (`/ai`).
+Każdy formularz ma własny przycisk zapisu. Rozmiary w GUI są podane w MiB.
 
 | Grupa | Ustawienia Compose/env dostępne w GUI |
 |---|---|

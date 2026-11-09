@@ -21,11 +21,6 @@ function displaySettings(settings){
   document.querySelector('#api-key').value='';
   displayKeyState(settings);
 }
-async function settingsRequest(url,options={}){
-  const response=await fetch(url,options),body=await response.json();
-  if(!response.ok)throw new Error(body.detail?.message||(Array.isArray(body.detail)?body.detail.map(item=>item.msg).join('; '):'Nie udało się wykonać żądania'));
-  return body;
-}
 async function waitForAiTest(state){
   while(['queued','running'].includes(state.status)){
     settingsStatus.textContent=state.status==='queued'?`Test oczekuje w kolejce AI${state.queue_position?` · pozycja ${state.queue_position}`:''}…`:'Testowanie połączenia…';

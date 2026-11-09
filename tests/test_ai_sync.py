@@ -104,7 +104,7 @@ async def test_total_timeout():
 
 
 def test_settings_and_connection_api(client,monkeypatch):
-    settings_page=client.get('/settings')
+    settings_page=client.get('/ai')
     assert settings_page.status_code==200
     assert 'Ustawienia AI (zmieniaj tylko gdy wiesz co robisz)' in settings_page.text
     assert client.put('/api/settings/ai',json={'api_url':'http://local/v1','model':'test','api_key':'test-secret'}).json()['api_key_set']
@@ -302,7 +302,7 @@ def test_ai_console_records_test_and_redacts_api_key(client,monkeypatch):
     assert key not in response.text and 'UKRYTY KLUCZ API' in response.text
     assert all(row['operation']=='TEST' and row['job_id'] is None for row in response.json()['entries'])
     assert 'HTTP 401' in response.text
-    page=client.get('/settings').text
+    page=client.get('/ai').text
     assert 'Konsola AI' in page and 'id="ai-console"' in page
 
 

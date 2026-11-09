@@ -17,6 +17,7 @@ test('AI console renders replies as text, preserves scroll and clears history',a
       if(options?.method==='DELETE'){entries=[];return {ok:true}}
       return {entries};
     }})};
+  runInNewContext(readFileSync('app/static/settings-request.js','utf8'),context);
   runInNewContext(readFileSync('app/static/settings.js','utf8'),context);
   await new Promise(setImmediate);
   const output=get('#ai-console');
@@ -43,6 +44,7 @@ test('connection test metrics remain only in console, with highlighted summary',
       {entries:[{id:1,timestamp:'2026-10-05T00:00:00Z',operation:'TEST',level:'SUMMARY',message:'Tokeny: 42 · Koszt: 0.05 USD'}]}:
       url.endsWith('/test')?{elapsed_seconds:1,usage:{total_tokens:42,cost:0.05,cost_currency:'USD'}}:
       {api_url:'http://test/v1',model:'test',timeout_seconds:600}})};
+  runInNewContext(readFileSync('app/static/settings-request.js','utf8'),context);
   runInNewContext(readFileSync('app/static/settings.js','utf8'),context);
   await new Promise(setImmediate);
   await context.saveAiSettings(true);
@@ -60,6 +62,7 @@ test('settings preserve selected reasoning and optional output limit in save pay
       if(url.endsWith('/console'))return {entries:[]};
       return {api_url:'http://test/v1',model:'test',timeout_seconds:600,reasoning_effort:'low',max_output_tokens:131072};
     }})};
+  runInNewContext(readFileSync('app/static/settings-request.js','utf8'),context);
   runInNewContext(readFileSync('app/static/settings.js','utf8'),context);
   await new Promise(setImmediate);
   assert.equal(get('#reasoning-effort').value,'low');
@@ -90,6 +93,7 @@ test('connection test follows queued operation without holding the POST response
       if(options?.method==='PUT')return JSON.parse(options.body);
       return {api_url:'http://test/v1',model:'test',timeout_seconds:120};
     }})};
+  runInNewContext(readFileSync('app/static/settings-request.js','utf8'),context);
   runInNewContext(readFileSync('app/static/settings.js','utf8'),context);
   await new Promise(setImmediate);
   await context.saveAiSettings(true);
@@ -120,6 +124,7 @@ async function keySettings(){
       }
       return {ok:true,json:async()=>({...settings})};
     }};
+  runInNewContext(readFileSync('app/static/settings-request.js','utf8'),context);
   runInNewContext(readFileSync('app/static/settings.js','utf8'),context);
   await new Promise(setImmediate);
   return {get,context,requests};

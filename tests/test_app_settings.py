@@ -29,7 +29,17 @@ def test_runtime_settings_are_allowlisted_persistent_and_rename_settings_page(cl
     assert restarted.auth_password == original.auth_password
     page = client.get('/settings').text
     assert '<title>Ustawienia ·' in page and '> Ustawienia</a>' in page
-    assert page.index('id="app-settings-panel"') > page.index('id="ai-console"')
+    assert 'id="app-settings-panel"' in page
+    assert 'id="ai-console"' not in page and 'id="ai-settings"' not in page
+    assert '/static/settings.js?' not in page
+    ai_page = client.get('/ai')
+    assert ai_page.status_code == 200
+    assert '<title>AI ·' in ai_page.text and '> AI</a>' in ai_page.text
+    assert 'id="ai-settings"' in ai_page.text and 'id="ai-console"' in ai_page.text
+    assert 'id="app-settings-panel"' not in ai_page.text
+    assert '/static/app-settings.js?' not in ai_page.text
+    assert 'href="/ai" class="button" aria-current="page"' in ai_page.text
+    assert 'href="/settings" class="button" aria-current="page"' in page
     assert all(f'data-setting="{name}"' in page for name in data)
 
 

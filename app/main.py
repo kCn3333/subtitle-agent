@@ -87,8 +87,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def health(request: Request):
         return {"status": "ok"}
 
-    @app.get("/settings")
+    @app.get("/ai")
     async def ai_settings(request: Request):
+        return templates.TemplateResponse(request=request, name="ai.html", context={"app_name": config.app_name})
+
+    @app.get("/settings")
+    async def app_settings(request: Request):
         return templates.TemplateResponse(request=request, name="settings.html", context={"app_name": config.app_name})
 
     @app.get("/archive")

@@ -31,7 +31,7 @@ def session_csrf(browser):
 
 
 def test_pages_require_login(browser):
-    for path in ['/', '/settings', '/archive']:
+    for path in ['/', '/ai', '/settings', '/archive']:
         response = browser.get(path, follow_redirects=False)
         assert response.status_code == 303, path
         assert response.headers['location'] == '/login', path
