@@ -2,6 +2,8 @@
 
 Wdrożenie obejmuje aplikację i worker OCR z [compose.example.yml](../compose.example.yml). Zmienne środowiskowe opisuje [.env.example](../.env.example). Domyślny tryb `WORKPACK` udostępnia interfejs opisany w [README](../README.md); `ADVANCED` włącza historyczne endpointy.
 
+Ustawienia dostępne bez restartu są opisane w [konfiguracji aplikacji](app-settings.md). Wartości zapisane w GUI mają pierwszeństwo przed ich odpowiednikami w Compose/env.
+
 ## Sieć i proxy
 
 | Usługa | Port kontenera | Dostęp |

@@ -14,6 +14,8 @@ from app.api.jobs import router as jobs_router
 from app.api.archive import router as archive_router
 from app.api.ai_sync import router as ai_sync_router
 from app.services.ai_sync import ApiSettingsStore
+from app.api.app_settings import router as app_settings_router
+from app.services.app_settings import AppSettingsStore
 from app.services.ai_console import AiConsoleStore
 from app.services.ai_health import ApiHealth
 from app.api.workpacks import router as workpacks_router, tasks_router
@@ -33,6 +35,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         logging.getLogger().setLevel(config.log_level.upper())
         config.require_auth_config()
         prepare_data_root(config.data_root)
+        app.state.app_settings = AppSettingsStore(config.data_root / "subtitle-agent.db", config)
         app.state.auth = AuthStore(config.data_root / "subtitle-agent.db", config)
         tools = probe_tools()
         logger.info("Narzędzia systemowe: %s; %s; %s", tools.ffmpeg, tools.ffprobe, tools.mkvextract)
@@ -98,6 +101,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(workpacks_router)
     app.include_router(tasks_router)
     app.include_router(ai_sync_router)
+    app.include_router(app_settings_router)
     return app
 
 

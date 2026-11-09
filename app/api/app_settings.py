@@ -1,0 +1,15 @@
+from fastapi import APIRouter, Request
+
+from app.services.app_settings import AppSettings
+
+router = APIRouter(prefix='/api/settings/app', tags=['settings'])
+
+
+@router.get('')
+async def get_settings(request: Request):
+    return request.app.state.app_settings.get()
+
+
+@router.put('')
+async def save_settings(payload: AppSettings, request: Request):
+    return request.app.state.app_settings.save(payload)

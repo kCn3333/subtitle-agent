@@ -6,6 +6,7 @@ import sqlite3
 import threading
 import uuid
 from contextlib import suppress
+from contextvars import ContextVar
 from datetime import datetime
 from dataclasses import replace
 from pathlib import Path
@@ -86,7 +87,8 @@ def workpack_service(task_type: WorkpackTaskType) -> WorkpackPipelineService:
 class JobManager:
     def __init__(self, db_path: Path, settings: Settings):
         self.db_path = db_path
-        self.settings = settings
+        self._settings = settings
+        self._settings_context = ContextVar('job_settings', default=None)
         self.max_concurrent = settings.max_concurrent_jobs
         self._lock = threading.RLock()
         self._conditions: dict[str, asyncio.Condition] = {}
@@ -101,6 +103,10 @@ class JobManager:
         self.archive = ArchiveStore(db_path, settings.data_root)
         self.artifact_users: set[str] = set()
         self.batches = DirectoryBatch(self)
+
+    @property
+    def settings(self) -> Settings:
+        return self._settings_context.get() or self._settings
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.db_path, timeout=30)
@@ -1085,6 +1091,7 @@ class JobManager:
     async def _worker(self) -> None:
         while True:
             job_id, requested_reference, previous_report = await self._queue.get()
+            settings_token = self._settings_context.set(self._settings.model_copy(deep=True))
             try:
                 job = self.get(job_id)
                 if job.get('job_type') == 'DIRECTORY_WORKPACK':
@@ -1183,6 +1190,7 @@ class JobManager:
                     db.execute("UPDATE jobs SET error_message=? WHERE id=?", (safe_error, job_id))
                 await self._emit(job_id, "ERROR", JobStatus.FAILED, safe_error, 100)
             finally:
+                self._settings_context.reset(settings_token)
                 self.release_job(job_id)
                 self._queue.task_done()
                 try:

@@ -2,7 +2,7 @@
 
 ## Konfiguracja
 
-W **Ustawieniach AI** podaj adres osiągalny z kontenera aplikacji, model oraz klucz, jeśli dostawca go wymaga. `localhost` oznacza kontener aplikacji. Kliknij **Zapisz i testuj połączenie**.
+W zakładce **Ustawienia**, w panelu **Ustawienia AI**, podaj adres osiągalny z kontenera aplikacji, model oraz klucz, jeśli dostawca go wymaga. `localhost` oznacza kontener aplikacji. Kliknij **Zapisz i testuj połączenie**.
 
 | Pole | Działanie |
 |---|---|

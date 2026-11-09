@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="pl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Ustawienia AI · {{ app_name }}</title><link rel="stylesheet" href="/static/styles.css?v=ai-progress-1"><link rel="stylesheet" href="/static/fontawesome/css/fontawesome.min.css"><link rel="stylesheet" href="/static/fontawesome/css/solid.min.css">{% include "auth-head.html" %}</head>
+<title>Ustawienia · {{ app_name }}</title><link rel="stylesheet" href="/static/styles.css?v=app-settings-1"><link rel="stylesheet" href="/static/fontawesome/css/fontawesome.min.css"><link rel="stylesheet" href="/static/fontawesome/css/solid.min.css">{% include "auth-head.html" %}</head>
 <body><main>{% include 'header.html' %}
 <section class="card"><h2><i class="fa-solid fa-gear" aria-hidden="true"></i> Ustawienia AI (zmieniaj tylko gdy wiesz co robisz)</h2><form id="ai-settings">
 <div class="settings-fields">
@@ -28,4 +28,30 @@
   <div class="console-head">
   <button id="clear-ai-console" type="button"><i class="fa-solid fa-trash-can" aria-hidden="true"></i> Wyczyść</button>
   <button type="button" data-copy-console="ai-console"><i class="fa-solid fa-copy" aria-hidden="true"></i> Kopiuj</button></div>
-</section><footer>kCn &amp; Codex 2026</footer></main><script src="/static/header.js?v=console-health-1"></script><script src="/static/ai-metrics.js?v=batch-ai-1"></script><script src="/static/settings.js?v=api-key-controls-1"></script><script src="/static/console-tools.js?v=gui-compact-2"></script></body></html>
+</section>
+<section class="card" id="app-settings-panel"><h2><i class="fa-solid fa-sliders" aria-hidden="true"></i> Ustawienia aplikacji</h2>
+<p class="settings-note">Zmiany obowiązują bez restartu przy uruchamianiu kolejnych zadań. Trwające zadanie, także cały katalog, zachowuje dotychczasową konfigurację.</p>
+<form id="app-settings">
+<fieldset class="settings-group"><legend>Przetwarzanie</legend><div class="settings-fields">
+<label>Limit czasu analizy pliku (s)<input id="setting-ffprobe_timeout_seconds" data-setting="ffprobe_timeout_seconds" type="number" required min="0.1" max="86400" step="any"></label>
+<label>Limit czasu ekstrakcji napisów (s)<input id="setting-ffmpeg_timeout_seconds" data-setting="ffmpeg_timeout_seconds" type="number" required min="0.1" max="86400" step="any"></label>
+<label>Próg niejednoznaczności referencji (pkt)<input id="setting-workpack_reference_score_margin" data-setting="workpack_reference_score_margin" type="number" required min="1" max="10000" step="1"></label>
+<label>Maksymalna liczba kandydatów PL<input id="setting-workpack_max_polish_candidates" data-setting="workpack_max_polish_candidates" type="number" required min="1" max="1000" step="1"></label>
+</div></fieldset>
+<fieldset class="settings-group"><legend>Paczki filmów i odcinków</legend><div class="settings-fields">
+<label>Maksymalny rozmiar paczki (MiB)<input id="setting-workpack_max_archive_bytes" data-setting="workpack_max_archive_bytes" type="number" required min="0.00390625" max="102400" step="any" data-bytes-per-unit="1048576"></label>
+<label>Maksymalna liczba plików w paczce<input id="setting-workpack_max_files" data-setting="workpack_max_files" type="number" required min="3" max="100000" step="1"></label>
+</div></fieldset>
+<fieldset class="settings-group"><legend>Katalogi i sezony</legend><div class="settings-fields">
+<label>Maksymalna liczba filmów lub odcinków<input id="setting-directory_max_items" data-setting="directory_max_items" type="number" required min="1" max="10000" step="1"></label>
+<label>Maksymalny rozmiar paczki katalogu (MiB)<input id="setting-directory_max_archive_bytes" data-setting="directory_max_archive_bytes" type="number" required min="0.00390625" max="102400" step="any" data-bytes-per-unit="1048576"></label>
+<label>Maksymalna liczba plików w paczce katalogu<input id="setting-directory_max_files" data-setting="directory_max_files" type="number" required min="3" max="100000" step="1"></label>
+</div></fieldset>
+<fieldset class="settings-group"><legend>OCR i referencje graficzne</legend><div class="settings-fields">
+<label class="field-wide">Adres workera OCR<input id="setting-ocr_worker_url" data-setting="ocr_worker_url" type="url" placeholder="http://subtitle-ocr-worker:8090" maxlength="2048"></label>
+<label>Limit czasu OCR (s)<input id="setting-ocr_timeout_seconds" data-setting="ocr_timeout_seconds" type="number" required min="0.1" max="86400" step="any"></label>
+<label>Maksymalny rozmiar odpowiedzi OCR (MiB)<input id="setting-ocr_max_output_bytes" data-setting="ocr_max_output_bytes" type="number" required min="9.5367431640625e-07" max="100" step="any" data-bytes-per-unit="1048576"><small>Limit odpowiedzi przyjmowanej przez aplikację. Worker OCR ma osobne limity.</small></label>
+<label class="settings-check field-wide"><input id="setting-include_graphic_reference" data-setting="include_graphic_reference" type="checkbox"> Dołączaj oryginalne referencje graficzne do paczki</label>
+</div></fieldset>
+<div class="row form-actions"><button type="submit" disabled><i class="fa-solid fa-floppy-disk" aria-hidden="true"></i> Zapisz ustawienia aplikacji</button></div>
+<p id="app-settings-status" role="status" aria-live="polite"></p></form></section><footer>kCn &amp; Codex 2026</footer></main><script src="/static/header.js?v=console-health-1"></script><script src="/static/ai-metrics.js?v=batch-ai-1"></script><script src="/static/settings.js?v=api-key-controls-1"></script><script src="/static/app-settings.js?v=1"></script><script src="/static/console-tools.js?v=gui-compact-2"></script></body></html>

@@ -131,6 +131,7 @@ def sum_usage(metrics):
 async def execute_directory(request, job_id, payload, pipeline, settings, digest, fingerprints):
     from app.api.ai_sync import error, execute, saved_result, SyncRequest
     manager, queue = request.app.state.jobs, request.app.state.ai_queue
+    app_settings = manager.settings.model_copy(deep=True)
     directory, _, current = validate_directory(request, job_id, payload, pipeline)
     if sha256(directory / 'manifest.json') != digest or current != fingerprints:
         raise error('Dane katalogu zmieniły się podczas oczekiwania; przygotuj je ponownie.', 409)
@@ -174,7 +175,7 @@ async def execute_directory(request, job_id, payload, pipeline, settings, digest
         queue.save(state)
     state['phase'] = 'Pakowanie wyników AI katalogu'
     queue.save(state)
-    result = await asyncio.to_thread(build_results, request, job_id, stem, outputs, state['items'], digest)
+    result = await asyncio.to_thread(build_results, request, job_id, stem, outputs, state['items'], digest, app_settings)
     result.update(model=settings.model, elapsed_seconds=elapsed, usage=sum_usage(metrics),
                   reused_count=sum(row.get('reused', False) for row in state['items']))
     result['total_cost'] = result['usage'].get('cost')
@@ -184,7 +185,7 @@ async def execute_directory(request, job_id, payload, pipeline, settings, digest
     return result
 
 
-def build_results(request, job_id, stem, outputs, rows, digest):
+def build_results(request, job_id, stem, outputs, rows, digest, app_settings):
     from app.api.ai_sync import saved_result
     manager = request.app.state.jobs
     parent = manager.get(job_id)
@@ -217,7 +218,7 @@ def build_results(request, job_id, stem, outputs, rows, digest):
                'sourceManifestSha256': digest, 'complete': failed == 0, 'items': items,
                'files': sorted(files | {'checksums.sha256'})})
     archive, _, output_digest, _ = build_zip(target, Path(parent['media_path']).name,
-                manager.settings.directory_max_archive_bytes, manager.settings.directory_max_files, files, require_complete=True)
+                app_settings.directory_max_archive_bytes, app_settings.directory_max_files, files, require_complete=True)
     kind = 'batch-translation' if stem == 'ai-translation' else 'batch-synchronization'
     with manager._lock:
         filename = manager.archive.record(parent, archive, kind, output_digest)
