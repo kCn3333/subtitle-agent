@@ -1,4 +1,16 @@
 const settingsForm=document.querySelector('#ai-settings'),settingsStatus=document.querySelector('#settings-status');
+let apiKeySet=false,settingsBusy=false;
+function displayKeyState(settings){
+  apiKeySet=Boolean(settings.api_key_set);
+  document.querySelector('#api-key').placeholder=apiKeySet?'••••••••':'Wpisz klucz API';
+  document.querySelector('#clear-key').disabled=settingsBusy||!apiKeySet;
+  document.querySelector('#key-status').textContent=apiKeySet?'Klucz API jest zapisany. Puste pole zachowuje zapisany klucz.':'Klucz API nie jest ustawiony.';
+}
+function setSettingsBusy(busy){
+  settingsBusy=busy;
+  settingsForm.querySelectorAll('button').forEach(button=>button.disabled=busy);
+  document.querySelector('#clear-key').disabled=busy||!apiKeySet;
+}
 function displaySettings(settings){
   document.querySelector('#api-url').value=settings.api_url;
   document.querySelector('#model').value=settings.model;
@@ -7,8 +19,7 @@ function displaySettings(settings){
   document.querySelector('#max-output-tokens').value=settings.max_output_tokens??'';
   document.querySelector('#response-format').value=settings.response_format??'';
   document.querySelector('#api-key').value='';
-  document.querySelector('#clear-key').checked=false;
-  document.querySelector('#key-status').textContent=settings.api_key_set?'Klucz API jest zapisany.':'Klucz API nie jest ustawiony.';
+  displayKeyState(settings);
 }
 async function settingsRequest(url,options={}){
   const response=await fetch(url,options),body=await response.json();
@@ -25,7 +36,7 @@ async function waitForAiTest(state){
   return state;
 }
 async function saveAiSettings(test){
-  const buttons=settingsForm.querySelectorAll('button');buttons.forEach(button=>button.disabled=true);
+  setSettingsBusy(true);
   settingsStatus.textContent=test?'Zapisywanie i testowanie połączenia…':'Zapisywanie…';
   try{
     const payload={api_url:document.querySelector('#api-url').value,model:document.querySelector('#model').value,
@@ -34,15 +45,28 @@ async function saveAiSettings(test){
       max_output_tokens:document.querySelector('#max-output-tokens').value?Number(document.querySelector('#max-output-tokens').value):null,
       response_format:document.querySelector('#response-format').value||null};
     const key=document.querySelector('#api-key').value;
-    if(document.querySelector('#clear-key').checked)payload.api_key='';else if(key)payload.api_key=key;
+    if(key)payload.api_key=key;
     displaySettings(await settingsRequest('/api/settings/ai',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}));
     if(typeof refreshHeaderHealth==='function')refreshHeaderHealth();
     if(test){await waitForAiTest(await settingsRequest('/api/settings/ai/test',{method:'POST'}));settingsStatus.textContent='Połączenie poprawne.'}
     else settingsStatus.textContent='Ustawienia zapisane.';
-  }catch(error){settingsStatus.textContent=error.message}finally{buttons.forEach(button=>button.disabled=false)}
+  }catch(error){settingsStatus.textContent=error.message}finally{setSettingsBusy(false)}
 }
 settingsForm.addEventListener('submit',event=>{event.preventDefault();saveAiSettings(false)});
 document.querySelector('#test-api').addEventListener('click',()=>{if(settingsForm.reportValidity())saveAiSettings(true)});
+document.querySelector('#clear-key').addEventListener('click',async()=>{
+  if(!apiKeySet)return;
+  setSettingsBusy(true);settingsStatus.textContent='Usuwanie klucza API…';
+  try{
+    const saved=await settingsRequest('/api/settings/ai');
+    delete saved.api_key_set;saved.api_key='';
+    const settings=await settingsRequest('/api/settings/ai',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(saved)});
+    document.querySelector('#api-key').value='';
+    displayKeyState(settings);
+    settingsStatus.textContent='Zapisany klucz API został usunięty.';
+    if(typeof refreshHeaderHealth==='function')refreshHeaderHealth();
+  }catch(error){settingsStatus.textContent=error.message}finally{setSettingsBusy(false)}
+});
 settingsRequest('/api/settings/ai').then(displaySettings).catch(error=>settingsStatus.textContent=error.message);
 
 const aiConsole=document.querySelector('#ai-console'),aiConsoleState=document.querySelector('#ai-console-state');

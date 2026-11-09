@@ -98,3 +98,70 @@ test('connection test follows queued operation without holding the POST response
   assert.ok(messages.includes('Testowanie połączenia…'));
   assert.equal(messages.at(-1),'Połączenie poprawne.');
 });
+
+async function keySettings(){
+  const elements=new Map(),requests=[];
+  const get=id=>{
+    if(!elements.has(id))elements.set(id,{value:'',children:[],handlers:{},
+      addEventListener(name,handler){this.handlers[name]=handler},
+      querySelectorAll(){return [get('#clear-key'),get('#save-settings')]},
+      append(node){this.children.push(node)},replaceChildren(){this.children=[]}});
+    return elements.get(id);
+  };
+  const settings={api_url:'http://local/v1',model:'test',timeout_seconds:120,api_key_set:true};
+  const context={document:{querySelector:get,createElement:()=>({}),hidden:false},setInterval(){},failDelete:false,
+    fetch:async(url,options)=>{
+      if(url.endsWith('/console'))return {ok:true,json:async()=>({entries:[]})};
+      if(options?.method==='PUT'){
+        const payload=JSON.parse(options.body);requests.push(payload);
+        if(context.failDelete&&payload.api_key==='')return {ok:false,json:async()=>({detail:{message:'Nie udało się usunąć klucza'}})};
+        Object.assign(settings,payload);
+        if('api_key' in payload){settings.api_key_set=Boolean(payload.api_key);delete settings.api_key}
+      }
+      return {ok:true,json:async()=>({...settings})};
+    }};
+  runInNewContext(readFileSync('app/static/settings.js','utf8'),context);
+  await new Promise(setImmediate);
+  return {get,context,requests};
+}
+test('saved API key is indicated without putting a mask in the submitted value',async()=>{
+  const {get,context,requests}=await keySettings();
+  assert.equal(get('#api-key').value,'');
+  assert.equal(get('#api-key').placeholder,'••••••••');
+  assert.equal(get('#clear-key').disabled,false);
+  await context.saveAiSettings(false);
+  assert.equal('api_key' in requests[0],false);
+  get('#api-key').value='replacement-test-key';
+  await context.saveAiSettings(false);
+  assert.equal(requests[1].api_key,'replacement-test-key');
+  assert.equal(get('#api-key').value,'');
+  assert.equal(get('#api-key').placeholder,'••••••••');
+  const fetch=context.fetch;
+  let finish;
+  context.fetch=(url,...args)=>url.endsWith('/test')?new Promise(resolve=>finish=resolve):fetch(url,...args);
+  const pending=context.saveAiSettings(true);
+  await new Promise(setImmediate);
+  assert.equal(get('#clear-key').disabled,true);
+  finish({ok:true,json:async()=>({status:'completed'})});
+  await pending;
+  assert.equal(get('#clear-key').disabled,false);
+});
+test('delete key button preserves saved configuration and form edits and can retry a failed request',async()=>{
+  const {get,context,requests}=await keySettings();
+  get('#model').value='unsaved-model';
+  context.failDelete=true;
+  await get('#clear-key').handlers.click();
+  assert.equal(get('#api-key').placeholder,'••••••••');
+  assert.equal(get('#clear-key').disabled,false);
+  assert.equal(get('#settings-status').textContent,'Nie udało się usunąć klucza');
+  context.failDelete=false;
+  await get('#clear-key').handlers.click();
+  assert.deepEqual(requests[1],{api_url:'http://local/v1',model:'test',timeout_seconds:120,api_key:''});
+  assert.equal(get('#model').value,'unsaved-model');
+  assert.equal(get('#clear-key').disabled,true);
+  assert.equal(get('#api-key').placeholder,'Wpisz klucz API');
+  assert.match(get('#key-status').textContent,/nie jest ustawiony/);
+  await context.saveAiSettings(false);
+  assert.equal('api_key' in requests[2],false);
+  assert.equal(get('#clear-key').disabled,true);
+});

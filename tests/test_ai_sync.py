@@ -110,7 +110,8 @@ def test_settings_and_connection_api(client,monkeypatch):
     assert client.put('/api/settings/ai',json={'api_url':'http://local/v1','model':'test','api_key':'test-secret'}).json()['api_key_set']
     assert 'test-secret' not in client.get('/api/settings/ai').text
     page=client.get('/').text
-    assert '<span id="ai-panel-title">Synchronizacja przez AI</span> (test)</h2>' in page
+    assert '<span id="ai-panel-title">Synchronizacja przez AI</span></h2>' in page
+    assert '<p class="ai-model">test</p>' in page
     assert 'test-secret' not in page
     async def fake(settings,instruction,data):return {'ok':True},.125,{'total_tokens':8}
     monkeypatch.setattr('app.api.ai_sync.chat_request',fake)
