@@ -22,7 +22,7 @@ Przygotowanie synchronizacji/tłumaczenia kończy się jednym ZIP-em: główny m
 
 Raport pokazuje wspólne parametry wideo/referencji, grupuje różnice i powtarzające się ostrzeżenia. Szczegóły pozostają w materiałach każdego pliku. Braki i błędy oznaczają wynik niekompletny. Świadome pominięcia przez użytkownika są zapisane w manifeście, ale nie oznaczają błędu: pozostałe poprawnie przygotowane materiały kończą się statusem WORKPACK_READY i postępem 100%. Przekroczenie limitów końcowej paczki blokuje jej publikację zamiast usuwać z niej pliki.
 
-Domyślne limity: `DIRECTORY_MAX_ITEMS=500`, `DIRECTORY_MAX_ARCHIVE_BYTES=1073741824` (1 GiB), `DIRECTORY_MAX_FILES=10000`. Limity `WORKPACK_MAX_*` nadal obowiązują materiały każdego pojedynczego pliku. Zadania wewnętrzne nie zajmują oddzielnych pozycji w archiwum 30 tytułów. Wstrzymane/przerwane katalogi i ich materiały są chronione przed retencją; gotowy katalog zajmuje jedną pozycję archiwum.
+Domyślne limity: `DIRECTORY_MAX_ITEMS=500`, `DIRECTORY_MAX_ARCHIVE_BYTES=1073741824` (1 GiB), `DIRECTORY_MAX_FILES=10000`. Limity `WORKPACK_MAX_*` nadal obowiązują materiały każdego pojedynczego pliku. Zadania wewnętrzne nie zajmują oddzielnych pozycji w archiwum o konfigurowalnej liczbie pozycji (domyślnie 30). Wstrzymane/przerwane katalogi i ich materiały są chronione przed retencją; gotowy katalog zajmuje jedną pozycję archiwum.
 
 ## Przekazanie katalogu do AI
 

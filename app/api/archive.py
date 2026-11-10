@@ -8,7 +8,7 @@ router = APIRouter(prefix='/api/archive', tags=['archive'])
 async def archive(request: Request):
     manager = request.app.state.jobs
     with manager._lock:
-        return {'titles': manager.archive.list_titles(manager.list_jobs(limit=None))}
+        return {'titles': manager.archive.list_titles(manager.list_jobs(limit=None), manager.settings.archive_max_titles)}
 
 
 @router.get('/files/{name}')

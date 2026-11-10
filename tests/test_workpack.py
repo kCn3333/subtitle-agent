@@ -310,7 +310,7 @@ def test_old_artifact_remains_available_with_count_retention(client, settings):
 def test_cleanup_keeps_old_titles_and_refuses_symlinks(tmp_path):
     from app.services.job_manager import JobManager
     root = tmp_path / "data"; root.mkdir()
-    settings = Settings(data_root=root, media_roots=[tmp_path], workpack_retention_hours=1)
+    settings = Settings(data_root=root, media_roots=[tmp_path])
     manager = JobManager(root / "subtitle-agent.db", settings)
     jobs_root = root / "work" / "jobs"; jobs_root.mkdir(parents=True)
     unsafe_dir = jobs_root / str(uuid.uuid4()); unsafe_dir.mkdir()

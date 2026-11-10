@@ -16,7 +16,7 @@ def test_runtime_settings_are_allowlisted_persistent_and_rename_settings_page(cl
     assert set(data) == set(AppSettings.model_fields)
     assert data['ffmpeg_timeout_seconds'] == original.ffmpeg_timeout_seconds
     assert not {'auth_password', 'media_roots', 'openai_api_key', 'data_root'} & data.keys()
-    data.update(ffmpeg_timeout_seconds=42, directory_max_items=17, ocr_worker_url='http://ocr:8090/')
+    data.update(archive_max_titles=12, ffmpeg_timeout_seconds=42, directory_max_items=17, ocr_worker_url='http://ocr:8090/')
     saved = client.put('/api/settings/app', json=data)
     assert saved.status_code == 200, saved.text
     assert saved.json()['ocr_worker_url'] == 'http://ocr:8090'
@@ -47,6 +47,7 @@ def test_runtime_settings_are_allowlisted_persistent_and_rename_settings_page(cl
     {'auth_password': 'not-editable'}, {'media_roots': ['/arbitrary']},
     {'max_concurrent_jobs': 4}, {'max_queued_jobs': 8}, {'max_queued_ai_operations': 8},
     {'subtitle_agent_app_mode': 'ADVANCED'}, {'subtitle_agent_publish_enabled': True},
+    {'archive_max_titles': 0}, {'archive_max_titles': 10001}, {'archive_max_titles': True},
     {'ffmpeg_timeout_seconds': 0}, {'directory_max_items': 0},
     {'include_graphic_reference': 'false'}, {'workpack_max_archive_bytes': -1},
     {'ocr_worker_url': 'https://outside.invalid'},
@@ -138,3 +139,20 @@ def test_active_directory_keeps_one_snapshot_for_all_episodes_and_final_zip(clie
     assert timeouts == [old_timeout, old_timeout]
     second = submit(client, directory)
     assert wait_batch(client, second)['status'] == 'FAILED'
+
+
+def test_upgrade_loads_old_saved_settings_with_archive_limit_from_environment(settings, monkeypatch):
+    import json
+    import sqlite3
+    from app.core.config import Settings
+    settings.data_root.mkdir()
+    path = settings.data_root / 'settings.db'
+    old_values = AppSettingsStore(path, settings).get()
+    old_values.pop('archive_max_titles')
+    with sqlite3.connect(path) as db:
+        db.execute('INSERT INTO app_settings VALUES(1,?)', (json.dumps(old_values),))
+    monkeypatch.setenv('ARCHIVE_MAX_TITLES', '7')
+    monkeypatch.setenv('WORKPACK_RETENTION_HOURS', 'not-used')
+    restarted = Settings(data_root=settings.data_root)
+    assert 'workpack_retention_hours' not in Settings.model_fields
+    assert AppSettingsStore(path, restarted).get()['archive_max_titles'] == 7

@@ -29,7 +29,7 @@ def test_archive_sums_retries_failures_modes_and_jobs_survives_console_clear(tmp
     run(store, other, 'SYNC', {'total_tokens':7,'cost':4,'cost_currency':'USD'})
     store.clear()
     restarted = manager_at_existing(manager)
-    titles = {title['title']:title for title in restarted.archive.list_titles(restarted.list_jobs())}
+    titles = {title['title']:title for title in restarted.archive.list_titles(restarted.list_jobs(), restarted.settings.archive_max_titles)}
     assert titles['Film']['cost'] == {'requests':3,'total_tokens':60,'usd':'0.3',
                                     'tokens_partial':False,'usd_partial':False}
     assert titles['Other']['cost']['usd'] == '4'
@@ -45,11 +45,11 @@ def test_missing_usage_is_not_free_and_non_usd_not_converted(tmp_path):
     job, _ = add_job(manager, 'Film')
     store = AiConsoleStore(manager.db_path)
     run(store, job, 'SYNC', {})
-    total = manager.archive.list_titles(manager.list_jobs())[0]['cost']
+    total = manager.archive.list_titles(manager.list_jobs(), manager.settings.archive_max_titles)[0]['cost']
     assert total['usd'] is None and total['total_tokens'] is None
     run(store, job, 'SYNC', {'total_tokens':5,'cost':9,'cost_currency':'(jednostki API)'})
     run(store, job, 'SYNC', {'total_tokens':10,'cost':0.02,'cost_currency':'USD'})
-    total = manager.archive.list_titles(manager.list_jobs())[0]['cost']
+    total = manager.archive.list_titles(manager.list_jobs(), manager.settings.archive_max_titles)[0]['cost']
     assert total['usd'] == '0.02' and total['total_tokens'] == 15
     assert total['usd_partial'] and total['tokens_partial']
 

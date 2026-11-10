@@ -12,6 +12,7 @@ from app.core.config import Settings
 class AppSettings(BaseModel):
     model_config = ConfigDict(extra='forbid', strict=True)
 
+    archive_max_titles: int = Field(ge=1, le=10000)
     ffprobe_timeout_seconds: float = Field(gt=0, le=86400)
     ffmpeg_timeout_seconds: float = Field(gt=0, le=86400)
     workpack_reference_score_margin: int = Field(ge=1, le=10000)

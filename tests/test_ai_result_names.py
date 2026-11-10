@@ -51,7 +51,7 @@ def test_archive_names_survive_restart_cross_jobs_and_migrate_legacy_metadata(tm
     with manager.archive.connect() as db:
         db.execute("UPDATE archive_files SET filename='ai-sync.pl.srt' WHERE kind='synchronization'")
     manager.archive=ArchiveStore(manager.db_path,manager.settings.data_root)
-    entries=manager.archive.list_titles(manager.list_jobs())[0]['subtitles']
+    entries=manager.archive.list_titles(manager.list_jobs(), manager.settings.archive_max_titles)[0]['subtitles']
     assert entries[0]['filename']==first
     next_job,next_directory=add_job(manager,'Series.S01E02.1080p',1)
     next_output=next_directory/'ai-sync.pl.srt';next_output.write_text('second')

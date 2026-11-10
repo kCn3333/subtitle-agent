@@ -57,4 +57,4 @@ Cookie sesji ma `HttpOnly` i `SameSite=Strict`, a domyślnie także `Secure`. Pu
 | `MAX_QUEUED_AI_OPERATIONS` | `5` | Oczekujące operacje AI; jedna jest wykonywana |
 | `WORKPACK_CLEANUP_INTERVAL_HOURS` | `6` | Okresowe porządkowanie, oprócz startu i zakończenia operacji |
 
-Retencja obejmuje 30 tytułów według ścieżki materiału. `WORKPACK_RETENTION_HOURS` pozostaje parametrem zgodnościowym i nie zmienia tego limitu. Dane oczekujących i aktywnych operacji są chronione do ich zakończenia. Kolejki wymagają jednej instancji procesu aplikacji.
+Retencja obejmuje liczbę tytułów ustawioną przez `ARCHIVE_MAX_TITLES` (domyślnie 30), według ścieżki materiału. Wartość można nadpisać w GUI bez restartu. Dawne `WORKPACK_RETENTION_HOURS` jest ignorowane; retencja nie zależy od wieku plików. Dane oczekujących i aktywnych operacji są chronione do ich zakończenia. Kolejki wymagają jednej instancji procesu aplikacji.

@@ -1,4 +1,4 @@
-"""Content-addressed downloads for the thirty most recently requested media titles."""
+"""Content-addressed downloads for recently requested media titles."""
 import hashlib
 import json
 import os
@@ -11,7 +11,17 @@ from urllib.parse import urlencode
 from app.services.artifact_retention import validated_job_directory
 from app.services.ai_usage import UsageStore
 
-ARCHIVE_LIMIT = 30
+
+def recent_titles(jobs: list[dict], maximum: int) -> dict[str, dict]:
+    """One retention position per parent media path, irrespective of versions."""
+    titles = {}
+    for job in sorted(jobs, key=lambda item: item['created_at'], reverse=True):
+        if job.get('batch_parent_id'):
+            continue
+        titles.setdefault(title_key(job), job)
+        if len(titles) >= maximum:
+            break
+    return titles
 
 
 def title_key(job: dict) -> str:
@@ -141,16 +151,10 @@ class ArchiveStore:
             if re.fullmatch(r'[a-f0-9]{64}\.(zip|srt|tmp)', path.name) and path.name not in referenced and not path.is_symlink():
                 path.unlink()
 
-    def list_titles(self, jobs: list[dict]):
-        jobs = [job for job in jobs if not job.get('batch_parent_id')]
-        titles = {}
-        for job in sorted(jobs, key=lambda j: j['created_at'], reverse=True):
-            key = title_key(job)
-            if key not in titles:
-                titles[key] = {'date': job['created_at'], 'title': Path(key).stem,
-                               'workpacks': [], 'subtitles': []}
-            if len(titles) == ARCHIVE_LIMIT:
-                break
+    def list_titles(self, jobs: list[dict], maximum: int):
+        titles = {key: {'date': job['created_at'], 'title': Path(key).stem,
+                        'workpacks': [], 'subtitles': []}
+                  for key, job in recent_titles(jobs, maximum).items()}
         with self.connect() as db:
             for file in db.execute('SELECT * FROM archive_files ORDER BY created_at DESC,filename'):
                 if file['title_key'] not in titles:

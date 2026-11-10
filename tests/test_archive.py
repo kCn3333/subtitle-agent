@@ -21,13 +21,13 @@ def test_archive_keeps_versions_deduplicates_sha_and_preserves_srt_on_retry(tmp_
     manager.archive.capture(manager.get(job))
     output.unlink(); (directory / 'ai-sync.json').unlink()
     manager.cleanup_expired_artifacts()
-    entries = manager.archive.list_titles(manager.list_jobs(limit=None))
+    entries = manager.archive.list_titles(manager.list_jobs(limit=None), manager.settings.archive_max_titles)
     assert len(entries) == 1 and len(entries[0]['workpacks']) == 2
     assert len(entries[0]['subtitles']) == 1
     assert len(list(manager.archive.root.glob('*.zip'))) == 2
     assert manager.archive.download(digest + '.srt')
     restarted = JobManager(manager.db_path, manager.settings)
-    assert restarted.archive.list_titles(restarted.list_jobs())[0]['subtitles'] == entries[0]['subtitles']
+    assert restarted.archive.list_titles(restarted.list_jobs(), restarted.settings.archive_max_titles)[0]['subtitles'] == entries[0]['subtitles']
 
 
 def test_retention_removes_old_title_jobs_events_files_and_unreferenced_blobs(tmp_path):
@@ -43,7 +43,7 @@ def test_retention_removes_old_title_jobs_events_files_and_unreferenced_blobs(tm
     assert manager.get(old) is None and manager.get(duplicate) is None
     assert not old_dir.exists() and not duplicate_dir.exists()
     assert manager.events(old) == []
-    assert len(manager.archive.list_titles(manager.list_jobs(limit=None))) == 30
+    assert len(manager.archive.list_titles(manager.list_jobs(limit=None), manager.settings.archive_max_titles)) == 30
     assert len(list(manager.archive.root.glob('*.zip'))) == 30
     assert len({j['media_path'] for j in manager.list_jobs(limit=None)}) == 30
 
@@ -99,4 +99,46 @@ def test_migration_reads_more_than_public_job_list_limit(tmp_path):
         add_job(manager, f'New{i}', i + 502)
     manager.cleanup_expired_artifacts()
     assert not directory.exists()
-    assert len(manager.archive.list_titles(manager.list_jobs(limit=None))) == 30
+    assert len(manager.archive.list_titles(manager.list_jobs(limit=None), manager.settings.archive_max_titles)) == 30
+
+
+def test_live_limit_controls_api_and_cleanup_while_protecting_ai_and_all_title_versions(client):
+    manager = client.app.state.jobs
+    old, old_dir = add_job(manager, 'Old', payload=b'old')
+    version, version_dir = add_job(manager, 'Old', 1, payload=b'old version')
+    pinned, pinned_dir = add_job(manager, 'Pinned', 2, payload=b'pinned')
+    add_job(manager, 'Recent', 3, payload=b'recent')
+    for job in manager.list_jobs(limit=None):
+        manager.archive.capture(job)
+    manager.reserve_job(pinned, 'ai')
+    values = client.get('/api/settings/app').json()
+    values['archive_max_titles'] = 1
+    assert client.put('/api/settings/app', json=values).status_code == 200
+    assert [item['title'] for item in client.get('/api/archive').json()['titles']] == ['Recent']
+    # Retention uses the live policy even inside an older processing snapshot.
+    snapshot = manager.settings.model_copy(update={'archive_max_titles': 30})
+    token = manager._settings_context.set(snapshot)
+    try:
+        assert manager.cleanup_expired_artifacts() == 2
+    finally:
+        manager._settings_context.reset(token)
+    assert not old_dir.exists() and not version_dir.exists()
+    assert manager.get(old) is None and manager.get(version) is None
+    assert pinned_dir.exists()
+    assert len(list(manager.archive.root.glob('*.zip'))) == 2
+    manager.release_job(pinned)
+    manager.cleanup_expired_artifacts()
+    assert not pinned_dir.exists()
+    assert len(list(manager.archive.root.glob('*.zip'))) == 1
+    remaining = manager.list_jobs(limit=None)[0]
+    more, _ = add_job(manager, 'Recent', 4, payload=b'new version')
+    manager.cleanup_expired_artifacts()
+    titles = client.get('/api/archive').json()['titles']
+    assert len(titles) == 1 and len(titles[0]['workpacks']) == 2
+    assert manager.get(remaining['id']) and manager.get(more)
+    # Raising the limit makes further retained titles visible without restarting.
+    values['archive_max_titles'] = 2
+    assert client.put('/api/settings/app', json=values).status_code == 200
+    add_job(manager, 'Another', 5, payload=b'another')
+    manager.cleanup_expired_artifacts()
+    assert len(client.get('/api/archive').json()['titles']) == 2

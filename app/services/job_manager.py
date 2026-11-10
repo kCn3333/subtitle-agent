@@ -23,7 +23,7 @@ from app.services.media_analysis import (
 )
 from app.services.inspection_service import InspectionService
 from app.services.artifact_retention import remove_job_directory, remove_previous_archives
-from app.services.archive import ArchiveStore, ARCHIVE_LIMIT, title_key
+from app.services.archive import ArchiveStore, recent_titles, title_key
 from app.services.media_title import display_title, operation_label
 from app.services.synchronization_pack_service import SynchronizationPackService
 from app.services.translation_pack_service import TranslationPackService
@@ -187,10 +187,10 @@ class JobManager:
             await asyncio.to_thread(self.cleanup_expired_artifacts)
 
     def cleanup_expired_artifacts(self) -> int:
-        """Retain thirty distinct media paths, including all versions of each title."""
+        """Apply the live archive limit, retaining protected work and all versions."""
         with self._lock:
             jobs = self.list_jobs(limit=None)
-            keys = list(dict.fromkeys(title_key(job) for job in jobs if not job.get('batch_parent_id')))[:ARCHIVE_LIMIT]
+            keys = recent_titles(jobs, self._settings.archive_max_titles)
             retained = set(keys)
             # Running work and AI requests must finish before their files can be removed.
             retained.update(title_key(job) for job in jobs

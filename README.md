@@ -74,7 +74,7 @@ Pełna lista zmiennych: [.env.example](.env.example). Ustawienia proxy, dostępu
 
 Katalog zajmuje jedno miejsce w kolejce przygotowania. Oczekiwanie na odpowiedź AI nie blokuje przygotowania kolejnych materiałów. Aplikacja działa jako jeden proces; kolejki nie są współdzielone między instancjami.
 
-Archiwum obejmuje ostatnie 30 tytułów lub katalogów. Pliki partii nie zajmują osobnych pozycji archiwum. Dane aktywnych operacji oraz wstrzymanych i przerwanych partii są chronione przed usunięciem. Żądania AI nie są automatycznie ponawiane po restarcie.
+Archiwum obejmuje domyślnie ostatnie 30 tytułów lub katalogów. Liczbę pozycji można zmienić bez restartu w **Ustawienia → Archiwum i retencja**. Pliki partii nie zajmują osobnych pozycji archiwum. Dane aktywnych operacji oraz wstrzymanych i przerwanych partii są chronione przed usunięciem. Żądania AI nie są automatycznie ponawiane po restarcie.
 
 ## Walidacja wyników
 
