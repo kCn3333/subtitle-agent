@@ -106,7 +106,7 @@ async def test_total_timeout():
 def test_settings_and_connection_api(client,monkeypatch):
     settings_page=client.get('/ai')
     assert settings_page.status_code==200
-    assert 'Ustawienia AI (zmieniaj tylko gdy wiesz co robisz)' in settings_page.text
+    assert ' Ustawienia AI</h2>' in settings_page.text
     assert client.put('/api/settings/ai',json={'api_url':'http://local/v1','model':'test','api_key':'test-secret'}).json()['api_key_set']
     assert 'test-secret' not in client.get('/api/settings/ai').text
     page=client.get('/').text
