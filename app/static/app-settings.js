@@ -26,7 +26,7 @@ appSettingsForm.addEventListener('submit',async event=>{
   try{
     const settings=await settingsRequest('/api/settings/app',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(readAppSettings())});
     displayAppSettings(settings);
-    appSettingsStatus.textContent='Ustawienia aplikacji zapisane. Nowe zadania użyją nowej konfiguracji. Limit archiwum obowiązuje od razu.';
+    appSettingsStatus.textContent='Ustawienia aplikacji zapisane. Nowe zadania użyją nowej konfiguracji. Limity archiwum i listy modeli obowiązują od razu.';
     if(typeof refreshHeaderHealth==='function')refreshHeaderHealth();
   }catch(error){appSettingsStatus.textContent=error.message}finally{appSettingsBusy(false)}
 });

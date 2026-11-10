@@ -47,6 +47,7 @@ def test_runtime_settings_are_allowlisted_persistent_and_rename_settings_page(cl
     {'auth_password': 'not-editable'}, {'media_roots': ['/arbitrary']},
     {'max_concurrent_jobs': 4}, {'max_queued_jobs': 8}, {'max_queued_ai_operations': 8},
     {'subtitle_agent_app_mode': 'ADVANCED'}, {'subtitle_agent_publish_enabled': True},
+    {'ai_max_saved_models': 0}, {'ai_max_saved_models': 101},
     {'archive_max_titles': 0}, {'archive_max_titles': 10001}, {'archive_max_titles': True},
     {'ffmpeg_timeout_seconds': 0}, {'directory_max_items': 0},
     {'include_graphic_reference': 'false'}, {'workpack_max_archive_bytes': -1},

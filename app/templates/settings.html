@@ -3,7 +3,7 @@
 <title>Ustawienia · {{ app_name }}</title><link rel="stylesheet" href="/static/styles.css?v=app-settings-1"><link rel="stylesheet" href="/static/fontawesome/css/fontawesome.min.css"><link rel="stylesheet" href="/static/fontawesome/css/solid.min.css">{% include "auth-head.html" %}</head>
 <body><main>{% include 'header.html' %}
 <section class="card" id="app-settings-panel"><h2><i class="fa-solid fa-sliders" aria-hidden="true"></i> Ustawienia aplikacji</h2>
-<p class="settings-note">Zmiany obowiązują bez restartu przy uruchamianiu kolejnych zadań. Trwające zadanie, także cały katalog, zachowuje dotychczasową konfigurację przetwarzania. Limit archiwum obowiązuje od razu.</p>
+<p class="settings-note">Zmiany obowiązują bez restartu przy uruchamianiu kolejnych zadań. Trwające zadanie, także cały katalog, zachowuje dotychczasową konfigurację przetwarzania. Limity archiwum i listy modeli obowiązują od razu.</p>
 <form id="app-settings">
 <fieldset class="settings-group"><legend>Przetwarzanie</legend><div class="settings-fields">
 <label>Limit czasu analizy pliku (s)<input id="setting-ffprobe_timeout_seconds" data-setting="ffprobe_timeout_seconds" type="number" required min="0.1" max="86400" step="any"></label>
@@ -26,8 +26,11 @@
 <label>Maksymalny rozmiar odpowiedzi OCR (MiB)<input id="setting-ocr_max_output_bytes" data-setting="ocr_max_output_bytes" type="number" required min="9.5367431640625e-07" max="100" step="any" data-bytes-per-unit="1048576"><small>Limit odpowiedzi przyjmowanej przez aplikację. Worker OCR ma osobne limity.</small></label>
 <label class="settings-check field-wide"><input id="setting-include_graphic_reference" data-setting="include_graphic_reference" type="checkbox"> Dołączaj oryginalne referencje graficzne do paczki</label>
 </div></fieldset>
+<fieldset class="settings-group"><legend>Lista modeli AI</legend><div class="settings-fields">
+<label>Maksymalna liczba zapisanych modeli<input id="setting-ai_max_saved_models" data-setting="ai_max_saved_models" type="number" required min="1" max="100" step="1"><small>Domyślnie: 10. Zmiana nie usuwa zapisanych modeli.</small></label>
+</div></fieldset>
 <fieldset class="settings-group"><legend>Archiwum i retencja</legend><div class="settings-fields">
 <label>Liczba pozycji archiwum<input id="setting-archive_max_titles" data-setting="archive_max_titles" type="number" required min="1" max="10000" step="1"><small>Jedna pozycja to film lub katalog ze wszystkimi wersjami paczek i napisów. Domyślnie: 30.</small></label>
 </div><p class="settings-note">Zmiana działa bez restartu. Starsze pozycje i ich pliki są usuwane przy najbliższym porządkowaniu. Aktywne zadania i wstrzymane lub przerwane katalogi pozostają chronione.</p></fieldset>
 <div class="row form-actions"><button type="submit" disabled><i class="fa-solid fa-floppy-disk" aria-hidden="true"></i> Zapisz ustawienia aplikacji</button></div>
-<p id="app-settings-status" role="status" aria-live="polite"></p></form></section><footer>kCn &amp; Codex 2026</footer></main><script src="/static/header.js?v=console-health-1"></script><script src="/static/settings-request.js?v=1"></script><script src="/static/app-settings.js?v=archive-limit-1"></script></body></html>
+<p id="app-settings-status" role="status" aria-live="polite"></p></form></section><footer>kCn &amp; Codex 2026</footer></main><script src="/static/header.js?v=console-health-1"></script><script src="/static/settings-request.js?v=1"></script><script src="/static/app-settings.js?v=model-limit-1"></script></body></html>

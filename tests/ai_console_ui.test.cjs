@@ -58,7 +58,7 @@ test('settings preserve selected reasoning and optional output limit in save pay
   let saved;
   const context={document:{querySelector:get,createElement:()=>({}),hidden:false},setInterval(){},
     fetch:async(url,options)=>({ok:true,json:async()=>{
-      if(options?.method==='PUT'){saved=JSON.parse(options.body);return saved}
+      if(url.endsWith('/activate')&&options?.method==='POST'){saved=JSON.parse(options.body).settings;return saved}
       if(url.endsWith('/console'))return {entries:[]};
       return {api_url:'http://test/v1',model:'test',timeout_seconds:600,reasoning_effort:'low',max_output_tokens:131072};
     }})};
@@ -116,8 +116,9 @@ async function keySettings(){
   const context={document:{querySelector:get,createElement:()=>({}),hidden:false},setInterval(){},failDelete:false,
     fetch:async(url,options)=>{
       if(url.endsWith('/console'))return {ok:true,json:async()=>({entries:[]})};
-      if(options?.method==='PUT'){
-        const payload=JSON.parse(options.body);requests.push(payload);
+      if(url.endsWith('/models'))return {ok:true,json:async()=>({models:[],limit:10})};
+      if(options?.method==='POST'){
+        const payload=JSON.parse(options.body).settings;requests.push(payload);
         if(context.failDelete&&payload.api_key==='')return {ok:false,json:async()=>({detail:{message:'Nie udało się usunąć klucza'}})};
         Object.assign(settings,payload);
         if('api_key' in payload){settings.api_key_set=Boolean(payload.api_key);delete settings.api_key}

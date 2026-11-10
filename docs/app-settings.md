@@ -9,6 +9,7 @@ Każdy formularz ma własny przycisk zapisu. Rozmiary w GUI są podane w MiB.
 | Przetwarzanie | `FFPROBE_TIMEOUT_SECONDS`, `FFMPEG_TIMEOUT_SECONDS`, `WORKPACK_REFERENCE_SCORE_MARGIN`, `WORKPACK_MAX_POLISH_CANDIDATES` |
 | Paczka filmu lub odcinka | `WORKPACK_MAX_ARCHIVE_BYTES`, `WORKPACK_MAX_FILES` |
 | Katalogi i sezony | `DIRECTORY_MAX_ITEMS`, `DIRECTORY_MAX_ARCHIVE_BYTES`, `DIRECTORY_MAX_FILES` |
+| Lista modeli AI | `AI_MAX_SAVED_MODELS` (domyślnie 10, zakres 1–100) |
 | Archiwum | `ARCHIVE_MAX_TITLES` (domyślnie 30, zakres 1–10000) |
 | OCR | `OCR_WORKER_URL`, `OCR_TIMEOUT_SECONDS`, `OCR_MAX_OUTPUT_BYTES`, `INCLUDE_GRAPHIC_REFERENCE` |
 
@@ -21,6 +22,8 @@ Każde rozpoczynane zadanie otrzymuje kopię konfiguracji. Zadania już wykonywa
 zachowują swoje ustawienia do końca; dotyczy to wszystkich odcinków i końcowego ZIP-a
 jednej partii. Zadanie oczekujące w kolejce odczytuje nowe wartości przy rozpoczęciu.
 Zapis nie ponawia istniejących zadań ani nie przebudowuje gotowych paczek.
+
+Limit listy modeli AI obowiązuje od razu i nie usuwa żadnych pozycji. Zmniejszenie go poniżej liczby zapisanych modeli zwraca błąd bez zmiany ustawień.
 
 Limit archiwum jest wspólną polityką i obowiązuje bez restartu, niezależnie od kopii
 konfiguracji aktywnego zadania. Lista pokazuje ostatnie N różnych ścieżek filmów lub

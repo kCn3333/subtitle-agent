@@ -4,6 +4,7 @@ import json
 import math
 import re
 import sqlite3
+import uuid
 from dataclasses import replace
 from pathlib import Path
 from time import perf_counter
@@ -76,28 +77,137 @@ class ApiSettings(BaseModel):
                 "api_key_set": bool(self.api_key and self.api_key.get_secret_value())}
 
 
+class ModelLimitError(ValueError):
+    pass
+
+
+class ModelConfiguration(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    settings: ApiSettings
+    key_source_id: str | None = Field(default=None, max_length=80)
+    model_id: str | None = Field(default=None, max_length=80)
+
+
 class ApiSettingsStore:
     def __init__(self, db_path: Path):
         self.db_path = db_path
+        self._active = None
         with sqlite3.connect(db_path) as db:
             db.execute("CREATE TABLE IF NOT EXISTS ai_api_settings (id INTEGER PRIMARY KEY CHECK(id=1), data TEXT NOT NULL)")
+            existed = db.execute("SELECT 1 FROM sqlite_master WHERE name='ai_saved_models'").fetchone()
+            db.execute("""CREATE TABLE IF NOT EXISTS ai_saved_models (
+                id TEXT PRIMARY KEY, api_url TEXT NOT NULL, model TEXT NOT NULL, data TEXT NOT NULL,
+                UNIQUE(api_url,model))""")
+            # Seed once. An intentionally emptied list must stay empty after restart.
+            if not existed:
+                current = self._stored(db)
+                if current.api_url and current.model:
+                    db.execute('INSERT INTO ai_saved_models VALUES(?,?,?,?)',
+                               (str(uuid.uuid4()), current.api_url, current.model, self._json(current)))
+
+    @staticmethod
+    def _stored(db):
+        row = db.execute('SELECT data FROM ai_api_settings WHERE id=1').fetchone()
+        return ApiSettings.model_validate_json(row[0]) if row else ApiSettings()
+
+    @staticmethod
+    def _json(settings):
+        data = settings.model_dump(exclude={'api_key'})
+        data['api_key'] = settings.api_key.get_secret_value() if settings.api_key else None
+        return json.dumps(data)
+
+    def _write(self, db, settings):
+        db.execute('INSERT INTO ai_api_settings VALUES(1,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data',
+                   (self._json(settings),))
 
     def get(self) -> ApiSettings:
+        if self._active is not None:
+            return self._active.model_copy(deep=True)
         with sqlite3.connect(self.db_path) as db:
-            row = db.execute("SELECT data FROM ai_api_settings WHERE id=1").fetchone()
-        return ApiSettings.model_validate_json(row[0]) if row else ApiSettings()
+            return self._stored(db)
 
     def save(self, settings: ApiSettings) -> ApiSettings:
         with sqlite3.connect(self.db_path) as db:
-            row = db.execute("SELECT data FROM ai_api_settings WHERE id=1").fetchone()
-            saved = ApiSettings.model_validate_json(row[0]) if row else ApiSettings()
+            saved = self._active if self._active is not None else self._stored(db)
             key = settings.api_key if settings.api_key is not None else saved.api_key
-            settings = settings.model_copy(update={"api_key": key})
-            data = settings.model_dump(exclude={"api_key"})
-            data["api_key"] = key.get_secret_value() if key else None
-            db.execute("INSERT INTO ai_api_settings VALUES (1,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data",
-                       (json.dumps(data),))
+            settings = settings.model_copy(update={'api_key': key})
+            self._write(db, settings)
+        self._active = None
         return settings
+
+    def activate(self, settings: ApiSettings) -> ApiSettings:
+        self._active = settings.model_copy(deep=True)
+        return self.get()
+
+    def model(self, model_id: str) -> ApiSettings:
+        with sqlite3.connect(self.db_path) as db:
+            row = db.execute('SELECT data FROM ai_saved_models WHERE id=?', (model_id,)).fetchone()
+        if not row:
+            raise LookupError('Nie znaleziono zapisanego modelu')
+        return ApiSettings.model_validate_json(row[0])
+
+    def resolve(self, payload: ModelConfiguration) -> ApiSettings:
+        settings = payload.settings.model_copy(deep=True)
+        if not settings.api_url or not settings.model:
+            raise ValueError('Podaj adres API i nazwę modelu')
+        base = (self.get() if payload.key_source_id == 'active' else
+                self.model(payload.key_source_id) if payload.key_source_id else None)
+        if settings.api_key is None:
+            key = base.api_key if base and base.api_url == settings.api_url else None
+            settings = settings.model_copy(update={'api_key': key})
+        return settings
+
+    def models(self) -> dict:
+        active = self.get()
+        with sqlite3.connect(self.db_path) as db:
+            rows = db.execute('SELECT id,data FROM ai_saved_models ORDER BY model COLLATE NOCASE,api_url').fetchall()
+        items, active_id = [], None
+        for model_id, raw in rows:
+            settings = ApiSettings.model_validate_json(raw)
+            items.append({'id': model_id, **settings.public()})
+            if settings == active:
+                active_id = model_id
+        return {'models': items, 'active_id': active_id}
+
+    def save_model(self, payload: ModelConfiguration, maximum: int) -> dict:
+        settings = self.resolve(payload)
+        with sqlite3.connect(self.db_path) as db:
+            db.execute('BEGIN IMMEDIATE')
+            model_id = payload.model_id
+            if model_id and not db.execute('SELECT 1 FROM ai_saved_models WHERE id=?', (model_id,)).fetchone():
+                raise LookupError('Nie znaleziono zapisanego modelu')
+            duplicate = db.execute('SELECT id FROM ai_saved_models WHERE api_url=? AND model=?',
+                                   (settings.api_url, settings.model)).fetchone()
+            if duplicate:
+                if model_id and model_id != duplicate[0]:
+                    raise ValueError('Ten model i adres API są już zapisane na liście')
+                model_id = duplicate[0]
+            if model_id is None:
+                stored = db.execute("SELECT data FROM app_settings WHERE id=1").fetchone() if db.execute(
+                    "SELECT 1 FROM sqlite_master WHERE name='app_settings'").fetchone() else None
+                if stored:
+                    maximum = json.loads(stored[0]).get('ai_max_saved_models', maximum)
+                if db.execute('SELECT COUNT(*) FROM ai_saved_models').fetchone()[0] >= maximum:
+                    raise ModelLimitError('Osiągnięto limit zapisanych modeli. Usuń model lub zwiększ limit w Ustawieniach.')
+                model_id = str(uuid.uuid4())
+            db.execute('''INSERT INTO ai_saved_models VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET
+                       api_url=excluded.api_url,model=excluded.model,data=excluded.data''',
+                       (model_id, settings.api_url, settings.model, self._json(settings)))
+            self._write(db, settings)
+        self._active = None
+        return {'id': model_id, 'settings': settings.public()}
+
+    def select_model(self, model_id: str) -> ApiSettings:
+        settings = self.model(model_id)
+        with sqlite3.connect(self.db_path) as db:
+            self._write(db, settings)
+        self._active = None
+        return settings
+
+    def delete_model(self, model_id: str):
+        with sqlite3.connect(self.db_path) as db:
+            if not db.execute('DELETE FROM ai_saved_models WHERE id=?', (model_id,)).rowcount:
+                raise LookupError('Nie znaleziono zapisanego modelu')
 
 
 async def chat_request(settings: ApiSettings, instruction: str, data: dict,

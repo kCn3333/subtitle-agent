@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     directory_max_items: int = Field(default=500, ge=1, le=10000)
     directory_max_archive_bytes: int = Field(default=1073741824, ge=4096)
     directory_max_files: int = Field(default=10000, ge=3)
+    ai_max_saved_models: int = Field(default=10, ge=1, le=100)
     archive_max_titles: int = Field(default=30, ge=1, le=10000)
     workpack_cleanup_interval_hours: int = 6
     ffprobe_timeout_seconds: float = 30

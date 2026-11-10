@@ -45,7 +45,7 @@ Cookie sesji ma `HttpOnly` i `SameSite=Strict`, a domyślnie także `Secure`. Pu
 ## Zasoby i dane
 
 - Biblioteka mediów: mounty `:ro`; ścieżki podawane w aplikacji odnoszą się do kontenera.
-- `/data`: SQLite, pliki robocze i archiwum. Klucz dostawcy AI jest przechowywany bez szyfrowania aplikacyjnego; wolumen i jego kopie wymagają ograniczenia dostępu.
+- `/data`: SQLite, pliki robocze i archiwum. Klucze aktywnej zapisanej konfiguracji i zapisanych modeli AI są przechowywane bez szyfrowania aplikacyjnego; wolumen i jego kopie wymagają ograniczenia dostępu.
 - Worker OCR: CPU, domyślnie limit 2 CPU i 1 GiB RAM w Compose, bez mountów biblioteki i `/data`.
 - OCR obsługuje PGS oraz VobSub, z językami `eng`, `fra`, `deu`, `spa`, `ita`, `por`, `pol`. Błąd lub brak obsługi języka kończy przygotowanie statusem `NEEDS_OCR`.
 - `INCLUDE_GRAPHIC_REFERENCE=true` dołącza źródłowe pliki graficzne do ZIP synchronizacji. Nie zmienia paczek tłumaczenia.

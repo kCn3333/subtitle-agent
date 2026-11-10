@@ -12,6 +12,7 @@ from app.core.config import Settings
 class AppSettings(BaseModel):
     model_config = ConfigDict(extra='forbid', strict=True)
 
+    ai_max_saved_models: int = Field(ge=1, le=100)
     archive_max_titles: int = Field(ge=1, le=10000)
     ffprobe_timeout_seconds: float = Field(gt=0, le=86400)
     ffmpeg_timeout_seconds: float = Field(gt=0, le=86400)
@@ -60,6 +61,11 @@ class AppSettingsStore:
     def save(self, value: AppSettings) -> dict:
         # Publish in memory only after the durable transaction succeeds.
         with sqlite3.connect(self.path) as db:
+            db.execute('BEGIN IMMEDIATE')
+            if db.execute("SELECT 1 FROM sqlite_master WHERE name='ai_saved_models'").fetchone():
+                count = db.execute('SELECT COUNT(*) FROM ai_saved_models').fetchone()[0]
+                if value.ai_max_saved_models < count:
+                    raise ValueError(f'Lista zawiera {count} modeli. Usuń modele przed zmniejszeniem limitu.')
             db.execute('INSERT INTO app_settings VALUES (1,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data',
                        (value.model_dump_json(),))
         self.apply(value)

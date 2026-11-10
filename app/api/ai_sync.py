@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict
 
-from app.services.ai_sync import (ApiSettings, AiSyncError, SYNC_INSTRUCTION, chat_request,
+from app.services.ai_sync import (ModelConfiguration, ModelLimitError, ApiSettings, AiSyncError, SYNC_INSTRUCTION, chat_request,
                                   read_cues, segments, validate_result, TRANSLATION_INSTRUCTION, validate_translation)
 from app.services.alignment import sha256, write_preview
 from app.services.ai_console import capture
@@ -33,6 +33,54 @@ async def get_settings(request: Request):
     return request.app.state.ai_settings.get().public()
 
 
+def resolve_configuration(request, payload):
+    try:
+        return request.app.state.ai_settings.resolve(payload)
+    except LookupError as exc:
+        raise error(str(exc), 404) from exc
+    except ValueError as exc:
+        raise error(str(exc)) from exc
+
+
+@router.post('/api/settings/ai/activate')
+async def activate_configuration(payload: ModelConfiguration, request: Request):
+    return request.app.state.ai_settings.activate(resolve_configuration(request, payload)).public()
+
+
+@router.get('/api/settings/ai/models')
+async def saved_models(request: Request):
+    return {**request.app.state.ai_settings.models(), 'limit': request.app.state.settings.ai_max_saved_models}
+
+
+@router.post('/api/settings/ai/models')
+async def save_model(payload: ModelConfiguration, request: Request):
+    try:
+        return request.app.state.ai_settings.save_model(payload, request.app.state.settings.ai_max_saved_models)
+    except LookupError as exc:
+        raise error(str(exc), 404) from exc
+    except ModelLimitError as exc:
+        raise error(str(exc), 409) from exc
+    except ValueError as exc:
+        raise error(str(exc)) from exc
+
+
+@router.post('/api/settings/ai/models/{model_id}/activate')
+async def select_model(model_id: str, request: Request):
+    try:
+        return request.app.state.ai_settings.select_model(model_id).public()
+    except LookupError as exc:
+        raise error(str(exc), 404) from exc
+
+
+@router.delete('/api/settings/ai/models/{model_id}')
+async def delete_model(model_id: str, request: Request):
+    try:
+        request.app.state.ai_settings.delete_model(model_id)
+    except LookupError as exc:
+        raise error(str(exc), 404) from exc
+    return {'deleted': True}
+
+
 @router.get("/api/settings/ai/health")
 async def api_health(request: Request):
     return await request.app.state.ai_health.check(request.app.state.ai_settings.get())
@@ -44,8 +92,8 @@ async def save_settings(payload: ApiSettings, request: Request):
 
 
 @router.post("/api/settings/ai/test", status_code=202)
-async def test_connection(request: Request):
-    settings = request.app.state.ai_settings.get().model_copy(deep=True)
+async def test_connection(request: Request, payload: ModelConfiguration | None = None):
+    settings = resolve_configuration(request, payload) if payload else request.app.state.ai_settings.get().model_copy(deep=True)
     return request.app.state.ai_queue.submit({'mode':'test', 'title':'Test połączenia API'},
                                            lambda: execute_test(request, settings))
 

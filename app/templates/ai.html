@@ -4,11 +4,13 @@
 <body><main>{% include 'header.html' %}
 <section class="card"><h2><i class="fa-solid fa-gear" aria-hidden="true"></i> Ustawienia AI (zmieniaj tylko gdy wiesz co robisz)</h2><form id="ai-settings">
 <div class="settings-fields">
+<label class="field-wide">Zapisane modele<span class="select-wrap"><select id="saved-model"><option value="">Nowy model / konfiguracja tymczasowa</option></select></span></label>
+<div class="field-wide key-options"><span id="saved-model-count"></span><button id="delete-model" type="button" disabled><i class="fa-solid fa-trash-can" aria-hidden="true"></i> Usuń model z listy</button></div>
 <label class="field-wide">Adres API <input id="api-url" type="url" required placeholder="http://serwer-modelu:8000/v1" maxlength="2048"></label>
 <label>Nazwa modelu <input id="model" required maxlength="200"></label>
 <label>Timeout (sekundy) <input id="timeout" type="number" min="1" max="3600" required value="120"></label>
 <label class="field-wide">Klucz API (opcjonalny) <input id="api-key" type="password" autocomplete="new-password" placeholder="Wpisz klucz API" aria-describedby="key-status"></label>
-<div class="field-wide key-options"><span id="key-status"></span><button id="clear-key" type="button" disabled><i class="fa-solid fa-trash-can" aria-hidden="true"></i> Usuń zapisany klucz</button></div>
+<div class="field-wide key-options"><span id="key-status"></span><button id="clear-key" type="button" disabled><i class="fa-solid fa-trash-can" aria-hidden="true"></i> Usuń klucz API</button></div>
 <label>Reasoning effort <span class="select-wrap"><select id="reasoning-effort">
   <option value="">domyślne modelu</option><option value="none">wyłączone (none)</option>
   <option value="minimal">minimalne (minimal)</option><option value="low">niskie (low)</option>
@@ -19,7 +21,8 @@
 <label>Format odpowiedzi <span class="select-wrap"><select id="response-format">
   <option value="">domyślne API</option><option value="json_object">JSON</option>
 </select></span></label>
-</div><div class="row form-actions"><button type="submit"><i class="fa-solid fa-floppy-disk" aria-hidden="true"></i> Zapisz</button><button type="button" id="test-api"><i class="fa-solid fa-plug" aria-hidden="true"></i> Zapisz i testuj połączenie</button></div>
+</div><div class="row form-actions"><button type="submit"><i class="fa-solid fa-check" aria-hidden="true"></i> Użyj bez zapisywania</button><button type="button" id="save-model"><i class="fa-solid fa-floppy-disk" aria-hidden="true"></i> Zapisz model</button><button type="button" id="test-api"><i class="fa-solid fa-plug" aria-hidden="true"></i> Testuj połączenie</button></div>
+<p class="settings-note">Test połączenia nie zmienia aktywnego modelu. Konfiguracja użyta bez zapisu nie trafia na listę i jest tymczasowa.</p>
 <p id="settings-status" role="status"></p>
 </form></section>
 <section class="console-card" aria-label="Konsola AI">
@@ -29,4 +32,4 @@
   <button id="clear-ai-console" type="button"><i class="fa-solid fa-trash-can" aria-hidden="true"></i> Wyczyść</button>
   <button type="button" data-copy-console="ai-console"><i class="fa-solid fa-copy" aria-hidden="true"></i> Kopiuj</button></div>
 </section>
-<footer>kCn &amp; Codex 2026</footer></main><script src="/static/header.js?v=console-health-1"></script><script src="/static/ai-metrics.js?v=batch-ai-1"></script><script src="/static/settings-request.js?v=1"></script><script src="/static/settings.js?v=split-settings-1"></script><script src="/static/console-tools.js?v=gui-compact-2"></script></body></html>
+<footer>kCn &amp; Codex 2026</footer></main><script src="/static/header.js?v=console-health-1"></script><script src="/static/ai-metrics.js?v=batch-ai-1"></script><script src="/static/settings-request.js?v=1"></script><script src="/static/settings.js?v=saved-models-1"></script><script src="/static/console-tools.js?v=gui-compact-2"></script></body></html>

@@ -2,13 +2,23 @@
 
 ## Konfiguracja
 
-W zakładce **AI**, w panelu **Ustawienia AI**, podaj adres osiągalny z kontenera aplikacji, model oraz klucz, jeśli dostawca go wymaga. `localhost` oznacza kontener aplikacji. Kliknij **Zapisz i testuj połączenie**.
+W zakładce **AI**, w panelu **Ustawienia AI**, podaj adres osiągalny z kontenera aplikacji, model oraz klucz, jeśli dostawca go wymaga. `localhost` oznacza kontener aplikacji. Wybierz zapisany model z listy lub wpisz nową konfigurację.
+
+- **Testuj połączenie** sprawdza formularz bez zmiany aktywnej konfiguracji i bez zapisu na liście.
+- **Użyj bez zapisywania** aktywuje konfigurację do restartu aplikacji lub kolejnego wyboru. Zadania AI korzystają z niej od razu; nie trafia na listę modeli.
+- **Zapisz model** zapisuje i aktywuje konfigurację. Dla wybranej pozycji aktualizuje ją; ten sam adres API i identyfikator modelu nie tworzą duplikatu.
+- Wybór pozycji listy przywraca jej adres, parametry i klucz oraz aktywuje ją dla kolejnych zadań.
+- **Usuń model z listy** usuwa pozycję, zachowując aktywną konfigurację i trwające zadania.
+
+Domyślny limit to 10 modeli. Można go zmienić bez restartu w **Ustawienia → Lista modeli AI** (`AI_MAX_SAVED_MODELS`, zakres 1–100). Zmniejszenie poniżej liczby zapisanych pozycji jest odrzucane — najpierw usuń wybrane modele. Obecna konfiguracja z wcześniejszej wersji jest jednorazowo przenoszona na listę, jeśli ma adres API i nazwę modelu.
+
+Zapisane modele i wybrana zapisana konfiguracja pozostają po restarcie w SQLite. Ustawienie tymczasowe nie zastępuje ostatniej trwale zapisanej konfiguracji. Klucze nie są zwracane w odczycie API; lista pokazuje tylko informację o ich obecności. Zmiana adresu API wymaga podania odpowiedniego klucza i nie przenosi klucza poprzedniego serwera.
 
 | Pole | Działanie |
 |---|---|
 | Adres API | Bazowy URL, np. `http://serwer-modelu:8000/v1`, lub pełny URL `/chat/completions` |
 | Model | Identyfikator wymagany przez dostawcę |
-| Klucz API | Przesyłany jako Bearer; puste pole zachowuje zapisany klucz, checkbox go usuwa |
+| Klucz API | Przesyłany jako Bearer; puste pole zachowuje klucz wskazanej konfiguracji przy tym samym adresie API; osobny przycisk usuwa klucz |
 | Timeout | 1–3600 s; limit żądania do modelu, bez czasu oczekiwania w kolejce |
 | Reasoning effort | Puste pole pomija parametr; `none` wysyła żądanie wyłączenia reasoning. Obsługa zależy od modelu |
 | Limit tokenów wyjścia | Puste pole pomija parametr; ustawiona wartość jest wysyłana jako `max_tokens` |
@@ -19,6 +29,12 @@ Dla adresu `https://openrouter.ai/api/v1` aplikacja wysyła `reasoning.effort`; 
 API modelu musi obsługiwać Chat Completions: `model`, `messages`, `stream:false` oraz JSON w `choices[0].message.content`. Cały zestaw napisów trafia do jednego żądania; kontekst musi pomieścić instrukcję, wejście i wynik. Aplikacja nie dzieli automatycznie filmu i nie uruchamia modelu lokalnie.
 
 Wskaźnik API potwierdza łączność z serwerem. Test połączenia wykonuje rzeczywiste żądanie do modelu i może kosztować; nie sprawdza jakości synchronizacji ani wystarczającego kontekstu dla filmu.
+
+Żądania zapisu, aktywacji i testu formularza przyjmują `settings` z polami konfiguracji.
+Opcjonalne `key_source_id` wskazuje ID zapisanego modelu lub `active`; pominięty klucz
+jest zachowywany tylko z tego źródła i tylko przy identycznym adresie API.
+Bez źródła pominięty klucz oznacza brak klucza, a `api_key: ""` usuwa go jawnie.
+`model_id` służy do aktualizacji konkretnej pozycji przy zapisie modelu.
 
 ## Wyniki
 
@@ -37,8 +53,13 @@ Logowanie wymaga cookie i tokenu z `meta[name="login-csrf-token"]` strony `/logi
 
 | Metoda i ścieżka | Działanie |
 |---|---|
+| `GET /api/settings/ai/models` | Lista zapisanych konfiguracji, aktywna pozycja i limit; bez kluczy |
+| `POST /api/settings/ai/models` | Zapis/aktualizacja modelu i aktywacja |
+| `POST /api/settings/ai/models/{id}/activate` | Wybór zapisanej konfiguracji |
+| `DELETE /api/settings/ai/models/{id}` | Usunięcie pozycji z listy |
+| `POST /api/settings/ai/activate` | Tymczasowa konfiguracja bez zapisu |
 | `GET/PUT /api/settings/ai` | Odczyt/zapis konfiguracji; klucz nie jest zwracany |
-| `POST /api/settings/ai/test` | Zlecenie testu modelu |
+| `POST /api/settings/ai/test` | Test bieżącej konfiguracji lub konfiguracji przekazanej w żądaniu, bez zapisywania |
 | `POST /api/tasks/{job_id}/ai-sync` | Synchronizacja; pola `reference_source_id` i `polish_file` |
 | `POST /api/tasks/{job_id}/ai-translate` | Tłumaczenie; pole `reference_source_id` |
 | `GET /api/tasks/{job_id}/ai-inputs` | Gotowe materiały katalogu i kandydaci PL dla każdego pliku |
