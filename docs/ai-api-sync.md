@@ -6,7 +6,7 @@ W zakładce **AI**, w panelu **Ustawienia AI**, podaj adres osiągalny z kontene
 
 - **Test połączenia** sprawdza formularz bez zmiany aktywnej konfiguracji i bez zapisu na liście.
 - **Zapisz** utrwala i aktywuje bieżące ustawienia. Jeśli wybrano model z listy, aktualizuje jego konfigurację. Bez wybranej pozycji zapisuje ustawienia poza listą modeli.
-- **+** obok nazwy dodaje model do listy i aktywuje go. Nie zastępuje poprzednio wybranej pozycji o innej nazwie; ten sam adres API i identyfikator modelu aktualizują istniejącą pozycję.
+- **Dodaj** obok nazwy dodaje model do listy i aktywuje go. Nie zastępuje poprzednio wybranej pozycji o innej nazwie; ten sam adres API i identyfikator modelu aktualizują istniejącą pozycję.
 - Wybór pozycji listy przywraca jej adres, parametry i klucz oraz aktywuje ją dla kolejnych zadań.
 - **Usuń model z listy** usuwa pozycję, zachowując aktywną konfigurację i trwające zadania.
 

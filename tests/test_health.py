@@ -1,3 +1,5 @@
+from app import __version__
+
 def test_health(client):
     response = client.get("/health")
     assert response.status_code == 200
@@ -9,6 +11,10 @@ def test_index_is_html(client):
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
     assert "Subtitle Agent" in response.text
+    assert f'class="brand-version" href="https://github.com/kCn3333/subtitle-agent/releases/tag/v{__version__}"' in response.text
+    assert f'>v{__version__}</a>' in response.text
+    assert 'href="https://github.com/kCn3333/subtitle-agent"' in response.text
+    assert client.app.version == __version__
     assert 'role="progressbar"' in response.text
     assert 'id="download"' in response.text
     assert 'id="download-label"' in response.text

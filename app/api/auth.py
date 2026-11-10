@@ -1,3 +1,5 @@
+from app import __version__
+
 import hmac
 import json
 import re
@@ -12,6 +14,7 @@ from app.services.auth import COOKIE, LOGIN_COOKIE, client_ip
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
+templates.env.globals["app_version"] = __version__
 
 
 def error(status, code, message, headers=None):

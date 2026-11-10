@@ -239,3 +239,10 @@ button:focus-visible, a:focus-visible, .console:focus-visible { outline: 3px sol
 .brand-text { min-width: 0; }
 .brand-text h1 { line-height: 1.15; overflow-wrap: anywhere; }
 .brand-tagline { margin: 5px 0 0; color: var(--muted); font-size: 13px; letter-spacing: .025em; }
+
+.brand-title-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; }
+.brand-version { display: inline-flex; align-items: center; padding: 3px 7px; border: 1px solid var(--line); border-radius: 6px; color: var(--muted); font-size: 12px; font-weight: 600; text-decoration: none; }
+.brand-version:hover { color: var(--text); border-color: var(--blue); }
+.brand-github { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 6px; opacity: .75; }
+.brand-github:hover { opacity: 1; background: var(--line); }
+.brand-github img { display: block; }

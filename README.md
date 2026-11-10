@@ -12,7 +12,7 @@ Aplikacja webowa do analizy napisów, synchronizacji i tłumaczenia na język po
 
 **Biblioteka mediów jest montowana tylko do odczytu.** Wyniki trafiają do osobnego wolumenu danych i są dostępne do pobrania.
 
-[Uruchomienie](#uruchomienie) · [Przetwarzanie katalogów](docs/directory-batch.md) · [Konfiguracja AI](docs/ai-api-sync.md) · [Wdrożenie](docs/deployment.md)
+[Changelog](docs/changelog.md) · [Wydania](https://github.com/kCn3333/subtitle-agent/releases) · [Uruchomienie](#uruchomienie) · [Przetwarzanie katalogów](docs/directory-batch.md) · [Konfiguracja AI](docs/ai-api-sync.md) · [Wdrożenie](docs/deployment.md)
 
 ## Możliwości
 
@@ -61,7 +61,7 @@ docker compose -f compose.example.yml up -d
 
 Domyślny adres nasłuchu to `127.0.0.1:8080`. Dostęp przez HTTPS zapewnia reverse proxy lub Cloudflare Tunnel. Worker OCR jest dostępny tylko w sieci wewnętrznej stosu. Wolumen `/data` przechowuje bazę SQLite, ustawienia, pliki robocze i archiwum.
 
-Zakładka **AI** zawiera listę zapisanych modeli, ustawienia i konsolę. Model można zapisać, wybrać, usunąć z listy albo przetestować bez zapisu. Przycisk „+” dodaje model do listy, a „Zapisz” utrwala bieżące ustawienia. Domyślny limit 10 modeli zmienia się w Ustawieniach. W osobnej zakładce **Ustawienia** można zmieniać timeouty, OCR i limity paczek bez restartu. Zapis działa dla kolejnych zadań i pozostaje po restarcie. [Zakres ustawień aplikacji](docs/app-settings.md).
+Zakładka **AI** zawiera listę zapisanych modeli, ustawienia i konsolę. Model można zapisać, wybrać, usunąć z listy albo przetestować bez zapisu. Przycisk „Dodaj” dodaje model do listy, a „Zapisz” utrwala bieżące ustawienia. Domyślny limit 10 modeli zmienia się w Ustawieniach. W osobnej zakładce **Ustawienia** można zmieniać timeouty, OCR i limity paczek bez restartu. Zapis działa dla kolejnych zadań i pozostaje po restarcie. [Zakres ustawień aplikacji](docs/app-settings.md).
 
 Pełna lista zmiennych: [.env.example](.env.example). Ustawienia proxy, dostępu i wolumenów: [instrukcja wdrożenia](docs/deployment.md).
 
@@ -90,6 +90,7 @@ Trafność synchronizacji, kompletność dialogów oraz jakość OCR i tłumacze
 
 | Dokument | Zakres |
 |---|---|
+| [Changelog](docs/changelog.md) | Historia wydań i zasady wersjonowania |
 | [Wdrożenie](docs/deployment.md) | Dostęp, proxy, uwierzytelnianie, dane i zasoby |
 | [AI i API](docs/ai-api-sync.md) | Ustawienia dostawcy, kontrakt odpowiedzi i diagnostyka |
 | [Katalogi](docs/directory-batch.md) | Dopasowanie plików, kolejka, decyzje i wspólny workpack |

@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 from fastapi.testclient import TestClient
 
+from app import __version__
 from app.core.config import Settings
 from app.main import create_app
 from app.services.auth import COOKIE, AuthStore
@@ -59,6 +60,9 @@ def test_health_is_minimal_and_login_has_security_headers(browser):
     assert page.headers['x-frame-options'] == 'DENY'
     assert "script-src 'self'" in page.headers['content-security-policy']
     assert 'autocomplete="current-password"' in page.text
+    assert f'>v{__version__}</a>' in page.text
+    assert 'aria-label="Projekt Subtitle Agent na GitHubie"' in page.text
+    assert browser.get('/static/github.svg').status_code == 200
     assert browser.get('/static/login.js').status_code == 200
     assert browser.get('/login', headers={'Host':'evil.example'}).status_code == 400
 

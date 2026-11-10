@@ -1,3 +1,5 @@
+from app import __version__
+
 import logging
 from contextlib import asynccontextmanager
 
@@ -55,13 +57,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await app.state.ai_queue.close()
             await app.state.jobs.close()
 
-    app = FastAPI(title=config.app_name, lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+    app = FastAPI(title=config.app_name, version=__version__, lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.add_middleware(AuthMiddleware, settings=config)
     app.state.settings = config
     app.state.ai_operations = {}
     app.state.ai_health = ApiHealth()
     app.mount("/static", StaticFiles(directory="app/static"), name="static")
     templates = Jinja2Templates(directory="app/templates")
+    templates.env.globals["app_version"] = __version__
 
     @app.exception_handler(QueueBusy)
     async def queue_busy(_: Request, exc: QueueBusy):
