@@ -231,4 +231,5 @@ button:focus-visible, a:focus-visible, .console:focus-visible { outline: 3px sol
 
 .model-input-row { display: flex; align-items: stretch; gap: 8px; margin-top: 6px; }
 #ai-settings .model-input-row input { margin-top: 0; }
-.model-input-row button { flex: 0 0 44px; padding: 0; }
+.model-input-row button { flex: 0 0 auto; padding: 11px 16px; }
+#delete-model { margin-left: auto; }
