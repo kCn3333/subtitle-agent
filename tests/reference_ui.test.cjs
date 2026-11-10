@@ -35,6 +35,7 @@ for (const workpack of [null, {referenceAmbiguous:false}]) {
     assert.equal(ui.get('#reference-field').hidden, false);
     assert.equal(ui.get('#reference-actions').hidden, false);
     assert.equal(ui.get('#reference-question').hidden, true);
+    assert.equal(ui.get('#reference-label').className, '');
     assert.match(ui.get('#reference-summary').textContent, /Wybrana referencja: #4/);
     const options = ui.get('#reference-source').options;
     assert.equal(options[0].value, 'embedded:4');
@@ -60,6 +61,7 @@ test('single external reference still requires explicit confirmation', () => {
     englishRanking:[{sourceType:'external', name:'movie.en.srt', score:70}]});
   assert.equal(ui.get('#reference-choice').hidden, false);
   assert.equal(ui.get('#reference-question').hidden, false);
+  assert.equal(ui.get('#reference-label').className, 'sr-only');
   assert.equal(ui.get('#reference-summary').hidden, true);
   assert.equal(ui.get('#current-status').hidden, true);
   assert.equal(ui.get('#reference-field').hidden, false);

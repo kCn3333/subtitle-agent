@@ -78,6 +78,7 @@ function referenceControls(report){const selected=report.selectedReference||repo
   summary.hidden=!selected||confirmationRequired;
   summary.textContent=selected?`Wybrana referencja: ${referenceLabel(selected)}`:'';
   document.querySelector('#reference-question').hidden=!confirmationRequired;
+  document.querySelector('#reference-label').className=confirmationRequired?'sr-only':'';
   document.querySelector('#reference-field').hidden=!canChoose;
   referenceActions.hidden=!canChoose;
   document.querySelector('#rebuild').textContent=confirmationRequired?'Tak, użyj jako wzorca':pack?.referenceAmbiguous?'Zatwierdź wybór':'Zbuduj ponownie';
