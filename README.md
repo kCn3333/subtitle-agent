@@ -1,4 +1,6 @@
-# Subtitle Agent
+# <img src="app/static/logo.svg" width="48" height="48" alt=""> Subtitle Agent
+
+**napisy · synchronizacja · AI**
 
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-74c7ec?style=flat-square&logo=python&logoColor=74c7ec&labelColor=131b26)](Dockerfile)
 [![FastAPI](https://img.shields.io/badge/FastAPI-backend-3ddc84?style=flat-square&logo=fastapi&logoColor=3ddc84&labelColor=131b26)](requirements.txt)
