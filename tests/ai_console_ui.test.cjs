@@ -58,7 +58,7 @@ test('settings preserve selected reasoning and optional output limit in save pay
   let saved;
   const context={document:{querySelector:get,createElement:()=>({}),hidden:false},setInterval(){},
     fetch:async(url,options)=>({ok:true,json:async()=>{
-      if(url.endsWith('/activate')&&options?.method==='POST'){saved=JSON.parse(options.body).settings;return saved}
+      if(url.endsWith('/save')&&options?.method==='POST'){saved=JSON.parse(options.body).settings;return saved}
       if(url.endsWith('/console'))return {entries:[]};
       return {api_url:'http://test/v1',model:'test',timeout_seconds:600,reasoning_effort:'low',max_output_tokens:131072};
     }})};

@@ -47,6 +47,12 @@ async def activate_configuration(payload: ModelConfiguration, request: Request):
     return request.app.state.ai_settings.activate(resolve_configuration(request, payload)).public()
 
 
+@router.post('/api/settings/ai/save')
+async def persist_configuration(payload: ModelConfiguration, request: Request):
+    settings = resolve_configuration(request, payload)
+    return request.app.state.ai_settings.save(settings, preserve_key=False).public()
+
+
 @router.get('/api/settings/ai/models')
 async def saved_models(request: Request):
     return {**request.app.state.ai_settings.models(), 'limit': request.app.state.settings.ai_max_saved_models}

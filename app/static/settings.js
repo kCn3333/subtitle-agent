@@ -41,7 +41,7 @@ async function refreshModels(preferred){
   const empty=document.createElement('option');empty.value='';empty.textContent='Nowy model / konfiguracja tymczasowa';savedModelSelect.append(empty);
   for(const model of savedModels){const option=document.createElement('option');option.value=model.id;option.textContent=`${model.model} · ${model.api_url}`;savedModelSelect.append(option)}
   savedModelSelect.value=selectedModelId||'';
-  document.querySelector('#saved-model-count').textContent=`Zapisane modele: ${savedModels.length}/${body.limit||10}. Limit zmienisz w Ustawieniach.`;
+  document.querySelector('#saved-model-count').textContent=`Zapisane modele: ${savedModels.length}/${body.limit||10}`;
   document.querySelector('#delete-model').disabled=settingsBusy||!selectedModelId;
 }
 async function waitForAiTest(state){
@@ -52,14 +52,20 @@ async function waitForAiTest(state){
   if(state.status==='failed')throw new Error(state.error?.message||'Test połączenia nie powiódł się.');return state;
 }
 async function saveAiSettings(test){
-  setSettingsBusy(true);settingsStatus.textContent=test?'Testowanie konfiguracji…':'Aktywowanie konfiguracji…';
+  setSettingsBusy(true);settingsStatus.textContent=test?'Testowanie konfiguracji…':'Zapisywanie konfiguracji…';
   try{
     if(test){await waitForAiTest(await settingsRequest('/api/settings/ai/test',jsonRequest(modelDraft())));settingsStatus.textContent='Połączenie poprawne.'}
     else{
-      displaySettings(await settingsRequest('/api/settings/ai/activate',jsonRequest(modelDraft())));
-      keySourceId='active';await refreshModels(null);
+      const draft=modelDraft();
+      if(selectedModelId){
+        const result=await settingsRequest('/api/settings/ai/models',jsonRequest(draft));
+        displaySettings(result.settings);keySourceId=result.id;await refreshModels(result.id);
+      }else{
+        displaySettings(await settingsRequest('/api/settings/ai/save',jsonRequest(draft)));
+        keySourceId='active';await refreshModels();
+      }
       if(typeof refreshHeaderHealth==='function')refreshHeaderHealth();
-      settingsStatus.textContent='Konfiguracja aktywna bez zapisu na liście. Obowiązuje do restartu aplikacji lub wyboru innego modelu.';
+      settingsStatus.textContent='Ustawienia zapisane i aktywne.';
     }
   }catch(error){settingsStatus.textContent=error.message}finally{setSettingsBusy(false)}
 }
@@ -68,14 +74,15 @@ document.querySelector('#test-api').addEventListener('click',()=>{if(settingsFor
 document.querySelector('#save-model').addEventListener('click',async()=>{
   if(!settingsForm.reportValidity())return;setSettingsBusy(true);
   try{
-    const result=await settingsRequest('/api/settings/ai/models',jsonRequest(modelDraft()));
+    const draft=modelDraft();draft.model_id=null;
+    const result=await settingsRequest('/api/settings/ai/models',jsonRequest(draft));
     displaySettings(result.settings);keySourceId=result.id;await refreshModels(result.id);
     if(typeof refreshHeaderHealth==='function')refreshHeaderHealth();settingsStatus.textContent='Model zapisany na liście i aktywny.';
   }catch(error){settingsStatus.textContent=error.message}finally{setSettingsBusy(false)}
 });
 savedModelSelect.addEventListener('change',async()=>{
   const modelId=savedModelSelect.value;
-  if(!modelId){selectedModelId=null;keySourceId=null;displaySettings({api_url:'',model:'',timeout_seconds:120});setSettingsBusy(false);settingsStatus.textContent='Wpisz konfigurację. Możesz ją przetestować lub użyć bez zapisywania.';return}
+  if(!modelId){selectedModelId=null;keySourceId=null;displaySettings({api_url:'',model:'',timeout_seconds:120});setSettingsBusy(false);settingsStatus.textContent='Wpisz konfigurację. Możesz ją przetestować, zapisać lub dodać do listy.';return}
   setSettingsBusy(true);
   try{
     const settings=await settingsRequest(`/api/settings/ai/models/${encodeURIComponent(modelId)}/activate`,{method:'POST'});

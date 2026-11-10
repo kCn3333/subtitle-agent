@@ -23,7 +23,7 @@ async function setup(){
       else if(url.endsWith('/test'))result={status:'completed'};
       else if(url.includes('/models/')&&options?.method==='DELETE'){models=models.filter(row=>!url.includes(row.id));result={deleted:true}}
       else if(url.includes('/models/')&&url.endsWith('/activate')){active={...models.find(row=>url.includes(row.id))};delete active.id;result=active}
-      else if(url.endsWith('/activate')){active={...body.settings,api_key_set:body.settings.api_key?true:active.api_key_set};delete active.api_key;result=active}
+      else if(url.endsWith('/save')){active={...body.settings,api_key_set:body.settings.api_key?true:active.api_key_set};delete active.api_key;result=active}
       else if(url.endsWith('/models')&&options?.method==='POST'){
         const id=body.model_id||'new-id';const row={id,...body.settings,api_key_set:active.api_key_set};
         delete row.api_key;models=models.filter(model=>model.id!==id);models.push(row);active={...row};delete active.id;
@@ -36,7 +36,7 @@ async function setup(){
   await new Promise(setImmediate);
   return {get,requests,active:()=>active};
 }
-test('AI form can test and use drafts without saving, then save, select and remove a model',async()=>{
+test('AI form tests drafts, persists settings separately and adds models without overwriting selection',async()=>{
   const {get,requests,active}=await setup();
   assert.equal(get('#saved-model').value,'first-id');
   assert.equal(get('#delete-model').disabled,false);
@@ -60,6 +60,14 @@ test('AI form can test and use drafts without saving, then save, select and remo
   assert.equal(get('#model').value,'first');
   assert.equal(get('#api-key').value,'');
   assert.equal(get('#api-key').placeholder,'••••••••');
+  get('#timeout').value='240';
+  await get('#ai-settings').handlers.submit({preventDefault(){}});
+  assert.equal(requests.at(-1).body.model_id,'first-id');
+  assert.equal(requests.at(-1).body.settings.timeout_seconds,240);
+  get('#model').value='another';
+  await get('#save-model').handlers.click();
+  assert.equal(requests.at(-1).body.model_id,null);
+  get('#saved-model').value='first-id';await get('#saved-model').handlers.change();
   get('#api-url').value='http://unrelated/v1';get('#api-url').handlers.input();
   assert.equal(get('#api-key').placeholder,'Wpisz klucz API');
   await get('#delete-model').handlers.click();

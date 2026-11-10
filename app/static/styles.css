@@ -228,3 +228,7 @@ button:focus-visible, a:focus-visible, .console:focus-visible { outline: 3px sol
 .settings-fields .settings-check { display: flex; align-items: center; gap: 8px; }
 .settings-check input { flex: 0 0 auto; margin: 0; }
 #app-settings-status:empty { display: none; }
+
+.model-input-row { display: flex; align-items: stretch; gap: 8px; margin-top: 6px; }
+#ai-settings .model-input-row input { margin-top: 0; }
+.model-input-row button { flex: 0 0 44px; padding: 0; }

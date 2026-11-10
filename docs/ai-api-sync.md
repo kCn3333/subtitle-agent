@@ -4,9 +4,9 @@
 
 W zakładce **AI**, w panelu **Ustawienia AI**, podaj adres osiągalny z kontenera aplikacji, model oraz klucz, jeśli dostawca go wymaga. `localhost` oznacza kontener aplikacji. Wybierz zapisany model z listy lub wpisz nową konfigurację.
 
-- **Testuj połączenie** sprawdza formularz bez zmiany aktywnej konfiguracji i bez zapisu na liście.
-- **Użyj bez zapisywania** aktywuje konfigurację do restartu aplikacji lub kolejnego wyboru. Zadania AI korzystają z niej od razu; nie trafia na listę modeli.
-- **Zapisz model** zapisuje i aktywuje konfigurację. Dla wybranej pozycji aktualizuje ją; ten sam adres API i identyfikator modelu nie tworzą duplikatu.
+- **Test połączenia** sprawdza formularz bez zmiany aktywnej konfiguracji i bez zapisu na liście.
+- **Zapisz** utrwala i aktywuje bieżące ustawienia. Jeśli wybrano model z listy, aktualizuje jego konfigurację. Bez wybranej pozycji zapisuje ustawienia poza listą modeli.
+- **+** obok nazwy dodaje model do listy i aktywuje go. Nie zastępuje poprzednio wybranej pozycji o innej nazwie; ten sam adres API i identyfikator modelu aktualizują istniejącą pozycję.
 - Wybór pozycji listy przywraca jej adres, parametry i klucz oraz aktywuje ją dla kolejnych zadań.
 - **Usuń model z listy** usuwa pozycję, zachowując aktywną konfigurację i trwające zadania.
 
@@ -57,6 +57,7 @@ Logowanie wymaga cookie i tokenu z `meta[name="login-csrf-token"]` strony `/logi
 | `POST /api/settings/ai/models` | Zapis/aktualizacja modelu i aktywacja |
 | `POST /api/settings/ai/models/{id}/activate` | Wybór zapisanej konfiguracji |
 | `DELETE /api/settings/ai/models/{id}` | Usunięcie pozycji z listy |
+| `POST /api/settings/ai/save` | Trwały zapis bieżącej konfiguracji poza listą |
 | `POST /api/settings/ai/activate` | Tymczasowa konfiguracja bez zapisu |
 | `GET/PUT /api/settings/ai` | Odczyt/zapis konfiguracji; klucz nie jest zwracany |
 | `POST /api/settings/ai/test` | Test bieżącej konfiguracji lub konfiguracji przekazanej w żądaniu, bez zapisywania |

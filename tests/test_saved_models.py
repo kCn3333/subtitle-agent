@@ -128,3 +128,20 @@ def test_models_require_session_and_csrf(client):
     client.cookies.clear()
     assert client.get('/api/settings/ai/models').status_code == 401
     assert client.post('/api/settings/ai/activate', json=configuration()).status_code == 401
+
+
+def test_save_current_settings_persists_without_adding_model_or_leaking_prior_key(client, settings):
+    first = client.post('/api/settings/ai/models', json=configuration('saved', 'private-key')).json()['id']
+    draft = configuration('standalone')
+    draft['key_source_id'] = first
+    response = client.post('/api/settings/ai/save', json=draft)
+    assert response.status_code == 200
+    assert response.json()['api_key_set']
+    assert 'private-key' not in response.text
+    store = ApiSettingsStore(settings.data_root / 'subtitle-agent.db')
+    assert store.get().model == 'standalone'
+    assert store.get().api_key.get_secret_value() == 'private-key'
+    assert [model['model'] for model in store.models()['models']] == ['saved']
+    draft['settings']['api_url'] = 'http://different/v1'
+    assert not client.post('/api/settings/ai/save', json=draft).json()['api_key_set']
+    assert ApiSettingsStore(settings.data_root / 'subtitle-agent.db').get().api_key is None

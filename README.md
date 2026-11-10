@@ -61,7 +61,7 @@ docker compose -f compose.example.yml up -d
 
 Domyślny adres nasłuchu to `127.0.0.1:8080`. Dostęp przez HTTPS zapewnia reverse proxy lub Cloudflare Tunnel. Worker OCR jest dostępny tylko w sieci wewnętrznej stosu. Wolumen `/data` przechowuje bazę SQLite, ustawienia, pliki robocze i archiwum.
 
-Zakładka **AI** zawiera listę zapisanych modeli, ustawienia i konsolę. Model można zapisać, wybrać, usunąć z listy albo przetestować i użyć bez zapisu. Domyślny limit 10 modeli zmienia się w Ustawieniach. W osobnej zakładce **Ustawienia** można zmieniać timeouty, OCR i limity paczek bez restartu. Zapis działa dla kolejnych zadań i pozostaje po restarcie. [Zakres ustawień aplikacji](docs/app-settings.md).
+Zakładka **AI** zawiera listę zapisanych modeli, ustawienia i konsolę. Model można zapisać, wybrać, usunąć z listy albo przetestować bez zapisu. Przycisk „+” dodaje model do listy, a „Zapisz” utrwala bieżące ustawienia. Domyślny limit 10 modeli zmienia się w Ustawieniach. W osobnej zakładce **Ustawienia** można zmieniać timeouty, OCR i limity paczek bez restartu. Zapis działa dla kolejnych zadań i pozostaje po restarcie. [Zakres ustawień aplikacji](docs/app-settings.md).
 
 Pełna lista zmiennych: [.env.example](.env.example). Ustawienia proxy, dostępu i wolumenów: [instrukcja wdrożenia](docs/deployment.md).
 

@@ -126,10 +126,10 @@ class ApiSettingsStore:
         with sqlite3.connect(self.db_path) as db:
             return self._stored(db)
 
-    def save(self, settings: ApiSettings) -> ApiSettings:
+    def save(self, settings: ApiSettings, *, preserve_key: bool = True) -> ApiSettings:
         with sqlite3.connect(self.db_path) as db:
             saved = self._active if self._active is not None else self._stored(db)
-            key = settings.api_key if settings.api_key is not None else saved.api_key
+            key = settings.api_key if settings.api_key is not None or not preserve_key else saved.api_key
             settings = settings.model_copy(update={'api_key': key})
             self._write(db, settings)
         self._active = None
