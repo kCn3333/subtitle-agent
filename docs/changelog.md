@@ -5,7 +5,7 @@ Historia opublikowanych wydań Subtitle Agent. Wersje mają format `MAJOR.MINOR.
 ## Niewydane
 
 - W nagłówku pozostaje tylko wskaźnik OCR, wyrównany do prawego rogu; usunięto stały napis ONLINE i wskaźnik API wraz z jego automatycznym odpytywaniem.
-- Nawigacja ma postać zakładek wyrównanych do prawej, z wyróżnieniem aktywnej strony bez błękitnego podkreślenia i większym odstępem od belki tytułowej.
+- Nawigacja ma postać przezroczystych przycisków wyrównanych do prawej, z kolorem tekstu aktywnej strony, delikatnym tłem po najechaniu i większym odstępem od belki tytułowej.
 - Na ekranach mobilnych menu jest rozwijane przyciskiem hamburgera; obsługuje zamykanie klawiszem Escape i kliknięciem poza menu.
 
 ## 1.0.0 — 2026-11-10

@@ -89,12 +89,13 @@ footer { padding: 22px 0 8px; color: var(--muted); font-size: 13px; text-align: 
 .app-header { display: block; }
 .brand-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
 .health-group .health { white-space: nowrap; }
-.app-nav { display: flex; align-items: stretch; justify-content: flex-end; gap: 4px; margin-top: 32px; padding: 0 0 0 4px; border-bottom: 1px solid #344258; }
-.nav-tab { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 12px 18px; border-bottom: 2px solid transparent; color: var(--muted); text-decoration: none; font-size: 14px; font-weight: 600; transition: color .15s, background .15s, border-color .15s; border-radius: 8px 8px 0 0; }
-.nav-tab:hover { color: var(--text); background: #26324480; }
-.nav-tab[aria-current="page"] { color: var(--blue); background: #17283a; }
+.app-nav { display: flex; align-items: stretch; justify-content: flex-end; gap: 4px; margin-top: 32px; padding: 0; }
+.nav-tab { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 12px 18px; background: transparent; color: var(--muted); text-decoration: none; font-size: 14px; font-weight: 600; transition: color .15s, background .15s, border-color .15s; border-radius: 8px; }
+.nav-tab:hover { color: var(--text); background: #ffffff06; }
+.nav-tab[aria-current="page"] { color: var(--blue); background: transparent; }
 .mobile-nav-controls { display: none; }
-#logout { display: inline-flex; flex: 0 0 40px; align-items: center; justify-content: center; width: 40px; margin: 3px 0 7px 8px; padding: 0; background: #4b5058; color: var(--text); }
+#logout { display: inline-flex; flex: 0 0 40px; align-items: center; justify-content: center; width: 40px; margin: 3px 0 7px 8px; padding: 0; background: transparent; color: var(--muted); }
+#logout:hover { color: var(--text); background: #ffffff06; }
 #logout .fa-solid { margin-right: 0; }
 button .fa-solid, .button .fa-solid { margin-right: 5px; }
 
@@ -117,12 +118,11 @@ button .fa-solid, .button .fa-solid { margin-right: 5px; }
   .brand-row .brand-logo { width: 42px; height: 42px; }
   .health-group .health { font-size: 11px; padding: 6px 8px; }
   .mobile-nav-controls { display: flex; justify-content: flex-end; margin-top: 24px; }
-  #nav-toggle { display: inline-flex; align-items: center; gap: 8px; background: #263244; border: 1px solid #344258; }
+  #nav-toggle { display: inline-flex; align-items: center; gap: 8px; background: transparent; border: 1px solid #ffffff14; }
   #nav-toggle .fa-solid { margin: 0; }
   .app-nav { display: none; margin-top: 10px; padding: 6px; flex-direction: column; gap: 4px; border: 1px solid #344258; border-radius: 10px; background: var(--panel); }
   .app-nav.is-open { display: flex; }
-  .nav-tab { justify-content: flex-start; min-height: 44px; border: 0; border-left: 2px solid transparent; border-radius: 6px; padding: 11px 14px; }
-  .nav-tab[aria-current="page"] { border-left-color: var(--blue); }
+  .nav-tab { justify-content: flex-start; min-height: 44px; border: 0; border-radius: 6px; padding: 11px 14px; }
   #logout { min-height: 40px; flex-basis: auto; margin: 4px 0 0 auto; }
 
 }
