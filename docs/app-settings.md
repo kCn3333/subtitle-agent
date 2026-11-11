@@ -48,3 +48,25 @@ haseł ani parametrów automatycznej publikacji.
 i rozmiarami w bajtach. `PUT /api/settings/app` przyjmuje kompletny zestaw tych pól;
 nieznane pola i nieprawidłowe wartości zwracają `422` bez częściowego zapisu.
 Oba endpointy wymagają sesji, a zapis również poprawnego tokenu CSRF.
+
+## Powiadomienia przeglądarkowe
+
+Osobny panel **Powiadomienia** pozwala włączyć, wyłączyć i przetestować komunikaty
+systemowe. Wymaga HTTPS (localhost jest wyjątkiem), obsługiwanej przeglądarki oraz
+zgody udzielonej po kliknięciu „Włącz powiadomienia”. Odmowę można zmienić w
+ustawieniach uprawnień witryny w przeglądarce. Wyświetlanie może blokować także system,
+np. tryb „Nie przeszkadzać”. Preferencja jest lokalna dla przeglądarki i adresu aplikacji;
+nie trafia do SQLite ani Compose.
+
+Pozostaw otwartą kartę aplikacji. Może działać w tle albo pokazywać AI, Ustawienia lub
+Archiwum. Monitorowane są zadania rozpoczęte przy włączonej funkcji oraz przywrócone
+aktywne zadanie. Aplikacja informuje o zakończeniu analizy, workpacka i operacji AI,
+błędzie, przerwaniu i wymaganym wyborze referencji. Katalog daje jedno powiadomienie
+końcowe dla całej kolejki; oczekiwanie na decyzję może wystąpić dla kolejnych odcinków.
+Kliknięcie otwiera odpowiednie zadanie. Odświeżanie strony nie powtarza już pokazanych
+komunikatów.
+
+Nie ma Web Push. Service worker obsługuje wyłącznie wyświetlenie i kliknięcie
+powiadomienia, także w obsługiwanych przeglądarkach mobilnych; nie odpytuje zadań po
+zamknięciu karty. Zamknięcie, uśpienie lub zamrożenie karty i ograniczenia pracy w tle
+mogą uniemożliwić albo opóźnić komunikat.

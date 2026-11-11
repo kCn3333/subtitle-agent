@@ -12,6 +12,7 @@ function setup(){
     get outerHTML(){return String(this.textContent??'')}}}
   function get(selector){if(!elements.has(selector))elements.set(selector,element());return elements.get(selector)}
   const context={document:{querySelector:get,createElement:element},requestAnimationFrame:callback=>callback(),
+    notificationJobs:[],taskNotifications:{trackJob:(...args)=>context.notificationJobs.push(args)},
     setInterval(){return 1},clearInterval(){},localStorage:{getItem:key=>storage.get(key),setItem:(key,value)=>storage.set(key,value),removeItem:key=>storage.delete(key)},
     EventSource:class{constructor(){this.listeners={};connections.push(this)}addEventListener(event,handler){this.listeners[event]=handler}close(){this.closed=true}},
     hideAiHandoff(){get('#ai-sync-panel').hidden=true;get('#ai-sync-button').hidden=true},
@@ -45,6 +46,7 @@ test('starting a film clears previous episode lists before POST completes and ig
   finishPost({ok:true,json:async()=>({jobId:'new-film',jobType:'PREPARE_WORKPACK',displayTitle:'Movie'})});await pending;
   assert.equal(get('#batch-progress').hidden,true);
   assert.equal(storage.get('subtitleAgentWorkpackJobId'),'new-film');
+  assert.equal(context.notificationJobs.at(-1)[0],'new-film');
   assert.equal(connections.length,2);
 });
 test('rejected new task does not restore the previous season view or download',async()=>{

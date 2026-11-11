@@ -13,6 +13,7 @@ async function setup(response,state={status:'idle'},directory=null){
   const get=selector=>{if(!elements.has(selector))elements.set(selector,element());return elements.get(selector)};
   get('#reference-source').value='embedded:4';
   const context={output:get('#console'),now:0,document:{querySelector:get,createElement:element},activeJobId:'job',form:get('#job-form'),
+    notificationOperations:[],taskNotifications:{trackAi:(...args)=>context.notificationOperations.push(args)},
     referenceSelect:get('#reference-source'),sourceId:item=>`embedded:${item.streamIndex}`,logs:[],sent:[],progress:[],renderDirectoryAiProgress(state){context.progress.push(state)},line(...args){context.logs.push(args)},
     fetch:(url,options)=>{if(options?.method==='POST'){context.sent.push({url,body:JSON.parse(options.body)});return Promise.resolve(response)}return Promise.resolve({ok:true,json:async()=>url.endsWith('/ai-inputs')?directory?.inputs:url.endsWith('/ai-status')?state:{result:null}})}};
   if(directory?.fromCache)context.activeDirectoryJob=directory.job;
@@ -264,6 +265,7 @@ test('202 acceptance waits for status instead of displaying an unfinished result
   assert.equal(get('#ai-download').hidden,true);
   assert.equal(get('#ai-sync-button-label').textContent,'Oczekuje w kolejce…');
   assert.equal(context.logs.filter(entry=>entry[1].endsWith('_SUMMARY')).length,0);
+  assert.ok(context.notificationOperations.some(([id,job])=>id==='new-op'&&job==='job'));
 });
 
 function directoryFixture(mode='PREPARE_SYNC',available=true){

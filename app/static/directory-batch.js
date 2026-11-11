@@ -112,6 +112,7 @@ async function continueDirectoryBatch(action){
       body:JSON.stringify({action,referenceSourceId:action==='reference'?referenceSelect.value:null})});
     const body=await response.json();
     if(!response.ok)throw new Error(body.detail?.message||'Nie udało się wznowić katalogu');
+    if(typeof taskNotifications!=='undefined')taskNotifications.trackJob(jobId,true);
     await load(jobId);connect(jobId,body.afterSequence);
   }catch(error){line('ERROR','BATCH',error.message)}
   finally{controls.forEach(button=>button.disabled=false)}

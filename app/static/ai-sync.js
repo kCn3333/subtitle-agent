@@ -38,6 +38,7 @@ function applyAiState(state,jobId,restoreInputs=false){
   if(aiDirectory&&state.batch&&(restoreInputs||['queued','running'].includes(state.status)))restoreDirectoryChoices(state.items||[]);
   if(state.batch&&typeof renderDirectoryAiProgress==='function')renderDirectoryAiProgress(state);
   if(['queued','running'].includes(state.status)){
+    if(typeof taskNotifications!=='undefined')taskNotifications.trackAi(state.operation_id,jobId);
     aiQueued=state.status==='queued';aiQueuePosition=state.queue_position;
     aiRunning=true;aiRequestJobId=jobId;aiRequestMode=state.mode;aiMediaTitle=state.title||aiMediaTitle;
     aiObservedOperation=state.operation_id;aiPhase=state.phase||'Oczekiwanie na odpowiedź modelu';
@@ -147,7 +148,7 @@ aiButton.addEventListener('click',async()=>{
       body:JSON.stringify(payload)});
     const body=await response.json();
     if(response.status===409){aiPostPending=false;await refreshAiStatus(jobId);return}
-    if(response.status===202){aiPostPending=false;applyAiState(body,jobId);return}
+    if(response.status===202){if(typeof taskNotifications!=='undefined')taskNotifications.trackAi(body.operation_id,jobId);aiPostPending=false;applyAiState(body,jobId);return}
     stopAiElapsed();
     aiSeenOperation=body.operation_id||body.detail?.operation_id||aiObservedOperation;
     if(!response.ok){const error=new Error(body.detail?.message||'Operacja AI nie powiodła się');error.metrics=body.detail;throw error}

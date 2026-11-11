@@ -29,6 +29,14 @@ def test_index_is_html(client):
     assert 'href="/settings"' in response.text
     assert response.text.index('id="download"') < response.text.index('id="results"')
 
+    assert '/static/notifications.js?v=' in response.text
+    settings_page = client.get('/settings').text
+    assert 'id="notifications-toggle"' in settings_page and 'id="notifications-test"' in settings_page
+    worker = client.get('/notifications-worker.js')
+    assert worker.status_code == 200
+    assert 'application/javascript' in worker.headers['content-type']
+    assert 'notificationclick' in worker.text
+
     styles = client.get("/static/styles.css")
     assert styles.status_code == 200
     assert "text/css" in styles.headers["content-type"]
