@@ -2,6 +2,12 @@
 
 Historia opublikowanych wydań Subtitle Agent. Wersje mają format `MAJOR.MINOR.PATCH`; tag Git i numer w interfejsie odpowiadają wartości `__version__` w [app/__init__.py](../app/__init__.py).
 
+## Niewydane
+
+- W nagłówku pozostaje tylko wskaźnik OCR, wyrównany do prawego rogu; usunięto stały napis ONLINE i wskaźnik API wraz z jego automatycznym odpytywaniem.
+- Nawigacja ma postać zakładek z wyróżnieniem aktywnej strony i większym odstępem od belki tytułowej.
+- Na ekranach mobilnych menu jest rozwijane przyciskiem hamburgera; obsługuje zamykanie klawiszem Escape i kliknięciem poza menu.
+
 ## 1.0.0 — 2026-11-10
 
 Pierwsze oznaczone wydanie projektu, obejmujące dotychczasowy zakres aplikacji. Wcześniejszy rozwój jest dostępny w historii commitów.

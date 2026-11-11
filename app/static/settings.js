@@ -64,7 +64,6 @@ async function saveAiSettings(test){
         displaySettings(await settingsRequest('/api/settings/ai/save',jsonRequest(draft)));
         keySourceId='active';await refreshModels();
       }
-      if(typeof refreshHeaderHealth==='function')refreshHeaderHealth();
       settingsStatus.textContent='Ustawienia zapisane i aktywne.';
     }
   }catch(error){settingsStatus.textContent=error.message}finally{setSettingsBusy(false)}
@@ -77,7 +76,7 @@ document.querySelector('#save-model').addEventListener('click',async()=>{
     const draft=modelDraft();draft.model_id=null;
     const result=await settingsRequest('/api/settings/ai/models',jsonRequest(draft));
     displaySettings(result.settings);keySourceId=result.id;await refreshModels(result.id);
-    if(typeof refreshHeaderHealth==='function')refreshHeaderHealth();settingsStatus.textContent='Model zapisany na liście i aktywny.';
+    settingsStatus.textContent='Model zapisany na liście i aktywny.';
   }catch(error){settingsStatus.textContent=error.message}finally{setSettingsBusy(false)}
 });
 savedModelSelect.addEventListener('change',async()=>{
@@ -87,7 +86,7 @@ savedModelSelect.addEventListener('change',async()=>{
   try{
     const settings=await settingsRequest(`/api/settings/ai/models/${encodeURIComponent(modelId)}/activate`,{method:'POST'});
     selectedModelId=modelId;keySourceId=modelId;displaySettings(settings);
-    if(typeof refreshHeaderHealth==='function')refreshHeaderHealth();settingsStatus.textContent='Wybrany model jest aktywny.';
+    settingsStatus.textContent='Wybrany model jest aktywny.';
   }catch(error){savedModelSelect.value=selectedModelId||'';settingsStatus.textContent=error.message}finally{setSettingsBusy(false)}
 });
 document.querySelector('#delete-model').addEventListener('click',async()=>{
@@ -107,7 +106,7 @@ document.querySelector('#clear-key').addEventListener('click',async()=>{
     if(selectedModelId){await settingsRequest('/api/settings/ai/models',jsonRequest(draft));await refreshModels(selectedModelId)}
     else await settingsRequest('/api/settings/ai/activate',jsonRequest(draft));
     document.querySelector('#api-key').value='';keyAvailable=false;displayKeyState({api_key_set:false});
-    if(typeof refreshHeaderHealth==='function')refreshHeaderHealth();settingsStatus.textContent='Klucz API został usunięty.';
+    settingsStatus.textContent='Klucz API został usunięty.';
   }catch(error){settingsStatus.textContent=error.message}finally{setSettingsBusy(false)}
 });
 settingsRequest('/api/settings/ai').then(async settings=>{

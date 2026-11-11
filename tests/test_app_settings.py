@@ -38,8 +38,8 @@ def test_runtime_settings_are_allowlisted_persistent_and_rename_settings_page(cl
     assert 'id="ai-settings"' in ai_page.text and 'id="ai-console"' in ai_page.text
     assert 'id="app-settings-panel"' not in ai_page.text
     assert '/static/app-settings.js?' not in ai_page.text
-    assert 'href="/ai" class="button" aria-current="page"' in ai_page.text
-    assert 'href="/settings" class="button" aria-current="page"' in page
+    assert 'href="/ai" class="nav-tab" aria-current="page"' in ai_page.text
+    assert 'href="/settings" class="nav-tab" aria-current="page"' in page
     assert all(f'data-setting="{name}"' in page for name in data)
 
 

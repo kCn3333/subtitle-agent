@@ -77,11 +77,15 @@ async def test_health_fallback_and_network_failure():
     assert not (await ApiHealth().check(ApiSettings()))['configured']
 
 
-def test_health_route_unconfigured_and_badge_on_all_pages(client):
+def test_health_route_unconfigured_and_only_ocr_badge_on_all_pages(client):
     response = client.get('/api/settings/ai/health')
     assert response.status_code == 200
     assert response.json()['configured'] is False
-    for page in ('/', '/settings', '/archive'):
+    for page in ('/', '/ai', '/settings', '/archive'):
         html = client.get(page).text
-        assert 'id="api-health"' in html
+        assert 'id="api-health"' not in html
+        assert '● ONLINE' not in html
+        assert 'id="ocr-health"' in html
+        assert 'aria-controls="app-navigation"' in html
+        assert html.count('aria-current="page"') == 1
         assert '/static/header.js' in html
