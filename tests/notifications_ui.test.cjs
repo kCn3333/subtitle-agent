@@ -26,27 +26,59 @@ function setup({store=new Map(),permission='granted',secure=true,supported=true,
   if(supported)context.window.Notification=Notice;
   runInNewContext(readFileSync('app/static/notifications.js','utf8'),context);
   handlers.DOMContentLoaded();
-  return {context,get,shown,states,store,requests,Notice,windowHandlers,api:context.taskNotifications};
+  return {context,get,shown,states,store,requests,Notice,windowHandlers,handlers,api:context.taskNotifications};
 }
 const preference='subtitleAgentNotifications';
 
-test('notifications require opt-in, permission and HTTPS; test and disable are local',async()=>{
+test('switch defaults on without a permission prompt, preserves disabling and requests permission on activation',async()=>{
   const ui=setup({permission:'default'});
+  assert.equal(ui.get('#notifications-toggle').checked,true);
   assert.equal(ui.Notice.requests,0);
-  ui.api.trackJob('before-opt-in');await ui.api.poll();assert.equal(ui.requests.length,0);
-  await ui.get('#notifications-toggle').handlers.click();
-  assert.equal(ui.Notice.requests,1);
-  assert.equal(ui.get('#notifications-test').disabled,false);
-  await ui.get('#notifications-test').handlers.click();assert.equal(ui.shown.length,1);
-  await ui.get('#notifications-toggle').handlers.click();
+  await ui.api.poll();assert.equal(ui.requests.length,0);
+  ui.get('#notifications-toggle').checked=false;
+  await ui.get('#notifications-toggle').handlers.change();
+  assert.equal(ui.store.get(preference),'false');
   ui.api.trackJob('disabled');await ui.api.poll();assert.equal(ui.requests.length,0);
-  assert.equal(ui.get('#notifications-test').disabled,true);
+  assert.equal(setup({store:ui.store}).get('#notifications-toggle').checked,false);
+  ui.get('#notifications-toggle').checked=true;
+  await ui.get('#notifications-toggle').handlers.change();
+  assert.equal(ui.Notice.requests,1);assert.equal(ui.get('#notifications-toggle').checked,true);
+  assert.equal(ui.store.get(preference),'true');
   assert.equal(setup({secure:false}).get('#notifications-toggle').disabled,true);
   assert.equal(setup({supported:false}).get('#notifications-toggle').disabled,true);
   const denied=setup({permission:'denied'});
   assert.equal(denied.get('#notifications-toggle').disabled,true);
-  assert.match(denied.get('#notifications-status').textContent,/zablokowane/);
+  assert.equal(denied.get('#notifications-toggle').checked,false);
+  assert.match(denied.get('#notifications-toggle').title,/Zezwól/);
   assert.equal(denied.Notice.requests,0);
+});
+
+test('default-on notifications request permission from a task-start click, once per page',async()=>{
+  const ui=setup({permission:'default'});
+  const click={target:{closest:selector=>selector.includes('#job-form')?{}:null}};
+  ui.handlers.click(click);await new Promise(setImmediate);
+  assert.equal(ui.Notice.requests,1);
+  ui.handlers.click(click);await new Promise(setImmediate);
+  assert.equal(ui.Notice.requests,1);
+  ui.api.trackJob('job');ui.states.set('/api/tasks/job',{status:'WORKPACK_READY'});
+  await ui.api.poll();assert.equal(ui.shown.length,1);
+  const disabled=setup({store:new Map([[preference,'false']]),permission:'default'});
+  disabled.handlers.click(click);await new Promise(setImmediate);assert.equal(disabled.Notice.requests,0);
+  const dismissed=setup({permission:'default'});
+  dismissed.Notice.requestPermission=async()=>{dismissed.Notice.requests++;return 'default'};
+  dismissed.handlers.click(click);await new Promise(setImmediate);
+  dismissed.handlers.click(click);await new Promise(setImmediate);
+  assert.equal(dismissed.Notice.requests,1);
+});
+
+test('a fast task completed during the permission prompt is notified after permission is granted',async()=>{
+  const ui=setup({permission:'default'});let grant;
+  ui.Notice.requestPermission=()=>new Promise(resolve=>grant=()=>{ui.Notice.permission='granted';resolve('granted')});
+  ui.handlers.click({target:{closest:()=>({})}});
+  ui.api.trackJob('fast');ui.states.set('/api/tasks/fast',{status:'WORKPACK_READY'});
+  await ui.api.poll();assert.equal(ui.shown.length,0);
+  grant();await new Promise(setImmediate);await ui.api.poll();
+  assert.equal(ui.shown.length,1);
 });
 
 test('directory completion is notified once, persists across page navigation and opens the task',async()=>{

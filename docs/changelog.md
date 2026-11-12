@@ -4,7 +4,7 @@ Historia opublikowanych wydań Subtitle Agent. Wersje mają format `MAJOR.MINOR.
 
 ## Niewydane
 
-- Opcjonalne powiadomienia przeglądarkowe o zakończeniu zadań, błędach i wymaganej decyzji; działają przy otwartej karcie, z lokalną zgodą i przyciskiem testowym w Ustawieniach.
+- Opcjonalne powiadomienia przeglądarkowe o zakończeniu zadań, błędach i wymaganej decyzji; działają przy otwartej karcie, z lokalną zgodą i domyślnie włączonym przełącznikiem w panelu Ustawień.
 
 - W nagłówku pozostaje tylko wskaźnik OCR, wyrównany do prawego rogu; usunięto stały napis ONLINE i wskaźnik API wraz z jego automatycznym odpytywaniem.
 - Nawigacja ma postać przezroczystych przycisków wyrównanych do prawej, z kolorem tekstu aktywnej strony, delikatnym tłem po najechaniu i większym odstępem od belki tytułowej.

@@ -51,12 +51,13 @@ Oba endpointy wymagają sesji, a zapis również poprawnego tokenu CSRF.
 
 ## Powiadomienia przeglądarkowe
 
-Osobny panel **Powiadomienia** pozwala włączyć, wyłączyć i przetestować komunikaty
-systemowe. Wymaga HTTPS (localhost jest wyjątkiem), obsługiwanej przeglądarki oraz
-zgody udzielonej po kliknięciu „Włącz powiadomienia”. Odmowę można zmienić w
-ustawieniach uprawnień witryny w przeglądarce. Wyświetlanie może blokować także system,
-np. tryb „Nie przeszkadzać”. Preferencja jest lokalna dla przeglądarki i adresu aplikacji;
-nie trafia do SQLite ani Compose.
+Przełącznik **Powiadomienia w przeglądarce** w panelu ustawień jest domyślnie włączony.
+Zapamiętane wyłączenie pozostaje zachowane. Wymaga HTTPS (localhost jest wyjątkiem),
+obsługiwanej przeglądarki oraz zgody użytkownika. Przy pierwszym uruchomieniu zadania
+lub ręcznym włączeniu przełącznika przeglądarka może poprosić o zgodę. Samo otwarcie
+strony nie wyświetla prośby. Po odmowie zgodę można zmienić w ustawieniach witryny
+w przeglądarce. Wyświetlanie może blokować także system, np. tryb „Nie przeszkadzać”.
+Preferencja jest lokalna dla przeglądarki i adresu aplikacji; nie trafia do SQLite ani Compose.
 
 Pozostaw otwartą kartę aplikacji. Może działać w tle albo pokazywać AI, Ustawienia lub
 Archiwum. Monitorowane są zadania rozpoczęte przy włączonej funkcji oraz przywrócone

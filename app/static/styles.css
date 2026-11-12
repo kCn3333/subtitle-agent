@@ -259,3 +259,10 @@ button:focus-visible, a:focus-visible, .console:focus-visible { outline: 3px sol
 .brand-github { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 6px; opacity: .75; }
 .brand-github:hover { opacity: 1; background: var(--line); }
 .brand-github img { display: block; }
+
+.notification-setting { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 20px 0; color: var(--text); font-size: 14px; }
+#notifications-toggle { appearance: none; flex: 0 0 40px; width: 40px; height: 24px; margin: 0; padding: 2px; border: 1px solid #344258; border-radius: 99px; background: #263244; cursor: pointer; transition: background .15s; }
+#notifications-toggle::before { display: block; content: ''; width: 18px; height: 18px; border-radius: 50%; background: var(--text); transition: transform .15s; }
+#notifications-toggle:checked { background: #1c6ba5; border-color: #438fc4; }
+#notifications-toggle:checked::before { transform: translateX(16px); }
+#notifications-toggle:disabled { cursor: not-allowed; opacity: .5; }

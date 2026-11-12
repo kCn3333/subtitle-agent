@@ -1,11 +1,12 @@
 // Notifications are driven by open pages, without Web Push or background polling in a worker.
 var taskNotifications=(()=>{
   const preference='subtitleAgentNotifications',watchKey='subtitleAgentNotificationTasks';
-  let polling=false,registrationPromise=null;
+  let polling=false,registrationPromise=null,requesting=false,permissionAttempted=false;
   const read=(key,fallback)=>{try{return JSON.parse(localStorage.getItem(key))??fallback}catch{return fallback}};
   const write=(key,value)=>{try{localStorage.setItem(key,JSON.stringify(value));return true}catch{return false}};
   const supported=()=>window.isSecureContext&&'Notification' in window;
-  const enabled=()=>supported()&&Notification.permission==='granted'&&read(preference,false)===true;
+  const wanted=()=>read(preference,true)===true;
+  const enabled=()=>supported()&&Notification.permission==='granted'&&wanted();
   const withLock=action=>navigator.locks?navigator.locks.request('subtitle-agent-notifications',action):action();
   const taskUrl=id=>`/?task=${encodeURIComponent(id)}`;
 
@@ -34,28 +35,32 @@ var taskNotifications=(()=>{
     notification.onclick=()=>{window.focus();window.location.assign(options.data.url);notification.close()};
   }
   function controls(){
-    const button=document.querySelector('#notifications-toggle'),test=document.querySelector('#notifications-test'),status=document.querySelector('#notifications-status');
-    if(!button)return;
-    button.disabled=!supported()||Notification.permission==='denied';
-    button.textContent=enabled()?'Wyłącz powiadomienia':'Włącz powiadomienia';
-    test.disabled=!enabled();
-    status.textContent=!window.isSecureContext?'Powiadomienia wymagają HTTPS (lub localhost).':
+    const input=document.querySelector('#notifications-toggle');if(!input)return;
+    input.disabled=!supported()||Notification.permission==='denied';
+    input.checked=wanted()&&supported()&&Notification.permission!=='denied';
+    input.title=!window.isSecureContext?'Powiadomienia wymagają HTTPS.':
       !('Notification' in window)?'Ta przeglądarka nie obsługuje powiadomień.':
-      Notification.permission==='denied'?'Powiadomienia są zablokowane. Zezwól na nie w ustawieniach tej witryny w przeglądarce.':
-      enabled()?'Powiadomienia włączone w tej przeglądarce. Pozostaw otwartą kartę aplikacji.':'Powiadomienia są wyłączone w tej przeglądarce.';
+      Notification.permission==='denied'?'Zezwól na powiadomienia w ustawieniach witryny w przeglądarce.':
+      Notification.permission==='default'?'Przeglądarka poprosi o zgodę przy uruchomieniu zadania.':'';
+  }
+  async function requestAccess(){
+    if(!supported()||!wanted()||Notification.permission!=='default'||requesting||permissionAttempted)return;
+    requesting=true;permissionAttempted=true;
+    try{
+      // Called from a task-start click or the switch's change handler.
+      await Notification.requestPermission();
+      if(enabled()){await restoreActive();poll()}
+    }catch{/* Browser permission failures must not interrupt a task. */}
+    finally{requesting=false;controls()}
   }
   async function toggle(){
+    const input=document.querySelector('#notifications-toggle');
     if(!supported())return;
-    if(enabled()){write(preference,false);write(watchKey,{});controls();return}
-    // Permission must be requested directly in a click handler.
-    document.querySelector('#notifications-toggle').disabled=true;
-    let permission;
-    try{permission=Notification.permission==='granted'?'granted':await Notification.requestPermission()}
-    catch{controls();document.querySelector('#notifications-status').textContent='Przeglądarka nie zezwoliła na włączenie powiadomień.';return}
-    if(permission==='granted'){
-      try{await registration();if(!write(preference,true))throw Error('Nie można zapisać ustawienia w przeglądarce')}
-      catch(error){controls();document.querySelector('#notifications-status').textContent=error.message;return}
-    }
+    const selected=input.checked;
+    write(preference,selected);
+    if(!selected){write(watchKey,{});controls();return}
+    permissionAttempted=false;
+    await requestAccess();
     controls();if(enabled())await restoreActive();poll();
   }
   async function restoreActive(){
@@ -68,7 +73,7 @@ var taskNotifications=(()=>{
     }catch{}
   }
   function track(kind,id,jobId,restart=false){
-    if(!id||!enabled())return;
+    if(!id||!supported()||!wanted()||(Notification.permission!=='granted'&&!requesting))return;
     const tasks=read(watchKey,{}),key=`${kind}:${id}`;
     if(tasks[key]&&!restart)return;
     tasks[key]={kind,id,jobId,cycle:`${Date.now()}-${Math.random()}`,seen:null,done:false};
@@ -127,15 +132,12 @@ var taskNotifications=(()=>{
     }finally{polling=false}
   }
   function setup(){
-    const button=document.querySelector('#notifications-toggle'),test=document.querySelector('#notifications-test');
-    button?.addEventListener('click',toggle);
-    test?.addEventListener('click',async()=>{
-      if(!enabled())return;
-      try{await show('Subtitle Agent','Powiadomienia działają.','subtitle-agent-test');}
-      catch{document.querySelector('#notifications-status').textContent='Nie udało się wyświetlić powiadomienia. Sprawdź ustawienia przeglądarki i systemu.'}
-    });
+    document.querySelector('#notifications-toggle')?.addEventListener('change',toggle);
     controls();poll();
   }
+  document.addEventListener('click',event=>{
+    if(event.target.closest?.('#job-form button, #ai-sync-button'))requestAccess();
+  },true);
   // This script loads before app.js, including when a task notification was clicked.
   const requested=new URLSearchParams(window.location.search).get('task');
   if(window.location.pathname==='/'&&requested&&/^[a-zA-Z0-9_-]{1,80}$/.test(requested)){

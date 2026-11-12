@@ -31,7 +31,9 @@ def test_index_is_html(client):
 
     assert '/static/notifications.js?v=' in response.text
     settings_page = client.get('/settings').text
-    assert 'id="notifications-toggle"' in settings_page and 'id="notifications-test"' in settings_page
+    assert 'id="notifications-toggle" type="checkbox" role="switch" checked' in settings_page
+    assert 'id="notifications-test"' not in settings_page
+    assert 'notifications-title' not in settings_page
     worker = client.get('/notifications-worker.js')
     assert worker.status_code == 200
     assert 'application/javascript' in worker.headers['content-type']
