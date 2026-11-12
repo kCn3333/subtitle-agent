@@ -89,7 +89,7 @@ footer { padding: 22px 0 8px; color: var(--muted); font-size: 13px; text-align: 
 .app-header { display: block; }
 .brand-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
 .health-group .health { white-space: nowrap; }
-.app-nav { display: flex; align-items: stretch; justify-content: flex-end; gap: 4px; margin-top: 32px; padding: 0; }
+.app-nav { display: flex; align-items: stretch; justify-content: flex-end; gap: 4px; margin-top: 32px; padding: 0; border-bottom: 1px solid #ffffff14; }
 .nav-tab { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 12px 18px; background: transparent; color: var(--muted); text-decoration: none; font-size: 14px; font-weight: 600; transition: color .15s, background .15s, border-color .15s; border-radius: 8px; }
 .nav-tab:hover { color: var(--text); background: #ffffff06; }
 .nav-tab[aria-current="page"] { color: var(--blue); background: transparent; }
