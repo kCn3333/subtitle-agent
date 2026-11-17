@@ -46,8 +46,6 @@ Wymagany jest Docker z Compose. Obrazy aplikacji i workera OCR są pobierane z G
 | `ARCHIVE_MAX_TITLES` | Liczba tytułów lub katalogów w archiwum, domyślnie `30`. Dostępna także w Ustawieniach. |
 | `image` | Oba obrazy domyślnie używają `latest`; konkretną wersję ustaw dla aplikacji i OCR. |
 
-Compose pobiera z `.env` tylko `AUTH_USERNAME`, `AUTH_PASSWORD`, `AUTH_PUBLIC_URL` i `AUTH_TRUSTED_PROXIES`. Pozostałe wartości zmieniaj w Compose lub w **Ustawieniach**; zapisane ustawienia interfejsu mają pierwszeństwo przed środowiskiem.
-
-**Biblioteka mediów jest montowana tylko do odczytu.** Wyniki pobierasz z aplikacji; ich jakość wymaga sprawdzenia przed użyciem.
+**Biblioteka mediów jest montowana tylko do odczytu.**
 
 [Obsługa i konfiguracja AI](docs/ai-api-sync.md) · [Wdrożenie](docs/deployment.md) · [Ustawienia](docs/app-settings.md) · [Katalogi](docs/directory-batch.md) · [Historia zmian](docs/changelog.md) · [Licencja MIT](LICENSE)
