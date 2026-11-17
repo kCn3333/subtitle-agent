@@ -3,7 +3,6 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/kCn3333/subtitle-agent/container.yml?branch=main&style=flat-square&label=CI&logo=githubactions&logoColor=white&labelColor=131b26)](https://github.com/kCn3333/subtitle-agent/actions/workflows/container.yml)
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-74c7ec?style=flat-square&logo=python&logoColor=74c7ec&labelColor=131b26)](Dockerfile)
 [![FastAPI](https://img.shields.io/badge/FastAPI-backend-3ddc84?style=flat-square&logo=fastapi&logoColor=3ddc84&labelColor=131b26)](requirements.txt)
-[![SQLite](https://img.shields.io/badge/SQLite-storage-74c7ec?style=flat-square&logo=sqlite&logoColor=74c7ec&labelColor=131b26)](app/services/job_manager.py)
 [![FFmpeg](https://img.shields.io/badge/FFmpeg-media-3ddc84?style=flat-square&logo=ffmpeg&logoColor=3ddc84&labelColor=131b26)](Dockerfile)
 [![Tesseract OCR](https://img.shields.io/badge/Tesseract-OCR-f59a45?style=flat-square&labelColor=131b26)](Dockerfile.ocr)
 [![JavaScript](https://img.shields.io/badge/JavaScript-UI-f59a45?style=flat-square&logo=javascript&logoColor=f59a45&labelColor=131b26)](app/static/)
