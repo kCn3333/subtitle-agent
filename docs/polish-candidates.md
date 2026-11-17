@@ -1,18 +1,9 @@
-# Kandydaci polskich napisów
+# Kwalifikacja polskich napisów
 
-Polskie materiały w `manifest.polish_candidates` mają wspólny kontrakt eksportu: `archiveName`,
-`originalName`, `sha256`, `cueCount`, `identityMatch`, `eligibleByDefault`, `reasonCode`,
-`compatibilityWarnings` oraz `exportPurpose`. W PREPARE_SYNC `SYNCHRONIZATION` oznacza kandydata
-zakwalifikowanego do wyboru, a `MANUAL_REVIEW` materiał diagnostyczny z zablokowanym
-użyciem automatycznym. Obecność w ZIP-ie nie potwierdza zgodności treści ani kompletności
-(`contentCompatibility=UNDETERMINED`, `completeness=UNVERIFIED`). Duże przekroczenie czasu
-może wymagać offsetu lub korekty tempa; samo nie dowodzi innej produkcji. Raport zachowuje
-surowy zakres i, przy wiarygodnym modelu, pokazuje `proposedCorrectedRange` bez zmiany źródła.
-Paczka diagnostyczna pozostaje do pobrania przy `WORKPACK_INCOMPLETE`; w katalogu jej pozycja
-jest zakończonym eksportem wymagającym przeglądu, a nie błędem wykonania.
+Obecność napisów w ZIP-ie nie potwierdza zgodności treści ani kompletności. W synchronizacji `exportPurpose=SYNCHRONIZATION` oznacza kandydata do wyboru, a `MANUAL_REVIEW` — materiał wyłącznie do ręcznej oceny. `eligibleByDefault=false` blokuje użycie w interfejsie i API AI; ocena modelu nie znosi blokady.
 
-To rozszerzenie schematu `subtitle-workpack-v2`: dotychczasowe pola i ścieżki pozostają
-aktualne. Starsze paczki bez `exportPurpose` są obsługiwane przez odbiorców; brak
-`eligibleByDefault` zachowuje dotychczasową kwalifikację. W nowych paczkach wartość
-`eligibleByDefault=false` zawsze blokuje wybór w GUI AI oraz żądanie do API AI,
-również gdy obok jest kandydat zakwalifikowany. Ocena modelu nie odblokowuje wyboru.
+Manifest `subtitle-workpack-v2` opisuje kandydata polami `archiveName`, `originalName`, `sha256`, `cueCount`, `identityMatch`, `eligibleByDefault`, `reasonCode`, `compatibilityWarnings` i `exportPurpose`. Domyślne oceny to `contentCompatibility=UNDETERMINED` i `completeness=UNVERIFIED`. Starsze paczki bez nowych pól zachowują wcześniejsze zasady kwalifikacji.
+
+Duże przekroczenie czasu może wynikać z offsetu lub tempa i samo nie dowodzi innej produkcji. `proposedCorrectedRange` pokazuje wiarygodną hipotezę bez zmiany źródła.
+
+Paczka diagnostyczna pozostaje dostępna przy `WORKPACK_INCOMPLETE`. W katalogu oznacza zakończony eksport wymagający przeglądu, a nie błąd wykonania.

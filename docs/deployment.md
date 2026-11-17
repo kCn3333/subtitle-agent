@@ -1,60 +1,32 @@
-# Wdrożenie i konfiguracja
+# Wdrożenie i utrzymanie
 
-Wdrożenie obejmuje aplikację i worker OCR z [compose.example.yml](../compose.example.yml). Zmienne środowiskowe opisuje [.env.example](../.env.example). Domyślny tryb `WORKPACK` udostępnia interfejs opisany w [README](../README.md); `ADVANCED` włącza historyczne endpointy.
+Podstawowe uruchomienie i ustawienia Compose opisuje [README](../README.md#uruchomienie). Aplikację uruchamiaj jako jeden proces i jedną instancję — kolejki nie są współdzielone.
 
-Ustawienia dostępne bez restartu są opisane w [konfiguracji aplikacji](app-settings.md). Wartości zapisane w GUI mają pierwszeństwo przed ich odpowiednikami w Compose/env.
+## Dostęp
 
-## Sieć i proxy
+- `AUTH_PUBLIC_URL` musi odpowiadać adresowi otwieranemu w przeglądarce. Proxy musi zachować publiczny nagłówek `Host`.
+- Przy HTTPS pozostaw `AUTH_COOKIE_SECURE=true`. Lokalne HTTP wymaga adresu `http://…` w `AUTH_PUBLIC_URL` i `AUTH_COOKIE_SECURE=false` w Compose.
+- Proxy na tym samym hoście korzysta z `127.0.0.1:8080`. Przy proxy/tunelu na osobnym hoście opublikuj port na adresie LAN aplikacji i ogranicz dostęp do hosta proxy regułami uwzględniającymi Docker.
+- `AUTH_TRUSTED_PROXIES` wskazuje źródło połączenia widziane przez aplikację, niekoniecznie IP kontenera proxy. Zaufane proxy musi przekazywać `X-Forwarded-For`, a proxy brzegowe ustalać IP klienta z połączenia. Aplikacja czyta łańcuch od prawej do pierwszego niezaufanego adresu.
+- Pusta lista proxy oznacza używanie IP bezpośredniego połączenia; za proxy wszyscy użytkownicy mogą wtedy podlegać wspólnej blokadzie logowania.
+- Worker OCR działa tylko w sieci Compose na porcie `8090`. Publiczny `/health` aplikacji zwraca wyłącznie status.
 
-| Usługa | Port kontenera | Dostęp |
-|---|---|---|
-| Aplikacja | `8080` | Przez reverse proxy lub Cloudflare Tunnel |
-| OCR | `8090` | Wyłącznie sieć wewnętrzna; bez portu hostowego |
+Po trzech błędnych logowaniach IP jest blokowane domyślnie na godzinę (`AUTH_LOCKOUT_SECONDS=3600`). Sesja trwa 8 godzin (`AUTH_SESSION_SECONDS=28800`), a z opcją zapamiętania — 30 dni. Restart nie usuwa blokady; zmiana danych logowania i restart unieważniają sesje.
 
-`AUTH_PUBLIC_URL` musi odpowiadać publicznemu adresowi aplikacji, bez ścieżki. Dla dostępu przez HTTPS obowiązuje `AUTH_COOKIE_SECURE=true`. Wartość `false` jest przeznaczona do lokalnego HTTP.
+## Dane i zasoby
 
-Proxy musi zachować publiczną domenę w nagłówku `Host`. `AUTH_TRUSTED_PROXIES` przyjmuje rozdzielone przecinkami adresy lub CIDR zaufanych pośredników. Dla takiego połączenia wymagany jest `X-Forwarded-For`; aplikacja analizuje łańcuch od prawej do pierwszego niezaufanego adresu. Proxy brzegowe powinno ustalać adres klienta z połączenia, zamiast ufać wartości dostarczonej przez klienta.
+- `/data` zawiera SQLite, ustawienia, materiały robocze i archiwum. Klucze AI są zapisywane bez szyfrowania aplikacyjnego; ogranicz dostęp do wolumenu i kopii.
+- OCR używa CPU, domyślnie do 2 CPU i 1 GiB RAM. Obsługiwane języki: `eng`, `fra`, `deu`, `spa`, `ita`, `por`, `pol`.
+- Przygotowanie ma domyślnie 1 aktywną operację i 5 oczekujących (`MAX_CONCURRENT_JOBS`, `MAX_QUEUED_JOBS`). Oddzielna kolejka AI ma 1 aktywną i 5 oczekujących operacji (`MAX_QUEUED_AI_OPERATIONS`).
+- Archiwum zachowuje domyślnie 30 tytułów lub katalogów. Aktywne operacje i wstrzymane/przerwane katalogi są chronione przed usunięciem. Porządkowanie odbywa się po zadaniach i co 6 godzin (`WORKPACK_CLEANUP_INTERVAL_HOURS`).
 
-Pusta lista zaufanych proxy oznacza używanie IP bezpośredniego połączenia. Za proxy może to powodować wspólną blokadę IP dla wszystkich użytkowników. Obraz uruchamia Uvicorn z `--no-proxy-headers`, aby aplikacja mogła zweryfikować rzeczywiste źródło połączenia.
+## Aktualizacja
 
-### Tunel na osobnym hoście
+Wykonaj kopię `/data`. W Compose ustaw oba obrazy na tę samą wersję albo pozostaw `latest`, następnie:
 
-| Element | Konfiguracja |
-|---|---|
-| Publikacja portu aplikacji | `ADRES_LAN_APLIKACJI:8080:8080` |
-| Usługa docelowa tunelu | `http://ADRES_LAN_APLIKACJI:8080` |
-| Publiczny adres | `AUTH_PUBLIC_URL=https://napisy.example.com` |
-| Zaufane źródło | Adres widziany przez aplikację, zwykle adres LAN hosta tunelu z `/32` przy NAT Docker |
+```sh
+docker compose -f compose.example.yml pull
+docker compose -f compose.example.yml up -d
+```
 
-Wewnętrzny adres kontenera `cloudflared` nie musi być adresem widocznym na drugim hoście. Adres źródłowy wymaga potwierdzenia dla danej topologii. Dostęp do opublikowanego portu należy ograniczyć do hosta proxy/tunelu regułami uwzględniającymi Docker.
-
-## Uwierzytelnianie
-
-`AUTH_USERNAME`, `AUTH_PASSWORD` i `AUTH_PUBLIC_URL` są wymagane do startu aplikacji. Hasło musi mieć 16–1024 znaki.
-
-| Parametr | Domyślne działanie |
-|---|---|
-| `AUTH_LOCKOUT_SECONDS=3600` | Godzinna blokada IP po trzech błędnych logowaniach |
-| `AUTH_SESSION_SECONDS=28800` | Sesja ważna przez 8 godzin |
-| Zapamiętanie przy logowaniu | Sesja ważna przez 30 dni od logowania, bez przedłużania przy aktywności |
-
-Poprawne logowanie zeruje licznik błędów. Próby podczas blokady nie przedłużają jej; restart nie usuwa blokady. Wylogowanie unieważnia sesję na serwerze. Zmiana danych logowania w konfiguracji i ponowne uruchomienie aplikacji unieważniają wcześniejsze sesje.
-
-Cookie sesji ma `HttpOnly` i `SameSite=Strict`, a domyślnie także `Secure`. Publiczny endpoint `/health` zwraca tylko `{"status":"ok"}`; OpenAPI jest wyłączone.
-
-## Zasoby i dane
-
-- Biblioteka mediów: mounty `:ro`; ścieżki podawane w aplikacji odnoszą się do kontenera.
-- `/data`: SQLite, pliki robocze i archiwum. Klucze aktywnej zapisanej konfiguracji i zapisanych modeli AI są przechowywane bez szyfrowania aplikacyjnego; wolumen i jego kopie wymagają ograniczenia dostępu.
-- Worker OCR: CPU, domyślnie limit 2 CPU i 1 GiB RAM w Compose, bez mountów biblioteki i `/data`.
-- OCR obsługuje PGS oraz VobSub, z językami `eng`, `fra`, `deu`, `spa`, `ita`, `por`, `pol`. Błąd lub brak obsługi języka kończy przygotowanie statusem `NEEDS_OCR`.
-- `INCLUDE_GRAPHIC_REFERENCE=true` dołącza źródłowe pliki graficzne do ZIP synchronizacji. Nie zmienia paczek tłumaczenia.
-
-| Parametr | Domyślna wartość | Zakres |
-|---|---:|---|
-| `MAX_CONCURRENT_JOBS` | `1` | Równoległe operacje przygotowania i przebudowy |
-| `MAX_QUEUED_JOBS` | `5` | Oczekujące operacje przygotowania i przebudowy |
-| `MAX_QUEUED_AI_OPERATIONS` | `5` | Oczekujące operacje AI; jedna jest wykonywana |
-| `WORKPACK_CLEANUP_INTERVAL_HOURS` | `6` | Okresowe porządkowanie, oprócz startu i zakończenia operacji |
-
-Retencja obejmuje liczbę tytułów ustawioną przez `ARCHIVE_MAX_TITLES` (domyślnie 30), według ścieżki materiału. Wartość można nadpisać w GUI bez restartu. Dawne `WORKPACK_RETENTION_HOURS` jest ignorowane; retencja nie zależy od wieku plików. Dane oczekujących i aktywnych operacji są chronione do ich zakończenia. Kolejki wymagają jednej instancji procesu aplikacji.
+Zachowaj wolumen danych; `docker compose down -v` go usuwa. Po aktualizacji sprawdź logowanie, archiwum i dostępność OCR. Operacje AI przerwane restartem wymagają ręcznego ponowienia.
