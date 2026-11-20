@@ -347,3 +347,54 @@ test('diagnostic Polish materials are excluded from AI choices in a mixed workpa
       {archiveName:'polish/ready.srt',originalName:'ready.srt',eligibleByDefault:true}]}});
   assert.deepEqual(Array.from(get('#ai-polish').options,item=>item.value),['polish/ready.srt']);
 });
+
+test('subtitle coverage warns strictly below 90% using Polish/reference counts',async t=>{
+  for(const [polish,reference,warn] of [[777,1200,true],[899,1000,true],[900,1000,false],[1000,1000,false],[1200,1000,false],[0,1200,true],[777,0,false],[777,null,false],[null,1200,false],[-1,1200,false],[777,'1200',false]]){
+    await t.test(`${polish}/${reference}`,async()=>{
+      const {get,context}=await setup();
+      context.renderAiSync({jobId:'job',status:'WORKPACK_READY',report:{pipeline:'PREPARE_SYNC',selectedReference:{streamIndex:4},
+        polishCandidates:[{archiveName:'polish/a.srt',originalName:'Film.pl.srt'}],synchronizationHypotheses:[{candidate:'Film.pl.srt',polishSegments:polish,englishSegments:reference}]}});
+      await context.refreshAiStatus();
+      const warning=get('#ai-coverage-warning');
+      assert.equal(warning.hidden,!warn);
+      assert.equal(get('#ai-sync-button').disabled,false,'coverage is advisory');
+      if(warn){assert.match(warning.textContent,new RegExp(`${polish}/${reference} kwestii`));assert.match(warning.textContent,/poniżej 90%.*Upewnij się/)}
+      else assert.equal(warning.textContent,'');
+    });
+  }
+});
+
+test('coverage follows selected Polish file and clears for changed reference, translation and missing report',async()=>{
+  const {get,context}=await setup();
+  const report={pipeline:'PREPARE_SYNC',selectedReference:{streamIndex:4},polishCandidates:[{archiveName:'polish/a.srt'},{archiveName:'polish/b.srt'}],
+    synchronizationHypotheses:[{candidate:'polish/a.srt',polishSegments:777,englishSegments:1200},{candidate:'polish/b.srt',polishSegments:1100,englishSegments:1200}]};
+  context.renderAiSync({jobId:'job',status:'WORKPACK_READY',report});
+  await context.refreshAiStatus();
+  assert.equal(get('#ai-coverage-warning').hidden,false);
+  get('#ai-polish').value='polish/b.srt';get('#ai-polish').handlers.change();
+  assert.equal(get('#ai-coverage-warning').hidden,true);
+  get('#ai-polish').value='polish/a.srt';get('#ai-polish').handlers.change();
+  assert.equal(get('#ai-coverage-warning').hidden,false);
+  get('#reference-source').value='embedded:13';get('#reference-source').handlers.change();
+  assert.equal(get('#ai-coverage-warning').hidden,true);
+  get('#reference-source').value='embedded:4';get('#reference-source').handlers.change();
+  assert.equal(get('#ai-coverage-warning').hidden,false);
+  context.renderAiSync({jobId:'job',status:'WORKPACK_READY',report:{...report,pipeline:'PREPARE_TRANSLATION'}});
+  assert.equal(get('#ai-coverage-warning').hidden,true);
+  context.renderAiSync({jobId:'job',status:'WORKPACK_READY',report:{...report,synchronizationHypotheses:[]}});
+  assert.equal(get('#ai-coverage-warning').hidden,true);
+});
+
+test('directory coverage identifies episode and follows its Polish selection',async()=>{
+  const directory=directoryFixture();
+  directory.inputs.items[0].synchronizationHypotheses=[{candidate:'A',polishSegments:777,englishSegments:1200},
+    {candidate:'B',polishSegments:1200,englishSegments:1200}];
+  const {get,context}=await setup(undefined,{status:'idle'},directory);
+  assert.equal(get('#ai-coverage-warning').hidden,false);
+  assert.match(get('#ai-coverage-warning').textContent,/S01E01.mkv: 777\/1200/);
+  const select=get('#ai-directory-inputs').querySelectorAll('select')[0];
+  select.value='polish/b.srt';select.handlers.change();
+  assert.equal(get('#ai-coverage-warning').hidden,true);
+  context.restoreDirectoryChoices([{job_id:'episode-1',polish_file:'polish/a.srt'}]);
+  assert.equal(get('#ai-coverage-warning').hidden,false);
+});

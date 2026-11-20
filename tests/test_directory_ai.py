@@ -57,6 +57,16 @@ def test_directory_ai_uses_isolated_inputs_and_one_queue_slot_with_archived_zip(
     configure(monkeypatch)
     job_id = submit(client, directory, mode)
     assert wait_batch(client, job_id)['status'] == 'WORKPACK_READY'
+    inputs = client.get(f'/api/tasks/{job_id}/ai-inputs').json()['items']
+    for row in inputs:
+        report = client.app.state.jobs.get(row['job_id'])['report']
+        assert row['synchronizationHypotheses'] == [
+            {key: entry.get(key) for key in ('candidate', 'englishSegments', 'polishSegments')}
+            for entry in report['synchronizationHypotheses']]
+        if mode == 'PREPARE_SYNC':
+            assert row['synchronizationHypotheses'][0]['englishSegments'] == 1
+            assert row['synchronizationHypotheses'][0]['polishSegments'] == 1
+            assert row['synchronizationHypotheses'][0]['candidate'] == row['polish_candidates'][0]['originalName']
     calls = model(monkeypatch)
     payload = choices(client, job_id)
     payload['items'].reverse()

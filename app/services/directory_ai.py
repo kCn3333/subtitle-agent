@@ -68,7 +68,10 @@ def describe_inputs(request, job_id):
         reason = ('Pominięty przez użytkownika' if item['state'] == 'skipped' else
                   'Materiały nie są gotowe do AI — sprawdź raport pliku') if not available else None
         rows.append({'job_id': item.get('jobId'), 'name': item['name'], 'available': bool(available),
-                     'reference_source_id': reference, 'polish_candidates': candidates, 'reason': reason})
+                     'reference_source_id': reference, 'polish_candidates': candidates, 'reason': reason,
+                     'synchronizationHypotheses': [
+                         {key: row.get(key) for key in ('candidate', 'englishSegments', 'polishSegments')}
+                         for row in data.get('synchronizationHypotheses', [])]})
     return {'mode': report['mode'], 'items': rows}
 
 

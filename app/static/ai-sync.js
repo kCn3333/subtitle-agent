@@ -1,6 +1,21 @@
 const aiPanel=document.querySelector('#ai-sync-panel'),polishSelect=document.querySelector('#ai-polish');
 const aiButtonLabel=document.querySelector('#ai-sync-button-label');
 const aiButton=document.querySelector('#ai-sync-button'),aiMessage=document.querySelector('#ai-sync-status'),aiDownload=document.querySelector('#ai-download');
+let aiCoverageReport={};
+function renderAiCoverageWarning(){
+  const warning=document.querySelector('#ai-coverage-warning'),messages=[];
+  const inputs=aiDirectory?aiDirectoryInputs.filter(item=>item.available):[{synchronizationHypotheses:aiCoverageReport.synchronizationHypotheses,polish_candidates:aiCoverageReport.polishCandidates}];
+  if(aiMode==='sync'&&(aiDirectory||referenceSelect.value===aiPreparedReference))for(const item of inputs){
+    const file=aiDirectory?aiDirectoryChoices.get(item.job_id):polishSelect.value;
+    const candidate=(item.polish_candidates||[]).find(row=>row.archiveName===file);
+    const counts=(item.synchronizationHypotheses||[]).find(row=>row.candidate===file||
+      (candidate?.originalName&&(row.candidate===candidate.originalName||row.originalName===candidate.originalName)));
+    if(!Number.isInteger(counts?.englishSegments)||counts.englishSegments<=0||!Number.isInteger(counts.polishSegments)||counts.polishSegments<0)continue;
+    if(counts.polishSegments/counts.englishSegments<0.9)messages.push(`${aiDirectory?`${item.name}: `:''}${counts.polishSegments}/${counts.englishSegments} kwestii`);
+  }
+  warning.hidden=messages.length===0;
+  warning.textContent=messages.length?`Uwaga: pokrycie napisów PL względem referencji poniżej 90% (${messages.join('; ')}). Upewnij się, że wybrane polskie napisy są kompletne i pasują do materiału.`:'';
+}
 let aiQueued=false,aiQueuePosition=null,aiReferencePending=false,aiPreparedReference=null,aiRunning=false,aiJobId=null,aiMode='sync',aiRequestMode='sync',aiMediaTitle='Nieznany tytuł',aiChecking=true,aiPostPending=false,aiSeenOperation=null,aiObservedOperation=null,aiPhase='Oczekiwanie na odpowiedź modelu',aiStatusVersion=0,aiDirectory=false,aiDirectoryInputs=[],aiDirectoryChoices=new Map(),aiDirectoryVersion=0;
 function aiEndpoint(mode=aiMode){return mode==='translation'?'ai-translate':'ai-sync'}
 function aiHasInputs(){if(aiDirectory)return aiDirectoryInputs.some(item=>item.available);return aiMode==='translation'||polishSelect.options.length>0}
@@ -25,6 +40,7 @@ function stopAiElapsed(){
   aiTimer=null;aiStartedAt=null;aiRequestJobId=null;aiActivity.remove();
 }
 function aiControls(){
+  renderAiCoverageWarning();
   aiButton.disabled=aiReferencePending||aiChecking||aiRunning||aiPostPending||!aiHasInputs()||(!aiDirectory&&referenceSelect.value!==aiPreparedReference);
   polishSelect.disabled=aiRunning||aiPostPending;
   referenceSelect.disabled=aiRunning||aiPostPending;
@@ -102,6 +118,7 @@ function showAiResult(result,jobId,mode=aiMode){
 }
 function renderAiSync(job){
   const report=job.report||{};
+  aiCoverageReport=report;
   document.querySelector('#ai-batch-progress').hidden=true;
   if(report.batch)return renderDirectoryHandoff(job);
   aiDirectory=false;document.querySelector('#ai-directory-inputs').hidden=true;
@@ -128,7 +145,7 @@ referenceSelect.addEventListener('change',()=>{
   aiControls();
   if(!aiDirectory&&referenceSelect.value!==aiPreparedReference){aiMessage.textContent='Najpierw zbuduj workpack z wybraną referencją.';aiDownload.hidden=true}
 });
-polishSelect.addEventListener('change',()=>{aiDownload.hidden=true;aiMessage.textContent=''});
+polishSelect.addEventListener('change',()=>{aiDownload.hidden=true;aiMessage.textContent='';renderAiCoverageWarning()});
 form.addEventListener('submit',hideAiHandoff);
 document.querySelector('#rebuild').addEventListener('click',hideAiHandoff);
 aiButton.addEventListener('click',async()=>{
@@ -196,7 +213,7 @@ async function renderDirectoryHandoff(job){
         const option=document.createElement('option');option.value=candidate.archiveName;option.textContent=candidate.originalName;select.append(option);
       }
       select.value=aiDirectoryChoices.get(item.job_id);
-      select.addEventListener('change',()=>{aiDirectoryChoices.set(item.job_id,select.value);aiDownload.hidden=true;aiMessage.textContent='Zmieniono wybór napisów PL. Przekaż katalog do AI, aby przygotować nowe wyniki.'});
+      select.addEventListener('change',()=>{aiDirectoryChoices.set(item.job_id,select.value);aiDownload.hidden=true;aiMessage.textContent='Zmieniono wybór napisów PL. Przekaż katalog do AI, aby przygotować nowe wyniki.';renderAiCoverageWarning()});
       label.append(name,select);container.append(label);
     }
     const ready=aiDirectoryInputs.filter(item=>item.available).length;
@@ -215,6 +232,7 @@ function restoreDirectoryChoices(rows){
     if(row.polish_file&&input?.polish_candidates.some(item=>item.archiveName===row.polish_file))aiDirectoryChoices.set(row.job_id,row.polish_file);
   }
   for(const select of document.querySelector('#ai-directory-inputs').querySelectorAll('select'))select.value=aiDirectoryChoices.get(select.dataset.jobId);
+  renderAiCoverageWarning();
 }
 
 // A saved job can finish loading before this script is available.
