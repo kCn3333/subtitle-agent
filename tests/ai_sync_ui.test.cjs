@@ -358,7 +358,7 @@ test('subtitle coverage warns strictly below 90% using Polish/reference counts',
       const warning=get('#ai-coverage-warning');
       assert.equal(warning.hidden,!warn);
       assert.equal(get('#ai-sync-button').disabled,false,'coverage is advisory');
-      if(warn){assert.match(warning.textContent,new RegExp(`${polish}/${reference} kwestii`));assert.match(warning.textContent,/poniżej 90%.*Upewnij się/)}
+      if(warn){assert.match(warning.textContent,/^⚠ /);assert.match(warning.textContent,new RegExp(`${polish}/${reference} kwestii`));assert.match(warning.textContent,/poniżej 90%.*Upewnij się/)}
       else assert.equal(warning.textContent,'');
     });
   }
@@ -412,6 +412,8 @@ test('review or failed retry shows the last successful SRT separately from the l
     await context.refreshAiStatus('job',true);
     assert.equal(get('#ai-polish').value,'polish/b.srt');
     assert.match(get('#ai-sync-status').textContent,/Ostatnia próba:.*Kandydat kończy się.*pl:777, en:1200/);
+    assert.equal(get('#ai-sync-status').className,status==='needs_review'?'warning-box':'');
+    if(status==='needs_review')assert.match(get('#ai-sync-status').textContent,/^⚠ /);
     assert.equal(get('#ai-result-status').textContent,'Ostatni poprawny SRT: Film.AI-Synced-v001.pl.srt · 777 kwestii · napisy PL: A. Dostępny do pobrania.');
     assert.equal(get('#ai-result-status').hidden,false);
     assert.equal(get('#ai-download').hidden,false);
@@ -426,6 +428,7 @@ test('review or failed retry shows the last successful SRT separately from the l
     await context.refreshAiStatus();
     assert.match(get('#ai-result-status').textContent,/v002/);
     assert.doesNotMatch(get('#ai-sync-status').textContent,/Wymaga sprawdzenia/);
+    assert.equal(get('#ai-sync-status').className,'');
   });
 });
 

@@ -14,7 +14,7 @@ function renderAiCoverageWarning(){
     if(counts.polishSegments/counts.englishSegments<0.9)messages.push(`${aiDirectory?`${item.name}: `:''}${counts.polishSegments}/${counts.englishSegments} kwestii`);
   }
   warning.hidden=messages.length===0;
-  warning.textContent=messages.length?`Uwaga: pokrycie napisów PL względem referencji poniżej 90% (${messages.join('; ')}). Upewnij się, że wybrane polskie napisy są kompletne i pasują do materiału.`:'';
+  warning.textContent=messages.length?`⚠ Uwaga: pokrycie napisów PL względem referencji poniżej 90% (${messages.join('; ')}). Upewnij się, że wybrane polskie napisy są kompletne i pasują do materiału.`:'';
 }
 let aiQueued=false,aiQueuePosition=null,aiReferencePending=false,aiPreparedReference=null,aiRunning=false,aiJobId=null,aiMode='sync',aiRequestMode='sync',aiMediaTitle='Nieznany tytuł',aiChecking=true,aiPostPending=false,aiSeenOperation=null,aiObservedOperation=null,aiPhase='Oczekiwanie na odpowiedź modelu',aiStatusVersion=0,aiDirectory=false,aiDirectoryInputs=[],aiDirectoryChoices=new Map(),aiDirectoryVersion=0;
 function aiEndpoint(mode=aiMode){return mode==='translation'?'ai-translate':'ai-sync'}
@@ -29,6 +29,7 @@ aiActivity.append(aiSpinner,aiActivityText);
 aiActivity.setAttribute('aria-live','off');
 function updateAiElapsed(){
   if(aiStartedAt===null)return;
+  aiMessage.className='';
   if(aiRequestJobId!==activeJobId){aiActivity.remove();return}
   const elapsed=Math.max(0,Math.floor((Date.now()-aiStartedAt)/1000));
   aiActivityText.textContent=`[${aiStage(aiRequestMode)}] ${aiPhase} · Film: ${aiMediaTitle} · oczekiwanie: ${Math.floor(elapsed/60)} min ${String(elapsed%60).padStart(2,'0')} s`;
@@ -52,6 +53,7 @@ function aiControls(){
 function applyAiState(state,jobId,restoreInputs=false){
   if(jobId!==activeJobId||jobId!==aiJobId)return;
   aiChecking=false;
+  aiMessage.className='';
   if(aiDirectory&&state.batch&&(restoreInputs||['queued','running'].includes(state.status)))restoreDirectoryChoices(state.items||[]);
   if(state.batch&&typeof renderDirectoryAiProgress==='function')renderDirectoryAiProgress(state);
   if(['queued','running'].includes(state.status)){
@@ -71,7 +73,8 @@ function applyAiState(state,jobId,restoreInputs=false){
       aiMessage.textContent='Ostatnia próba AI zakończona.';
     }
     if(['failed','needs_review'].includes(state.status)){
-      aiMessage.textContent=`Ostatnia próba: ${state.error?.message||'Operacja AI nie powiodła się'}`;
+      aiMessage.className=state.status==='needs_review'?'warning-box':'';
+      aiMessage.textContent=`${state.status==='needs_review'?'⚠ ':''}Ostatnia próba: ${state.error?.message||'Operacja AI nie powiodła się'}`;
     }
     if(state.operation_id&&state.operation_id!==aiSeenOperation){
       aiSeenOperation=state.operation_id;
@@ -129,6 +132,7 @@ function showAiResult(result,jobId,mode=aiMode,previous=false){
 }
 function renderAiSync(job){
   const report=job.report||{};
+  aiMessage.className='';
   aiCoverageReport=report;
   document.querySelector('#ai-batch-progress').hidden=true;
   if(report.batch)return renderDirectoryHandoff(job);

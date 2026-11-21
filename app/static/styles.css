@@ -135,7 +135,7 @@ button .fa-solid, .button .fa-solid { margin-right: 5px; }
 .panel-actions { display: flex; flex-direction: column; gap: 9px; }
 .panel-actions .button, .panel-actions button { text-align: center; }
 .reference-panel { grid-template-columns: minmax(0, 1fr); gap: 14px; }
-.reference-panel p { margin: 0 0 14px; }
+.reference-panel p, #ai-sync-panel .warning-box { margin: 0 0 14px; }
 .reference-panel select { min-width: 0; }
 .status .reference-panel .select-wrap { margin-bottom: 0; }
 .settings-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 20px; }
