@@ -1,6 +1,5 @@
 import hashlib
 import json
-from pathlib import Path
 
 from app.services.job_manager import JobManager
 from tests.helpers import add_job, manager_at

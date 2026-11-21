@@ -3,7 +3,6 @@ import json
 import sqlite3
 import threading
 import uuid
-from pathlib import Path
 
 import pytest
 

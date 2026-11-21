@@ -235,7 +235,7 @@ def test_restart_keeps_completed_ai_results_and_requires_explicit_resubmission(s
         job_id = submit(first, directory)
         wait_batch(first, job_id)
         payload = choices(first, job_id)
-        operation = start_ai(first, job_id, payload)
+        start_ai(first, job_id, payload)
         assert blocked.wait(3)
     block = False
     with TestClient(create_app(settings)) as second:

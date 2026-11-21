@@ -54,7 +54,7 @@ def test_removed_advanced_environment_is_ignored(tmp_path, monkeypatch):
     monkeypatch.setenv('SUBTITLE_AGENT_APP_MODE', 'ADVANCED')
     monkeypatch.setenv('OPENAI_API_KEY_FILE', str(tmp_path/'missing-secret'))
     monkeypatch.setenv('SUBTITLE_AGENT_PUBLISH_ENABLED', 'true')
-    settings = Settings(_env_file=None)
+    Settings(_env_file=None)
     assert 'subtitle_agent_app_mode' not in Settings.model_fields
     assert not any(name.startswith(('openai_', 'subtitle_agent_publish_', 'subtitle_agent_auto_publish_', 'alignment_'))
                    for name in Settings.model_fields)

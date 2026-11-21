@@ -5,7 +5,7 @@ import os
 import re
 import statistics
 import unicodedata
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 

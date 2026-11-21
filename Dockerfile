@@ -19,11 +19,11 @@ RUN mkdir -p /data && chown subtitle-agent:subtitle-agent /data
 
 FROM base AS test
 USER root
-COPY requirements-dev.txt pytest.ini compose.example.yml ./
+COPY requirements-dev.txt pytest.ini ruff.toml compose.example.yml ./
 COPY tests tests
 COPY ocr_worker ocr_worker
 RUN pip install --no-cache-dir -r requirements-dev.txt
-RUN pytest -q
+RUN ruff check app ocr_worker tests && pytest -q
 
 FROM base AS runtime
 USER 10001:10001

@@ -20,7 +20,7 @@ Pierwsze wydanie:
 
 ## Testy i wydania
 
-Testy backendu działają w obrazie Python 3.12; testy interfejsu wymagają Node.js:
+Obraz testowy Python 3.12 uruchamia Ruff (reguły `E9` i `F` dla `app`, `ocr_worker` i `tests`), a następnie testy backendu. Błąd Ruff blokuje CI. Testy interfejsu wymagają Node.js:
 
 ```sh
 podman build --target test -t subtitle-agent:test .

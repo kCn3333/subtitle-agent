@@ -60,7 +60,7 @@ jobs:
           node-version: 22
       - name: Run UI tests
         run: node --test tests/*_ui.test.cjs
-      - name: Run tests in Python 3.12 image
+      - name: Run Ruff and tests in Python 3.12 image
         uses: docker/build-push-action@v6
         with:
           context: .
