@@ -20,7 +20,7 @@ def missing() -> HTTPException:
 @router.get("/config")
 async def config(request: Request) -> dict:
     settings = request.app.state.settings
-    return {"appMode": settings.subtitle_agent_app_mode, "schemaVersion": "subtitle-workpack-v2",
+    return {"appMode": "WORKPACK", "schemaVersion": "subtitle-workpack-v2",
             "referenceScoreMargin": settings.workpack_reference_score_margin,
             "maxReferenceAlternatives": settings.workpack_max_reference_alternatives,
             "maxPolishCandidates": settings.workpack_max_polish_candidates,

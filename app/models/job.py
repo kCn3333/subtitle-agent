@@ -77,12 +77,6 @@ class CreateJobResponse(BaseModel):
     status: JobStatus
 
 
-class AlignmentMode(StrEnum):
-    STRUCTURAL_ONLY = "STRUCTURAL_ONLY"
-    SEMANTIC_PREFERRED = "SEMANTIC_PREFERRED"
-    SEMANTIC_REQUIRED = "SEMANTIC_REQUIRED"
-
-
 class WorkpackTaskType(StrEnum):
     INSPECT = "INSPECT"
     PREPARE_SYNC = "PREPARE_SYNC"
@@ -122,25 +116,6 @@ class ContinueBatchRequest(BaseModel):
     model_config = API_MODEL_CONFIG
     action: str = Field(pattern="^(resume|skip|reference|retry)$")
     reference_source_id: str | None = None
-
-
-class PublishMode(StrEnum):
-    PREVIEW_ONLY = "PREVIEW_ONLY"
-    MANUAL = "MANUAL"
-    AUTO_HIGH = "AUTO_HIGH"
-
-
-class AlignJobRequest(BaseModel):
-    model_config = API_MODEL_CONFIG
-    english_source_id: str | None = None
-    polish_source_id: str | None = None
-    mode: AlignmentMode = AlignmentMode.SEMANTIC_PREFERRED
-
-
-class PublishJobRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel, extra="forbid")
-    confirmed: bool
-    expected_preview_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 class JobResponse(BaseModel):

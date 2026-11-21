@@ -15,7 +15,7 @@ from typing import AsyncIterator
 from app.core.config import Settings
 from app.services.operation_queue import QueueBusy, JobBusy
 from app.services.directory_batch import DirectoryBatch, normalize_completed_batch
-from app.models.job import AlignmentMode, JobEvent, JobStatus, WorkpackTaskType
+from app.models.job import JobEvent, JobStatus, WorkpackTaskType
 from app.models.media import MediaIdentity
 from app.services.media_analysis import (
     UserInputError, discover_external_subtitles, discover_external_subtitles_with_rejections, extract_reference,
@@ -29,12 +29,6 @@ from app.services.synchronization_pack_service import SynchronizationPackService
 from app.services.translation_pack_service import TranslationPackService
 from app.services.workpack_pipeline import PipelineRequirements, WorkpackPipelineService
 from app.services.process_runner import ProcessExecutionError, ProcessTimeoutError
-from app.services.alignment import (StructuralAnchorProvider, fit_models, parse_cues, public_model,
-                                    quality, select_model, sha256, transform, write_preview)
-from app.services.semantic import (CompositeAnchorProvider, OpenAIAnchorProvider, SemanticBatchError,
-                                   SemanticBudgetExceeded, SemanticUnavailable)
-from app.services.publisher import (PublishBlockedQuality, PublishConflict, PublishDisabled, PublishError,
-                                    PublishSourceChanged, SubtitlePublisher, identity)
 from app.services.ocr_client import OcrWorkerError, recognize_reference
 from app.services.ocr_quality import InvalidOcrSrt, normalize_ocr_text, quality_report
 from app.services.workpack import (SCHEMA_VERSION, build_zip, copy_polish_candidates, diagnostic_hypotheses,
@@ -92,7 +86,6 @@ class JobManager:
         self.max_concurrent = settings.max_concurrent_jobs
         self._lock = threading.RLock()
         self._conditions: dict[str, asyncio.Condition] = {}
-        self._publish_locks: dict[str, asyncio.Lock] = {}
         self._queue = asyncio.Queue(maxsize=settings.max_queued_jobs)
         self.reserved_jobs: dict[str, str] = {}
         self._rebuild_after: dict[str, int] = {}
@@ -218,7 +211,6 @@ class JobManager:
                     db.execute('DELETE FROM ai_usage WHERE job_id=?', (job['id'],))
                     db.execute('DELETE FROM jobs WHERE id=?', (job['id'],))
                 self._conditions.pop(job['id'], None)
-                self._publish_locks.pop(job['id'], None)
                 removed += 1
             self.archive.prune(retained)
             return removed
@@ -376,263 +368,6 @@ class JobManager:
             if not job.get('batch_parent_id'):
                 self.archive.capture(job)
 
-    def _audit_publication(self, job_id: str, mode: str, result: str, quality: str | None,
-                           automatic: bool, details: dict | None = None, error: str | None = None) -> None:
-        details = details or {}
-        with self._lock, self._connect() as db:
-            db.execute("""INSERT INTO publication_attempts
-                (job_id,attempted_at,mode,result,quality,source_ro_path,target_rw_path,target_name,version,
-                 preview_sha256,published_sha256,size_bytes,source_identity_json,automatic,error_message)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (
-                job_id, details.get("attemptedAt", now().isoformat()), mode, result, quality,
-                details.get("sourcePath"), details.get("targetPath"), details.get("targetName"),
-                details.get("version"), details.get("previewSha256"), details.get("publishedSha256"),
-                details.get("sizeBytes"), json.dumps(details.get("mediaIdentity")) if details.get("mediaIdentity") else None,
-                int(automatic), error))
-
-    def publication_attempts(self, job_id: str) -> list[dict]:
-        with self._lock, self._connect() as db:
-            return [dict(row) for row in db.execute(
-                "SELECT * FROM publication_attempts WHERE job_id=? ORDER BY id", (job_id,)).fetchall()]
-
-    async def publish(self, job_id: str, confirmed: bool, expected_hash: str, automatic: bool = False) -> dict:
-        lock = self._publish_locks.setdefault(job_id, asyncio.Lock())
-        async with lock:
-            return await self._publish_once(job_id, confirmed, expected_hash, automatic)
-
-    async def _publish_once(self, job_id: str, confirmed: bool, expected_hash: str,
-                            automatic: bool = False) -> dict:
-        job = self.get(job_id)
-        if not job or not job.get("report"):
-            raise UserInputError("Nie znaleziono raportu zadania")
-        report = job["report"]; alignment = report.get("alignment") or {}; existing = report.get("publication") or {}
-        publisher = SubtitlePublisher(self.settings); mode = self.settings.subtitle_agent_publish_mode
-        async def reject(exc: PublishError) -> None:
-            details = {"attemptedAt": now().isoformat(), "sourcePath": job.get("resolved_media_path") or job["media_path"],
-                       "previewSha256": alignment.get("previewSha256")}
-            report["publication"] = {"status": exc.status, "message": str(exc), **details}
-            self._save_report(job_id, report, job.get("resolved_media_path") or job["media_path"])
-            self._audit_publication(job_id, mode, exc.status, alignment.get("quality"), automatic, details, str(exc))
-            await self._emit(job_id, "WARNING", JobStatus(exc.status), str(exc), 100)
-            raise exc
-        if existing.get("status") == "PUBLISHED":
-            target = Path(existing["targetPath"])
-            if target.is_file() and sha256(target) == existing.get("publishedSha256"):
-                return existing
-            exc = PublishConflict("Baza wskazuje publikację, ale plik zniknął albo zmienił zawartość")
-            existing.update({"status": exc.status, "message": str(exc)})
-            report["publication"] = existing; self._save_report(job_id, report, job.get("resolved_media_path") or job["media_path"])
-            self._audit_publication(job_id, mode, exc.status, alignment.get("quality"), automatic,
-                                    {"targetPath": str(target)}, str(exc))
-            await self._emit(job_id, "WARNING", JobStatus.PUBLISH_CONFLICT, str(exc), 100)
-            raise exc
-        if not self.settings.subtitle_agent_publish_enabled or mode == "PREVIEW_ONLY":
-            await reject(PublishDisabled("Publikowanie jest wyłączone lub działa w PREVIEW_ONLY"))
-        if not automatic and (mode != "MANUAL" or not confirmed):
-            await reject(PublishDisabled("Ręczna publikacja wymaga trybu MANUAL i potwierdzenia"))
-        quality_grade = alignment.get("quality")
-        if quality_grade not in ({"HIGH"} if automatic else {"HIGH", "MEDIUM"}):
-            await reject(PublishBlockedQuality("Jakość synchronizacji nie pozwala na publikację"))
-        if alignment.get("warnings") or alignment.get("status") != "COMPLETED":
-            await reject(PublishBlockedQuality("Wynik ma krytyczne ostrzeżenia albo nie przeszedł walidacji"))
-        semantic = report.get("semanticAlignment") or {}; usage = semantic.get("usage") or {}
-        if automatic and self.settings.subtitle_agent_auto_publish_require_semantic and not usage.get("accepted_anchors"):
-            await reject(PublishBlockedQuality("AUTO_HIGH wymaga zaakceptowanych kotwic semantycznych"))
-        if automatic and semantic.get("fallbackUsed"):
-            await reject(PublishBlockedQuality("AUTO_HIGH blokuje wynik z fallbackiem"))
-        preview_hash = alignment.get("previewSha256"); preview = Path(alignment.get("previewPath") or "")
-        if expected_hash != preview_hash:
-            await reject(PublishSourceChanged("Oczekiwany SHA-256 preview jest nieaktualny"))
-        media = Path(job.get("resolved_media_path") or job["media_path"])
-        polish = Path((alignment.get("selectedPolish") or {}).get("path") or "")
-        if alignment.get("mediaIdentity") != identity(media):
-            await reject(PublishSourceChanged("Film zmienił się od synchronizacji"))
-        if not polish.is_file() or alignment.get("inputSha256") != sha256(polish):
-            await reject(PublishSourceChanged("Źródłowy polski SRT zmienił się od synchronizacji"))
-        await self._emit(job_id, "INFO", JobStatus.PUBLISHING, "Bezpieczna publikacja nowej wersji napisów", 98)
-        try:
-            plan = await asyncio.to_thread(publisher.plan, media)
-            result = await asyncio.to_thread(publisher.publish, plan, preview, preview_hash)
-            result.update({"status": "PUBLISHED", "mode": mode, "quality": quality_grade,
-                           "automatic": automatic, "sourcePath": str(media),
-                           "message": "Utworzono nowy plik napisów. Żaden istniejący plik nie został zmieniony ani usunięty."})
-            report["publication"] = result; self._save_report(job_id, report, str(media))
-            self._audit_publication(job_id, mode, "PUBLISHED", quality_grade, automatic, result)
-            await self._emit(job_id, "SUCCESS", JobStatus.PUBLISHED, result["message"], 100)
-            return result
-        except PublishError as exc:
-            details = {"sourcePath": str(media), "previewSha256": preview_hash}
-            report["publication"] = {"status": exc.status, "message": str(exc), **details}
-            self._save_report(job_id, report, str(media)); self._audit_publication(
-                job_id, mode, exc.status, quality_grade, automatic, details, str(exc))
-            await self._emit(job_id, "WARNING", JobStatus(exc.status), str(exc), 100)
-            raise
-
-    async def start_alignment(self, job_id: str, english_source_id: str | None, polish_source_id: str | None,
-                              mode: AlignmentMode) -> None:
-        async def run() -> None:
-            try:
-                await self.align(job_id, english_source_id, polish_source_id, mode)
-            except asyncio.CancelledError:
-                await self._emit(job_id, 'WARNING', JobStatus.INTERRUPTED, 'Operacja przerwana przez zamknięcie aplikacji', 100)
-                raise
-            except UserInputError as exc:
-                with self._lock, self._connect() as db:
-                    db.execute("UPDATE jobs SET error_message=? WHERE id=?", (str(exc), job_id))
-                await self._emit(job_id, "ERROR", JobStatus.FAILED, str(exc), 100)
-            except Exception as exc:
-                message = f"Synchronizacja nie powiodła się ({type(exc).__name__})"
-                with self._lock, self._connect() as db:
-                    db.execute("UPDATE jobs SET error_message=? WHERE id=?", (message, job_id))
-                await self._emit(job_id, "ERROR", JobStatus.FAILED, message, 100)
-        asyncio.create_task(run())
-
-    async def align(self, job_id: str, english_source_id: str | None, polish_source_id: str | None,
-                    mode: AlignmentMode = AlignmentMode.SEMANTIC_PREFERRED) -> None:
-        job = self.get(job_id)
-        if not job or not job.get("report"):
-            raise UserInputError("Najpierw wykonaj analizę materiału")
-        report = job["report"]
-        english_options = report.get("englishRanking") or []
-        polish_options = report.get("polishRanking") or []
-        def source_id(item: dict) -> str:
-            return f"{item.get('sourceType')}:{item.get('streamIndex', item.get('name'))}"
-        def choose(options: list[dict], requested: str | None, selected: dict | None) -> dict | None:
-            wanted = requested or (source_id(selected) if selected else None)
-            return next((item for item in options if source_id(item) == wanted), None)
-        english = choose(english_options, english_source_id, report.get("selectedEnglish"))
-        polish = choose(polish_options, polish_source_id, report.get("selectedPolish"))
-        if english_source_id and not english or polish_source_id and not polish:
-            raise UserInputError("Wybrane źródło nie należy do raportu zadania")
-        await self._emit(job_id, "INFO", JobStatus.SELECTING_SOURCES,
-                         f"Źródła: EN {candidate_label(english)}, PL {candidate_label(polish)}", 5)
-        if not english or not polish:
-            raise UserInputError("Brak kompletnej pary angielskich i polskich napisów")
-        if english.get("type") == "graphic":
-            report["alignment"] = {"status": "NEEDS_OCR", "quality": "UNUSABLE",
-                                   "warnings": ["Angielskie źródło jest graficzne i wymaga OCR"],
-                                   "selectedEnglish": english, "selectedPolish": polish}
-            self._save_report(job_id, report, job.get("resolved_media_path") or job["media_path"])
-            await self._emit(job_id, "WARNING", JobStatus.NEEDS_OCR, "Wybrane napisy graficzne wymagają OCR", 100)
-            return
-        english_path = Path(report.get("workingFiles", {}).get("englishReference") or "")
-        polish_path = Path(polish.get("path") or "")
-        if not english_path.is_file() or polish.get("sourceType") != "external" or not polish_path.is_file():
-            raise UserInputError("Etap 3 wymaga tekstowej kopii angielskiej i zewnętrznego polskiego pliku")
-        await self._emit(job_id, "INFO", JobStatus.PARSING_SUBTITLES, "Parsowanie napisów do modelu milisekundowego", 15)
-        english_cues, polish_cues = await asyncio.gather(
-            asyncio.to_thread(parse_cues, english_path, "english"), asyncio.to_thread(parse_cues, polish_path, "polish"))
-        duration_ms = round((report.get("media", {}).get("durationSeconds") or 0) * 1000)
-        await self._emit(job_id, "INFO", JobStatus.BUILDING_ANCHORS, "Budowanie strukturalnych punktów dopasowania", 30)
-        structural = StructuralAnchorProvider().provide(english_cues, polish_cues, duration_ms, {"english": english, "polish": polish})
-        anchors = structural
-        structural_model = select_model(fit_models(
-            structural, self.settings.alignment_min_scale, self.settings.alignment_max_scale,
-            self.settings.alignment_max_segments, self.settings.alignment_min_points_per_segment
-        ))
-        semantic_report = {"mode": mode, "enabled": self.settings.openai_semantic_alignment_enabled,
-                           "configured": self.settings.openai_configured, "fallbackUsed": False,
-                           "model": self.settings.openai_model, "promptVersion": "semantic-anchor-v1",
-                           "qualityBefore": quality(structural_model)}
-        semantic_allowed = self.settings.openai_semantic_alignment_enabled and self.settings.openai_configured
-        if mode != AlignmentMode.STRUCTURAL_ONLY and semantic_allowed:
-            await self._emit(job_id, "INFO", JobStatus.PREPARING_SEMANTIC_WINDOWS,
-                             "Przygotowanie prywatnych okien semantycznych — przebieg 1/2", 34)
-            try:
-                await self._emit(job_id, "INFO", JobStatus.REQUESTING_SEMANTIC_ANCHORS,
-                                 "Żądanie semantycznych relacji EN–PL przez Responses API", 38)
-                async def semantic_progress(pass_number: int) -> None:
-                    if pass_number == 2:
-                        await self._emit(job_id, "INFO", JobStatus.REFINING_SEMANTIC_ANCHORS,
-                                         "Doprecyzowanie kotwic semantycznych — przebieg 2/2", 40)
-                semantic = await OpenAIAnchorProvider(self.settings).provide_async(
-                    english_cues, polish_cues, duration_ms,
-                    {"english": english, "polish": polish, "structural": structural}, semantic_progress)
-                await self._emit(job_id, "INFO", JobStatus.VALIDATING_SEMANTIC_ANCHORS,
-                                 f"Zatwierdzono {len(semantic.anchors)}, odrzucono {len(semantic.rejected)} kotwic", 42)
-                anchors = CompositeAnchorProvider.combine(structural, semantic.anchors)
-                semantic_report.update({"usage": semantic.telemetry.to_dict(), "acceptedRelations": semantic.accepted,
-                                        "rejectedRelations": semantic.rejected,
-                                        "finalAnchors": [{"referenceTime": a.reference_time, "sourceTime": a.source_time,
-                                                          "weight": a.confidence, "origin": a.origin} for a in semantic.anchors]})
-            except SemanticBudgetExceeded as exc:
-                semantic_report.update({"error": "AI_BUDGET_EXCEEDED", "message": str(exc)})
-                if mode == AlignmentMode.SEMANTIC_REQUIRED:
-                    report["semanticAlignment"] = semantic_report
-                    self._save_report(job_id, report, job.get("resolved_media_path") or job["media_path"])
-                    await self._emit(job_id, "WARNING", JobStatus.AI_BUDGET_EXCEEDED, "Wyczerpano budżet żądań AI", 100)
-                    return
-                semantic_report["fallbackUsed"] = True
-                await self._emit(job_id, "WARNING", JobStatus.SEMANTIC_FALLBACK, "Budżet AI wyczerpany — fallback strukturalny", 44)
-            except (SemanticUnavailable, SemanticBatchError) as exc:
-                semantic_report.update({"error": "AI_UNAVAILABLE", "message": str(exc)})
-                if mode == AlignmentMode.SEMANTIC_REQUIRED:
-                    report["semanticAlignment"] = semantic_report
-                    self._save_report(job_id, report, job.get("resolved_media_path") or job["media_path"])
-                    await self._emit(job_id, "WARNING", JobStatus.AI_UNAVAILABLE, "OpenAI jest niedostępne dla tego zadania", 100)
-                    return
-                semantic_report["fallbackUsed"] = True
-                await self._emit(job_id, "WARNING", JobStatus.SEMANTIC_FALLBACK, "OpenAI niedostępne — fallback strukturalny", 44)
-        elif mode != AlignmentMode.STRUCTURAL_ONLY:
-            semantic_report.update({"error": "NOT_CONFIGURED", "fallbackUsed": mode == AlignmentMode.SEMANTIC_PREFERRED})
-            if mode == AlignmentMode.SEMANTIC_REQUIRED:
-                report["semanticAlignment"] = semantic_report
-                self._save_report(job_id, report, job.get("resolved_media_path") or job["media_path"])
-                await self._emit(job_id, "WARNING", JobStatus.AI_UNAVAILABLE,
-                                 "Semantyczne dopasowanie jest wyłączone lub brak klucza", 100)
-                return
-            await self._emit(job_id, "WARNING", JobStatus.SEMANTIC_FALLBACK,
-                             "Semantyka nieaktywna — użyto kotwic strukturalnych", 44)
-        await self._emit(job_id, "INFO", JobStatus.FITTING_MODELS, f"Dopasowanie modeli do {len(anchors)} punktów", 45)
-        models = fit_models(anchors, self.settings.alignment_min_scale, self.settings.alignment_max_scale,
-                            self.settings.alignment_max_segments, self.settings.alignment_min_points_per_segment,
-                            duration_ms=duration_ms)
-        await self._emit(job_id, "INFO", JobStatus.SELECTING_STRATEGY, "Deterministyczny wybór najprostszego wiarygodnego modelu", 60)
-        model = select_model(models); grade = quality(model)
-        semantic_report["qualityAfter"] = grade
-        if not model:
-            grade = "UNUSABLE"
-            alignment = {"status": "REVIEW_REQUIRED", "quality": grade, "warnings": ["Za mało wiarygodnych punktów"],
-                         "selectedEnglish": english, "selectedPolish": polish, "anchorCount": len(anchors)}
-        else:
-            await self._emit(job_id, "INFO", JobStatus.TRANSFORMING_TIMESTAMPS,
-                             f"Transformacja: {model['strategy']}, offset {model.get('offsetMs')} ms, scale {model.get('scale')}", 72)
-            transformed, validation = transform(polish_cues, model, duration_ms, self.settings.alignment_end_tolerance_ms)
-            await self._emit(job_id, "INFO", JobStatus.VALIDATING_OUTPUT, "Walidacja kolejności i zakresu czasów", 84)
-            preview = self.settings.data_root / "work" / "jobs" / job_id / "preview.AI-Sync.pl.srt"
-            input_hash = sha256(polish_path)
-            await self._emit(job_id, "INFO", JobStatus.GENERATING_PREVIEW, "Atomowy zapis podglądu UTF-8 w katalogu roboczym", 92)
-            write_preview(transformed, preview)
-            warnings = []
-            if validation["reversedSegments"] or validation["overlappingSegments"]: warnings.append("Wynik zawiera konflikty czasowe")
-            status = "COMPLETED" if grade in {"HIGH", "MEDIUM"} and not warnings else "REVIEW_REQUIRED"
-            alignment = {"status": status, "quality": grade, "model": public_model(model),
-                         "models": [public_model(item) for item in models], "anchorCount": len(anchors),
-                         "anchorSummary": [{"referenceTime": a.reference_time, "sourceTime": a.source_time,
-                                            "confidence": a.confidence, "origin": a.origin} for a in anchors],
-                         "validation": validation, "firstBeforeMs": polish_cues[0].start_ms if polish_cues else None,
-                         "lastBeforeMs": polish_cues[-1].end_ms if polish_cues else None,
-                         "firstAfterMs": transformed[0].start_ms if transformed else None,
-                         "lastAfterMs": transformed[-1].end_ms if transformed else None,
-                         "inputSha256": input_hash, "previewSha256": sha256(preview), "previewPath": str(preview),
-                         "mediaIdentity": identity(Path(job.get("resolved_media_path") or job["media_path"])),
-                         "selectedEnglish": english, "selectedPolish": polish, "warnings": warnings,
-                         "readyForPublication": status == "COMPLETED", "mediaDirectoryModified": False}
-        report["alignment"] = alignment
-        report["semanticAlignment"] = semantic_report
-        self._save_report(job_id, report, job.get("resolved_media_path") or job["media_path"])
-        terminal = JobStatus.COMPLETED if alignment["status"] == "COMPLETED" else JobStatus.REVIEW_REQUIRED
-        if terminal == JobStatus.COMPLETED and self.settings.subtitle_agent_publish_enabled:
-            if self.settings.subtitle_agent_publish_mode == "MANUAL":
-                terminal = JobStatus.READY_TO_PUBLISH
-            elif self.settings.subtitle_agent_publish_mode == "AUTO_HIGH":
-                try:
-                    await self.publish(job_id, True, alignment["previewSha256"], automatic=True)
-                except PublishError:
-                    pass
-                return
-        await self._emit(job_id, "SUCCESS" if terminal == JobStatus.COMPLETED else "WARNING", terminal,
-                         f"Synchronizacja: {alignment['quality']} — plik pozostaje tylko podglądem", 100)
 
     async def _build_workpack(self, job_id: str, requirements: PipelineRequirements,
                               cached: dict | None = None, requested_reference: str | None = None) -> None:

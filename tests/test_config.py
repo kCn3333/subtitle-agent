@@ -43,26 +43,18 @@ def test_ocr_worker_is_optional_and_requires_internal_http():
         Settings(_env_file=None, ocr_worker_url="https://external.example")
 
 
-def test_default_workpack_mode_needs_no_openai_key(monkeypatch):
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("OPENAI_API_KEY_FILE", raising=False)
-    settings = Settings(_env_file=None)
-    assert settings.subtitle_agent_app_mode == "WORKPACK"
-    assert settings.openai_configured is False
-    assert settings.openai_semantic_alignment_enabled is False
-
-
-def test_openai_key_file_has_priority_and_is_masked(tmp_path, monkeypatch):
-    secret = tmp_path / "key"
-    secret.write_text("file-placeholder-secret\n")
-    settings = Settings(subtitle_agent_app_mode="ADVANCED", openai_api_key="environment-placeholder",
-                        openai_api_key_file=secret)
-    assert settings.openai_api_key.get_secret_value() == "file-placeholder-secret"
-    assert "file-placeholder-secret" not in repr(settings)
-
-
 def test_include_graphic_reference_environment(monkeypatch):
     monkeypatch.delenv('INCLUDE_GRAPHIC_REFERENCE', raising=False)
     assert Settings(_env_file=None).include_graphic_reference is False
     monkeypatch.setenv('INCLUDE_GRAPHIC_REFERENCE', 'true')
     assert Settings(_env_file=None).include_graphic_reference is True
+
+
+def test_removed_advanced_environment_is_ignored(tmp_path, monkeypatch):
+    monkeypatch.setenv('SUBTITLE_AGENT_APP_MODE', 'ADVANCED')
+    monkeypatch.setenv('OPENAI_API_KEY_FILE', str(tmp_path/'missing-secret'))
+    monkeypatch.setenv('SUBTITLE_AGENT_PUBLISH_ENABLED', 'true')
+    settings = Settings(_env_file=None)
+    assert 'subtitle_agent_app_mode' not in Settings.model_fields
+    assert not any(name.startswith(('openai_', 'subtitle_agent_publish_', 'subtitle_agent_auto_publish_', 'alignment_'))
+                   for name in Settings.model_fields)

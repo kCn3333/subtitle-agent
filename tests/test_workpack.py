@@ -26,15 +26,7 @@ def srt(text="Zażółć gęślą jaźń") -> bytes:
     return f"1\r\n00:00:01,000 --> 00:00:02,500\r\n{text}\r\n".encode("cp1250")
 
 
-def test_workpack_ignores_stale_key_file(tmp_path):
-    settings=Settings(subtitle_agent_app_mode='WORKPACK',openai_api_key='secret',
-                      openai_api_key_file=tmp_path/'missing-secret')
-    assert settings.openai_configured is False
-
-
-def test_mode_validation_and_limits():
-    assert Settings(subtitle_agent_app_mode="advanced").subtitle_agent_app_mode == "ADVANCED"
-    with pytest.raises(ValueError): Settings(subtitle_agent_app_mode="unsafe")
+def test_workpack_limits():
     with pytest.raises(ValueError): Settings(workpack_max_files=0)
 
 
@@ -249,8 +241,7 @@ def test_zip_file_limit_marks_omissions(tmp_path):
     assert archive.is_file() and len(omitted) == 3
 
 
-def test_workpack_mode_blocks_advanced_endpoints(tmp_path, monkeypatch, settings):
-    settings.subtitle_agent_app_mode="WORKPACK"
+def test_removed_advanced_endpoints_are_not_registered(monkeypatch, settings):
     monkeypatch.setattr("app.main.probe_tools",lambda:ToolInfo("ffmpeg test","ffprobe test","mkvextract test"))
     with TestClient(create_app(settings)) as client:
         from conftest import authenticate
@@ -258,6 +249,14 @@ def test_workpack_mode_blocks_advanced_endpoints(tmp_path, monkeypatch, settings
         assert client.get('/api/jobs/semantic/config').status_code == 404
         assert client.get('/api/jobs/publishing/config').status_code == 404
         assert client.post('/api/jobs/missing/alignment',json={}).status_code == 404
+        assert client.get('/api/jobs/missing/publication/preview').status_code == 404
+        assert client.post('/api/jobs/missing/publication',json={}).status_code == 404
+        assert client.get('/api/jobs/missing/preview').status_code == 404
+        paths = client.app.openapi()['paths']
+        assert not any('/alignment' in path or '/publication' in path or '/semantic/' in path or '/publishing/' in path
+                       for path in paths)
+        assert '/api/jobs/{job_id}/preview' not in paths
+        assert 'ADVANCED' not in client.get('/').text
 
 
 def test_workpack_api_persists_download_and_does_not_modify_media(client, media_file, settings):
@@ -318,10 +317,8 @@ def test_cleanup_keeps_old_titles_and_refuses_symlinks(tmp_path):
     assert remove_job_directory(jobs_root, unsafe_dir) is False
 
 
-
 def test_compose_has_no_openai_publish_or_rw_mount():
     compose=Path('compose.example.yml').read_text()
-    assert 'SUBTITLE_AGENT_APP_MODE: WORKPACK' in compose
     assert 'OPENAI_API_KEY' not in compose and '/publish' not in compose and ':rw' not in compose
     assert 'subtitle-ocr-worker:' in compose and 'OCR_WORKER_URL: http://subtitle-ocr-worker:8090' in compose
     assert 'cpus: 2.0' in compose and 'mem_limit: 1g' in compose

@@ -83,7 +83,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/")
     async def index(request: Request):
         return templates.TemplateResponse(request=request, name="index.html", context={"app_name": config.app_name,
-                                                                                       "app_mode": config.subtitle_agent_app_mode,
                                                                                        "ai_model": request.app.state.ai_settings.get().model})
 
     @app.get("/notifications-worker.js", include_in_schema=False)

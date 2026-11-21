@@ -1,18 +1,9 @@
-from pathlib import Path
-
 from fastapi import APIRouter, Header, HTTPException, Request, status
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 
-from app.models.job import AlignJobRequest, CreateJobRequest, CreateJobResponse, JobResponse, PublishJobRequest
-from app.services.media_analysis import UserInputError
-from app.services.publisher import PublishError, SubtitlePublisher
+from app.models.job import CreateJobRequest, CreateJobResponse, JobResponse
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
-
-
-def require_advanced(request: Request) -> None:
-    if request.app.state.settings.subtitle_agent_app_mode != "ADVANCED":
-        raise HTTPException(status_code=404, detail={"code": "ADVANCED_MODE_DISABLED", "message": "Endpoint jest dostępny tylko w trybie ADVANCED"})
 
 
 def not_found() -> HTTPException:
@@ -44,74 +35,6 @@ async def get_job(job_id: str, request: Request) -> JobResponse:
     if not job:
         raise not_found()
     return response_from_job(job)
-
-
-@router.post("/{job_id}/alignment", status_code=status.HTTP_202_ACCEPTED)
-async def align_job(job_id: str, payload: AlignJobRequest, request: Request) -> dict:
-    require_advanced(request)
-    if not request.app.state.jobs.get(job_id):
-        raise not_found()
-    await request.app.state.jobs.start_alignment(job_id, payload.english_source_id, payload.polish_source_id, payload.mode)
-    return {"jobId": job_id, "status": "SELECTING_SOURCES"}
-
-
-@router.get("/semantic/config")
-async def semantic_config(request: Request) -> dict:
-    require_advanced(request)
-    settings = request.app.state.settings
-    return {"enabled": settings.openai_semantic_alignment_enabled, "configured": settings.openai_configured,
-            "model": settings.openai_model, "limits": {"timeoutSeconds": settings.openai_timeout_seconds,
-            "maxRetries": settings.openai_max_retries, "maxRequestsPerJob": settings.openai_max_requests_per_job,
-            "maxInputTokensPerJob": settings.openai_max_input_tokens_per_job,
-            "maxOutputTokensPerJob": settings.openai_max_output_tokens_per_job,
-            "maxConcurrentRequests": settings.openai_max_concurrent_requests}}
-
-
-@router.get("/publishing/config")
-async def publishing_config(request: Request) -> dict:
-    require_advanced(request)
-    return SubtitlePublisher(request.app.state.settings).diagnostic()
-
-
-@router.get("/{job_id}/publication/preview")
-async def publication_preview(job_id: str, request: Request) -> dict:
-    require_advanced(request)
-    job = request.app.state.jobs.get(job_id)
-    if not job: raise not_found()
-    alignment = (job.get("report") or {}).get("alignment") or {}
-    try:
-        plan = SubtitlePublisher(request.app.state.settings).plan(Path(job.get("resolved_media_path") or job["media_path"]))
-        target_name, blocked = plan.target_name, None
-    except PublishError as exc:
-        target_name, blocked = None, str(exc)
-    return {"mode": request.app.state.settings.subtitle_agent_publish_mode,
-            "enabled": request.app.state.settings.subtitle_agent_publish_enabled,
-            "quality": alignment.get("quality"), "previewSha256": alignment.get("previewSha256"),
-            "targetName": target_name, "blockedReason": blocked}
-
-
-@router.post("/{job_id}/publication")
-async def publish_job(job_id: str, payload: PublishJobRequest, request: Request) -> dict:
-    require_advanced(request)
-    if not request.app.state.jobs.get(job_id): raise not_found()
-    try:
-        return await request.app.state.jobs.publish(job_id, payload.confirmed, payload.expected_preview_sha256)
-    except PublishError as exc:
-        raise HTTPException(status_code=409, detail={"code": exc.status, "message": str(exc)}) from exc
-
-
-@router.get("/{job_id}/preview")
-async def download_preview(job_id: str, request: Request) -> FileResponse:
-    require_advanced(request)
-    job = request.app.state.jobs.get(job_id)
-    if not job:
-        raise not_found()
-    alignment = (job.get("report") or {}).get("alignment") or {}
-    expected = (request.app.state.settings.data_root / "work" / "jobs" / job_id / "preview.AI-Sync.pl.srt").resolve()
-    recorded = alignment.get("previewPath")
-    if not recorded or Path(recorded).resolve() != expected or not expected.is_file():
-        raise HTTPException(status_code=404, detail={"code": "PREVIEW_NOT_FOUND", "message": "Podgląd nie istnieje"})
-    return FileResponse(expected, media_type="application/x-subrip", filename="preview.AI-Sync.pl.srt")
 
 
 @router.get("/{job_id}/events")
