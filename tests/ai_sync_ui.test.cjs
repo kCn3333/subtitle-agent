@@ -398,3 +398,42 @@ test('directory coverage identifies episode and follows its Polish selection',as
   context.restoreDirectoryChoices([{job_id:'episode-1',polish_file:'polish/a.srt'}]);
   assert.equal(get('#ai-coverage-warning').hidden,false);
 });
+
+test('review or failed retry shows the last successful SRT separately from the latest attempt',async t=>{
+  for(const status of ['needs_review','failed'])await t.test(status,async()=>{
+    const old={cue_count:777,filename:'Film.AI-Synced-v001.pl.srt',inputs:[{}, {name:'polish/a.srt'}]};
+    const state={status:'completed',operation_id:'old',mode:'sync',result:old};
+    const {get,context}=await setup(undefined,state);
+    assert.match(get('#ai-result-status').textContent,/Ostatni poprawny SRT: Film.AI-Synced-v001/);
+    const reason='Wymaga sprawdzenia: Kandydat kończy się przed końcem dialogu referencji (pl:777, en:1200)';
+    Object.assign(state,{status,operation_id:'retry',polish_file:'polish/b.srt',error:{message:reason,reason:'partial_candidate'}});
+    delete state.result;
+    context.fetch=async url=>({ok:true,json:async()=>url.endsWith('/ai-status')?state:{result:old}});
+    await context.refreshAiStatus('job',true);
+    assert.equal(get('#ai-polish').value,'polish/b.srt');
+    assert.match(get('#ai-sync-status').textContent,/Ostatnia próba:.*Kandydat kończy się.*pl:777, en:1200/);
+    assert.equal(get('#ai-result-status').textContent,'Ostatni poprawny SRT: Film.AI-Synced-v001.pl.srt · 777 kwestii · napisy PL: A. Dostępny do pobrania.');
+    assert.equal(get('#ai-result-status').hidden,false);
+    assert.equal(get('#ai-download').hidden,false);
+    assert.equal(get('#ai-download').download,old.filename);
+    assert.equal(get('#ai-sync-button').disabled,false);
+    const logs=context.logs.length;
+    await context.refreshAiStatus();
+    assert.equal(context.logs.length,logs);
+    assert.equal(get('#ai-download').hidden,false);
+    const fresh={...old,filename:'Film.AI-Synced-v002.pl.srt',inputs:[{}, {name:'polish/b.srt'}]};
+    Object.assign(state,{status:'completed',operation_id:'success',result:fresh});
+    await context.refreshAiStatus();
+    assert.match(get('#ai-result-status').textContent,/v002/);
+    assert.doesNotMatch(get('#ai-sync-status').textContent,/Wymaga sprawdzenia/);
+  });
+});
+
+test('review on page load without prior success keeps download hidden and displays the cause',async()=>{
+  const state={status:'needs_review',mode:'sync',operation_id:'review',error:{message:'Wymaga sprawdzenia: Kandydat nie jest w języku polskim',reason:'wrong_language'}};
+  const {get}=await setup(undefined,state);
+  assert.match(get('#ai-sync-status').textContent,/nie jest w języku polskim/);
+  assert.equal(get('#ai-download').hidden,true);
+  assert.equal(get('#ai-result-status').hidden,true);
+  assert.equal(get('#ai-sync-button').disabled,false);
+});

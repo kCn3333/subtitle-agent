@@ -87,6 +87,7 @@ var taskNotifications=(()=>{
     if(task.kind==='ai'){
       const operation=state.mode==='translation'?'Tłumaczenie AI':'Synchronizacja AI';
       if(state.status==='completed')return {key:'completed',done:true,title:`${operation} ${state.mode==='translation'?'zakończone':'zakończona'}`,body:title};
+      if(state.status==='needs_review')return {key:'needs_review',done:true,title:`${operation} — wymaga sprawdzenia`,body:`${title}: ${state.error?.message||'Sprawdź wybrane napisy.'}`};
       if(state.status==='failed')return {key:'failed',done:true,title:`${operation} — błąd`,body:title};
       return null;
     }

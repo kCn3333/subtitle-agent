@@ -46,6 +46,7 @@ function aiControls(){
   referenceSelect.disabled=aiRunning||aiPostPending;
   document.querySelector('#rebuild').disabled=aiRunning||aiPostPending;
   if(aiDirectory)for(const select of document.querySelector('#ai-directory-inputs').querySelectorAll('select'))select.disabled=aiRunning||aiPostPending;
+  document.querySelector('#ai-result-status').hidden=aiDownload.hidden;
   aiButtonLabel.textContent=aiQueued?'Oczekuje w kolejce…':aiRunning||aiPostPending?'AI pracuje…':aiChecking?'Sprawdzanie stanu…':'Przekaż do AI';
 }
 function applyAiState(state,jobId,restoreInputs=false){
@@ -61,21 +62,23 @@ function applyAiState(state,jobId,restoreInputs=false){
     const started=Date.parse(aiQueued?state.queued_at:state.started_at);aiStartedAt=Number.isFinite(started)?started:Date.now();
     if(state.polish_file&&polishSelect.options.length)polishSelect.value=state.polish_file;
     if(aiTimer===null)aiTimer=setInterval(updateAiElapsed,1000);
-    aiDownload.hidden=true;updateAiElapsed();
+    hideAiResult();updateAiElapsed();
   }else if(!aiPostPending){
     stopAiElapsed();aiRunning=false;aiQueued=false;aiQueuePosition=null;
     const operation=state.mode==='translation'?'Tłumaczenie przez AI':'Synchronizacja przez AI';
-    if(state.status==='completed'||(state.batch&&state.result))showAiResult(state.result,jobId,state.mode);
-    if(state.status==='failed'){
-      if(!state.batch||!state.result)aiDownload.hidden=true;
-      aiMessage.textContent=state.error?.message||'Operacja AI nie powiodła się';
+    if(state.status==='completed'||(state.batch&&state.result)){
+      showAiResult(state.result,jobId,state.mode);
+      aiMessage.textContent='Ostatnia próba AI zakończona.';
+    }
+    if(['failed','needs_review'].includes(state.status)){
+      aiMessage.textContent=`Ostatnia próba: ${state.error?.message||'Operacja AI nie powiodła się'}`;
     }
     if(state.operation_id&&state.operation_id!==aiSeenOperation){
       aiSeenOperation=state.operation_id;
-      if(state.status==='failed'){
-        line('ERROR',aiStage(state.mode),aiMessage.textContent);
+      if(['failed','needs_review'].includes(state.status)){
+        line(state.status==='needs_review'?'WARNING':'ERROR',aiStage(state.mode),aiMessage.textContent);
       }
-      if(['completed','failed'].includes(state.status))line(state.status==='completed'?'SUCCESS':'ERROR',`${aiStage(state.mode)}_SUMMARY`,
+      if(['completed','failed','needs_review'].includes(state.status))line(state.status==='completed'?'SUCCESS':state.status==='needs_review'?'WARNING':'ERROR',`${aiStage(state.mode)}_SUMMARY`,
         formatAiOperationSummary(state.result||state.error||{},`${operation} · Film: ${state.title||aiMediaTitle}`));
     }
   }
@@ -90,10 +93,14 @@ async function refreshAiStatus(jobId=aiJobId,loadResult=false){
     const state=await response.json();
     if(version!==aiStatusVersion||jobId!==aiJobId||jobId!==activeJobId)return;
     if(loadResult&&state.polish_file&&polishSelect.options.length)polishSelect.value=state.polish_file;
+    const restoreResult=loadResult||(['failed','needs_review'].includes(state.status)&&(state.operation_id!==aiSeenOperation||aiDownload.hidden));
     applyAiState(state,jobId,loadResult);
-    if(loadResult&&state.status==='idle'&&!aiPostPending){
+    if(restoreResult&&state.status!=='completed'&&!(state.batch&&state.result)&&!aiPostPending){
       const mode=aiMode,result=await fetch(`/api/tasks/${jobId}/${aiEndpoint(mode)}`);
-      if(result.ok){const saved=(await result.json()).result;if(saved?.batch)restoreDirectoryChoices(saved.outputs||[]);showAiResult(saved,jobId,mode);}
+      if(result.ok){const saved=(await result.json()).result;
+        if(version!==aiStatusVersion||jobId!==activeJobId)return;
+        if(saved?.batch&&state.status==='idle')restoreDirectoryChoices(saved.outputs||[]);
+        showAiResult(saved,jobId,mode,['failed','needs_review'].includes(state.status));}
     }
   }catch{
     if(version!==aiStatusVersion||jobId!==activeJobId||jobId!==aiJobId)return;
@@ -102,18 +109,22 @@ async function refreshAiStatus(jobId=aiJobId,loadResult=false){
   }
 }
 setInterval(()=>{if(aiJobId===activeJobId&&!aiPanel.hidden)refreshAiStatus()},2000);
+function hideAiResult(){aiDownload.hidden=true;document.querySelector('#ai-result-status').hidden=true}
 function hideAiHandoff(){aiPanel.hidden=true;aiButton.hidden=true}
-function showAiResult(result,jobId,mode=aiMode){
+function showAiResult(result,jobId,mode=aiMode,previous=false){
   if(jobId!==activeJobId)return;
   if(mode!==aiMode)return;
-  if(result&&!result.batch&&mode==='sync'&&result.inputs?.[1]?.name!==polishSelect.value)return;
-  if(result?.batch&&mode==='sync'&&(result.outputs||[]).some(item=>item.polish_file!==aiDirectoryChoices.get(item.job_id))){aiDownload.hidden=true;return;}
+  if(result&&!result.batch&&mode==='sync'&&!previous&&result.inputs?.[1]?.name!==polishSelect.value)return;
+  if(result?.batch&&mode==='sync'&&(result.outputs||[]).some(item=>item.polish_file!==aiDirectoryChoices.get(item.job_id))){hideAiResult();return;}
   aiDownload.hidden=!result;
+  document.querySelector('#ai-result-status').hidden=!result;
   if(result){
     aiDownload.href=`/api/tasks/${jobId}/${aiEndpoint(mode)}/download`;
     if(result.filename)aiDownload.download=result.filename;
     document.querySelector('#ai-download-label').textContent=result.batch?'Pobierz wyniki ZIP':'Pobierz wynik SRT';
-    aiMessage.textContent=result.batch?`Wyniki AI: ${result.file_count} plików SRT${result.failed_count?` · błędy: ${result.failed_count}`:''}. ZIP jest dostępny do pobrania.`:`Gotowe: ${result.cue_count} kwestii. Wynik SRT jest dostępny do pobrania.`;
+    const polishName=result.inputs?.[1]?.name;
+    const source=(aiCoverageReport.polishCandidates||[]).find(item=>item.archiveName===polishName)?.originalName||polishName;
+    document.querySelector('#ai-result-status').textContent=result.batch?`Wyniki AI: ${result.file_count} plików SRT${result.failed_count?` · błędy: ${result.failed_count}`:''}. ZIP jest dostępny do pobrania.`:`Ostatni poprawny SRT: ${result.filename||'wynik AI'} · ${result.cue_count} kwestii${source?` · napisy PL: ${source}`:''}. Dostępny do pobrania.`;
   }
 }
 function renderAiSync(job){
@@ -138,14 +149,15 @@ function renderAiSync(job){
     const option=document.createElement('option');option.value=item.archiveName;option.textContent=item.originalName||item.archiveName;polishSelect.append(option);
   }
   aiChecking=true;aiControls();
-  aiMessage.textContent=aiReferencePending?'Najpierw zatwierdź wybór referencji.':aiRunning?(aiRequestJobId===job.jobId?'AI przetwarza żądanie…':'Poczekaj na zakończenie żądania AI poprzedniego zadania.'):'';aiDownload.hidden=true;
+  document.querySelector('#ai-result-status').hidden=true;
+  aiMessage.textContent=aiReferencePending?'Najpierw zatwierdź wybór referencji.':aiRunning?(aiRequestJobId===job.jobId?'AI przetwarza żądanie…':'Poczekaj na zakończenie żądania AI poprzedniego zadania.'):'';hideAiResult();
   refreshAiStatus(job.jobId,true);
 }
 referenceSelect.addEventListener('change',()=>{
   aiControls();
-  if(!aiDirectory&&referenceSelect.value!==aiPreparedReference){aiMessage.textContent='Najpierw zbuduj workpack z wybraną referencją.';aiDownload.hidden=true}
+  if(!aiDirectory&&referenceSelect.value!==aiPreparedReference){aiMessage.textContent='Najpierw zbuduj workpack z wybraną referencją.';hideAiResult()}
 });
-polishSelect.addEventListener('change',()=>{aiDownload.hidden=true;aiMessage.textContent='';renderAiCoverageWarning()});
+polishSelect.addEventListener('change',()=>{hideAiResult();aiMessage.textContent='';renderAiCoverageWarning()});
 form.addEventListener('submit',hideAiHandoff);
 document.querySelector('#rebuild').addEventListener('click',hideAiHandoff);
 aiButton.addEventListener('click',async()=>{
@@ -153,7 +165,7 @@ aiButton.addEventListener('click',async()=>{
   const operation=mode==='translation'?'Tłumaczenie przez AI':'Synchronizacja przez AI';
   if(!jobId||aiButton.disabled)return;
   aiPostPending=true;aiPhase='Wysyłanie danych i oczekiwanie na model';
-  aiRunning=true;aiButton.disabled=true;polishSelect.disabled=true;aiDownload.hidden=true;
+  aiRunning=true;aiButton.disabled=true;polishSelect.disabled=true;hideAiResult();
   aiControls();
   line('INFO',aiStage(mode),`${operation} · Film: ${title}`);
   aiRequestMode=mode;
@@ -195,7 +207,7 @@ async function renderDirectoryHandoff(job){
   document.querySelector('#ai-polish-field').hidden=true;
   document.querySelector('#ai-download-label').textContent='Pobierz wyniki ZIP';
   const container=document.querySelector('#ai-directory-inputs');container.hidden=false;container.replaceChildren();
-  aiMessage.textContent='Sprawdzanie materiałów katalogu…';aiDownload.hidden=true;
+  aiMessage.textContent='Sprawdzanie materiałów katalogu…';hideAiResult();
   try{
     const response=await fetch(`/api/tasks/${job.jobId}/ai-inputs`);
     const body=await response.json();
@@ -213,7 +225,7 @@ async function renderDirectoryHandoff(job){
         const option=document.createElement('option');option.value=candidate.archiveName;option.textContent=candidate.originalName;select.append(option);
       }
       select.value=aiDirectoryChoices.get(item.job_id);
-      select.addEventListener('change',()=>{aiDirectoryChoices.set(item.job_id,select.value);aiDownload.hidden=true;aiMessage.textContent='Zmieniono wybór napisów PL. Przekaż katalog do AI, aby przygotować nowe wyniki.';renderAiCoverageWarning()});
+      select.addEventListener('change',()=>{aiDirectoryChoices.set(item.job_id,select.value);hideAiResult();aiMessage.textContent='Zmieniono wybór napisów PL. Przekaż katalog do AI, aby przygotować nowe wyniki.';renderAiCoverageWarning()});
       label.append(name,select);container.append(label);
     }
     const ready=aiDirectoryInputs.filter(item=>item.available).length;

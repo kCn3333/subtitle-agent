@@ -24,6 +24,16 @@ class AiSyncError(ValueError):
         self.usage = usage
 
 
+class AiSyncNeedsReview(AiSyncError):
+    def __init__(self, review):
+        reasons = {'wrong_language': 'Kandydat nie jest w języku polskim',
+                   'partial_candidate': 'Kandydat kończy się przed końcem dialogu referencji',
+                   'alignment_uncertain': 'Nie można wiarygodnie dopasować dialogów'}
+        identifiers = ', '.join(value for value in (review['candidate_id'], review['reference_id']) if value)
+        super().__init__(f"Wymaga sprawdzenia: {reasons[review['reason']]}" + (f" ({identifiers})" if identifiers else ''))
+        self.review = review
+
+
 def usage_metrics(value, settings):
     if not isinstance(value, dict):
         return None
@@ -309,10 +319,16 @@ Do not automatically copy an individual reference cue boundary onto a Polish cue
 If the reference does not establish exact internal splits within the group, preserve the
 existing relative Polish boundaries while aligning the group as a whole. Do not invent
 precise internal timings. Semantic grouping must not merge or split the output Polish cues.
-Return only a JSON object: {"segments":[{"id":"pl:1","start_ms":1000,"end_ms":2000}]}.
-Return every Polish ID exactly once, with integer milliseconds satisfying
-0 <= start_ms < end_ms <= duration_ms. Do not return reference IDs or subtitle text.
-Do not omit, merge, split or invent Polish segments. Use the original order of Polish cues.'''
+Align by dialogue meaning and scene order. If the candidate is clearly not Polish,
+ends partway through the reference dialogue, or cannot be reliably matched, do not invent timings.
+Return {"status":"needs_review","reason":"wrong_language|partial_candidate|alignment_uncertain",
+"candidate_id":"…","reference_id":"…"} using one reason code and actual cue IDs where available
+(otherwise null). Do not include segments in this response.
+For a reliable alignment, keep the segments response. Unchanged timings are valid when the dialogue already matches.
+Return only a JSON object: {"segments":[{"id":"pl:1","start_ms":1000,"end_ms":2000}]} for a reliable alignment.
+In the segments response, return every Polish ID exactly once, with integer milliseconds satisfying
+0 <= start_ms < end_ms <= duration_ms. In the segments response, do not return reference IDs or subtitle text.
+In that response, do not omit, merge, split or invent Polish segments. Use the original order of Polish cues.'''
 
 
 def read_cues(path: Path, language: str) -> list[Cue]:
@@ -343,7 +359,16 @@ def segments(cues: list[Cue]) -> list[dict]:
              "end_ms": cue.end_ms} for cue in cues]
 
 
-def validate_result(result: dict, polish: list[Cue], duration_ms: int) -> list[Cue]:
+def validate_result(result: dict, polish: list[Cue], duration_ms: int, reference: list[Cue] | None = None) -> list[Cue]:
+    if result.get('status') == 'needs_review':
+        if (set(result) != {'status', 'reason', 'candidate_id', 'reference_id'}
+                or result['reason'] not in ('wrong_language', 'partial_candidate', 'alignment_uncertain')):
+            raise AiSyncError('Nieprawidłowa odpowiedź needs_review')
+        for key, cues in (('candidate_id', polish), ('reference_id', reference or [])):
+            value = result[key]
+            if value is not None and (not isinstance(value, str) or value not in {cue.cue_id for cue in cues}):
+                raise AiSyncError(f'Nieprawidłowe {key} w needs_review')
+        raise AiSyncNeedsReview(result)
     rows = result.get("segments")
     if set(result) != {"segments"} or not isinstance(rows, list):
         raise AiSyncError("Odpowiedź musi zawierać wyłącznie listę segments")

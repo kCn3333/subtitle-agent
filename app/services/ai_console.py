@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
-from app.services.ai_sync import AiSyncError
+from app.services.ai_sync import AiSyncError, AiSyncNeedsReview
 from app.services.ai_usage import UsageStore
 
 _sink = ContextVar("ai_console_sink", default=None)
@@ -94,7 +94,7 @@ def capture(store, settings, operation, job_id=None, media_title=None):
         emit("INFO", f"{label}{film} · model: {settings.model} · timeout: {settings.timeout_seconds} s · reasoning: {settings.reasoning_effort or 'domyślne modelu'} · limit wyjścia: {settings.max_output_tokens or 'domyślne API'}")
         yield
     except AiSyncError as exc:
-        emit("ERROR", str(exc))
+        emit("WARNING" if isinstance(exc, AiSyncNeedsReview) else "ERROR", str(exc))
         raise
     else:
         emit("SUCCESS", "Wygenerowano gotowy plik SRT do pobrania" if operation in {"SYNC", "TRANSLATE"} else "Zakończono poprawnie")

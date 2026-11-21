@@ -28,6 +28,8 @@ Dostawca musi obsługiwać Chat Completions i zwracać JSON w `choices[0].messag
 
 Synchronizacja zmienia czasy, zachowując tekst PL, tagi i kolejność. Tłumaczenie zmienia tekst, zachowując czasy i kolejność referencji. Wyniki są wersjonowane jako `AI-Synced-v001.pl.srt` lub `AI-Translated-v001.pl.srt`, dostępne do pobrania i w archiwum. Aplikacja nie zapisuje ich w bibliotece mediów.
 
+Model może odmówić synchronizacji: `needs_review` oznacza zły język (`wrong_language`), niepełnego kandydata (`partial_candidate`) lub niepewne dopasowanie (`alignment_uncertain`). Panel pokazuje przyczynę i wskazane ID kwestii osobno od ostatniego poprawnego SRT. Nieudana próba zachowuje poprzedni plik; nowy wynik zastępuje go dopiero po walidacji i zapisaniu. Zgodne czasy mogą pozostać niezmienione.
+
 Walidacja sprawdza kompletność ID segmentów, format SRT i poprawność czasów. Dopasowanie dialogów, kompletność referencji, jakość OCR i tłumaczenia wymagają oceny użytkownika. Flaga `forced` może oznaczać niepełne napisy; sama liczba segmentów nie potwierdza zgodności, a słaba hipoteza czasowa nie jest gotową korektą.
 
 AI ma oddzielną kolejkę: jedna operacja działa, domyślnie pięć oczekuje. Restart przerywa niedokończone operacje; ponowienie jest ręczne. Dla całych katalogów zobacz [przetwarzanie katalogów](directory-batch.md).
@@ -51,4 +53,4 @@ API wymaga sesji. Logowanie przez `POST /api/auth/login` wymaga `Origin` zgodneg
 
 `POST /api/tasks/{job_id}/ai-sync` przyjmuje `reference_source_id` i `polish_file` (nazwę `archiveName` kandydata); `/ai-translate` tylko referencję. Dla katalogu wyślij `items` obejmujące wszystkie gotowe pozycje z `GET /api/tasks/{job_id}/ai-inputs`.
 
-Zlecenie zwraca `202` z `operation_id`. Odczytuj `GET /api/ai-operations/{operation_id}` do `completed` lub `failed`; `result` zawiera wynik, `error` — błąd. Przy błędzie katalogu `result` może nadal zawierać paczkę częściową. Pobieranie: `GET /api/tasks/{job_id}/ai-sync/download` lub `/ai-translate/download`.
+Zlecenie zwraca `202` z `operation_id`. Odczytuj `GET /api/ai-operations/{operation_id}` do `completed`, `needs_review` lub `failed`; `result` zawiera wynik, `error` — błąd lub przyczynę odmowy wraz z `reason`, `candidate_id` i `reference_id`. Przy błędzie katalogu `result` może nadal zawierać paczkę częściową. Pobieranie ostatniego poprawnego SRT: `GET /api/tasks/{job_id}/ai-sync/download` lub `/ai-translate/download`.

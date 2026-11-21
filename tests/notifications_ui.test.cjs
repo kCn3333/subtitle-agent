@@ -164,3 +164,15 @@ test('notification click handler rejects external destinations and opens the sel
   await click('https://external.example/');assert.equal(actions.length,0);
   await click('/?task=film');assert.deepEqual(actions,['https://app.example/?task=film']);
 });
+
+test('AI review is terminal and notifies the cause once',async()=>{
+  const ui=setup();
+  ui.api.trackAi('review','film');
+  ui.states.set('/api/ai-operations/review',{status:'needs_review',mode:'sync',title:'Film',error:{message:'Nie można wiarygodnie dopasować dialogów'}});
+  await ui.api.poll();
+  assert.equal(ui.shown.length,1);
+  assert.match(ui.shown[0].title,/wymaga sprawdzenia/);
+  assert.match(ui.shown[0].body,/Nie można wiarygodnie/);
+  await ui.api.poll();
+  assert.equal(ui.shown.length,1);
+});

@@ -115,7 +115,9 @@ class AiQueue:
                              error={'code':'INTERRUPTED', 'message':'Operacja AI została przerwana. Zleć ją ponownie, jeśli jest potrzebna.'})
                 raise
             except HTTPException as exc:
-                state.update(status='failed', error=exc.detail, http_status=exc.status_code, phase='Operacja zakończona błędem')
+                review = isinstance(exc.detail, dict) and exc.detail.get('code') == 'AI_SYNC_NEEDS_REVIEW'
+                state.update(status='needs_review' if review else 'failed', error=exc.detail, http_status=exc.status_code,
+                             phase='Wymaga sprawdzenia' if review else 'Operacja zakończona błędem')
             except Exception:
                 logger.exception('Operacja AI nie powiodła się')
                 state.update(status='failed', http_status=500, phase='Operacja zakończona błędem',

@@ -57,7 +57,7 @@ def wait_workpack(client, job_id: str) -> dict:
 
 
 def wait_operation(client, operation_id, timeout=5):
-    return wait_status(client, f'/api/ai-operations/{operation_id}', {'completed', 'failed'}, timeout)
+    return wait_status(client, f'/api/ai-operations/{operation_id}', {'completed', 'failed', 'needs_review'}, timeout)
 
 
 def embedded_reference(subtitle_type: str = "text") -> dict:

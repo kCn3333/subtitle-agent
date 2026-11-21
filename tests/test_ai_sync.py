@@ -348,3 +348,142 @@ def test_connection_accepts_extra_fields_but_requires_boolean_true(client,monkey
     assert body['usage']['cost']==0.00001876
     if accepted:
         assert body['ok'] is True
+
+@pytest.mark.parametrize('reason', ['wrong_language', 'partial_candidate', 'alignment_uncertain'])
+@pytest.mark.parametrize('reference_language', ['en', 'ref'])
+def test_valid_review_is_distinct_from_invented_timings(tmp_path, reason, reference_language):
+    from app.services.ai_sync import AiSyncNeedsReview, SYNC_INSTRUCTION
+    polish = read_cues(cue_file(tmp_path/'pl.srt'), 'pl')
+    reference = read_cues(cue_file(tmp_path/'ref.srt'), reference_language)
+    review = {'status': 'needs_review', 'reason': reason, 'candidate_id': 'pl:1', 'reference_id': f'{reference_language}:1'}
+    with pytest.raises(AiSyncNeedsReview) as failure:
+        validate_result(review, polish, 10000, reference)
+    assert failure.value.review == review
+    assert 'pl:1' in str(failure.value) and f'{reference_language}:1' in str(failure.value)
+    assert 'Unchanged timings are valid' in SYNC_INSTRUCTION
+    assert 'In the segments response, return every Polish ID' in SYNC_INSTRUCTION
+    original = segments(polish)[0]
+    unchanged = validate_result({'segments': [{key: original[key] for key in ('id','start_ms','end_ms')}]}, polish, 10000, reference)
+    assert unchanged == polish
+
+
+@pytest.mark.parametrize('change', [
+    {'reason':'unknown'}, {'reason':[]}, {'candidate_id':'pl:999'}, {'reference_id':'ref:999'},
+    {'candidate_id':True}, {'reference_id':12}, {'candidate_id':''}, {'segments':[]},
+])
+def test_review_rejects_invalid_codes_ids_and_mixed_contract(tmp_path, change):
+    from app.services.ai_sync import AiSyncNeedsReview
+    polish = read_cues(cue_file(tmp_path/'pl.srt'), 'pl')
+    reference = read_cues(cue_file(tmp_path/'en.srt'), 'en')
+    review = {'status':'needs_review','reason':'alignment_uncertain','candidate_id':'pl:1','reference_id':'en:1',**change}
+    with pytest.raises(AiSyncError) as failure:
+        validate_result(review, polish, 10000, reference)
+    assert not isinstance(failure.value, AiSyncNeedsReview)
+
+
+def test_review_allows_explicitly_unavailable_ids(tmp_path):
+    from app.services.ai_sync import AiSyncNeedsReview
+    with pytest.raises(AiSyncNeedsReview):
+        validate_result({'status':'needs_review','reason':'alignment_uncertain','candidate_id':None,'reference_id':None},
+                        read_cues(cue_file(tmp_path/'pl.srt'),'pl'),10000,[])
+
+
+@pytest.mark.parametrize('reason', ['wrong_language','partial_candidate','alignment_uncertain'])
+def test_review_is_durable_and_does_not_produce_srt(client, prepared_job, monkeypatch, reason):
+    job_id, directory = prepared_job
+    review = {'status':'needs_review','reason':reason,'candidate_id':'pl:1','reference_id':'en:1'}
+    async def refuse(*args):return review,.75,{'total_tokens':13}
+    monkeypatch.setattr('app.api.ai_sync.chat_request',refuse)
+    response = complete_ai(client,f'/api/tasks/{job_id}/ai-sync',json={'polish_file':'polish/original.pl.srt','reference_source_id':'embedded:4'})
+    assert response.status_code == 422
+    assert response.json()['detail'].items() >= review.items()
+    assert response.json()['detail']['usage'] == {'total_tokens':13}
+    state = client.get(f'/api/tasks/{job_id}/ai-status').json()
+    assert state['status'] == 'needs_review'
+    with sqlite3.connect(client.app.state.settings.data_root/'subtitle-agent.db') as db:
+        stored = json.loads(db.execute('SELECT data FROM ai_operations WHERE id=?',(state['operation_id'],)).fetchone()[0])
+    assert stored['status'] == 'needs_review' and stored['error']['reason'] == reason
+    assert not (directory/'ai-sync.pl.srt').exists()
+    assert not (directory/'ai-sync.json').exists()
+    assert client.get(f'/api/tasks/{job_id}/ai-sync/download').status_code == 404
+
+
+@pytest.mark.parametrize('failure', ['review','invalid','transport','cancel','write','archive','capture','publish'])
+def test_failed_retry_preserves_last_successful_srt_and_metadata(client, prepared_job, monkeypatch, failure):
+    from pathlib import Path
+    job_id, directory = prepared_job
+    endpoint = f'/api/tasks/{job_id}/ai-sync'
+    payload = {'polish_file':'polish/original.pl.srt','reference_source_id':'embedded:4'}
+    async def success(*args):return {'segments':[{'id':'pl:1','start_ms':5000,'end_ms':6500}]},.5,None
+    monkeypatch.setattr('app.api.ai_sync.chat_request',success)
+    assert complete_ai(client,endpoint,json=payload).status_code == 200
+    original = {name:(directory/name).read_bytes() for name in ('ai-sync.pl.srt','ai-sync.json')}
+    async def retry(*args):
+        if failure == 'review':return {'status':'needs_review','reason':'alignment_uncertain','candidate_id':'pl:1','reference_id':'en:1'},.2,None
+        if failure == 'invalid':return {'segments':[]},.2,None
+        if failure == 'transport':raise AiSyncError('Przerwane połączenie')
+        if failure == 'cancel':raise asyncio.CancelledError()
+        return {'segments':[{'id':'pl:1','start_ms':7000,'end_ms':7500}]},.2,None
+    monkeypatch.setattr('app.api.ai_sync.chat_request',retry)
+    if failure == 'write':
+        def broken_write(cues,target):
+            target.write_text('partial output');raise OSError('write failure')
+        monkeypatch.setattr('app.api.ai_sync.write_preview',broken_write)
+    if failure == 'archive':monkeypatch.setattr(client.app.state.jobs.archive,'record',lambda *args:None)
+    if failure == 'capture':
+        def broken_capture(*args):raise OSError('archive capture failure')
+        monkeypatch.setattr(client.app.state.jobs.archive,'capture',broken_capture)
+    if failure == 'publish':
+        replace = Path.replace
+        def broken_publish(source,target):
+            if source.name == 'ai-sync.json':raise OSError('metadata publication failure')
+            return replace(source,target)
+        monkeypatch.setattr(Path,'replace',broken_publish)
+    response = complete_ai(client,endpoint,json=payload)
+    assert response.status_code in (422,500,502,503)
+    assert {name:(directory/name).read_bytes() for name in original} == original
+    assert not list(directory.glob('.ai-sync-*'))
+    download = client.get(endpoint+'/download')
+    assert download.status_code == 200 and download.content == original['ai-sync.pl.srt']
+    assert client.get(endpoint).json()['result'] == json.loads(original['ai-sync.json'])
+
+
+def test_unparseable_input_retry_keeps_previous_working_files(client, prepared_job, monkeypatch):
+    from app.services.alignment import sha256
+    job_id, directory = prepared_job
+    endpoint = f'/api/tasks/{job_id}/ai-sync'
+    payload = {'polish_file':'polish/original.pl.srt','reference_source_id':'embedded:4'}
+    async def success(*args):return {'segments':[{'id':'pl:1','start_ms':5000,'end_ms':6500}]},.5,None
+    monkeypatch.setattr('app.api.ai_sync.chat_request',success)
+    assert complete_ai(client,endpoint,json=payload).status_code == 200
+    original = {name:(directory/name).read_bytes() for name in ('ai-sync.pl.srt','ai-sync.json')}
+    manifest = (directory/'manifest.json').read_bytes()
+    source = directory/'polish/original.pl.srt'
+    text = source.read_bytes()
+    source.write_text('not a subtitle')
+    changed = json.loads(manifest)
+    changed['polish_candidates'][0]['sha256'] = sha256(source)
+    (directory/'manifest.json').write_text(json.dumps(changed))
+    async def never(*args):raise AssertionError('Malformed input must not reach AI')
+    monkeypatch.setattr('app.api.ai_sync.chat_request',never)
+    assert complete_ai(client,endpoint,json=payload).status_code == 502
+    assert {name:(directory/name).read_bytes() for name in original} == original
+    source.write_bytes(text);(directory/'manifest.json').write_bytes(manifest)
+    download = client.get(endpoint+'/download')
+    assert download.status_code == 200 and download.content == original['ai-sync.pl.srt']
+
+
+def test_metadata_publication_failure_without_previous_result_leaves_no_partial_pair(tmp_path, monkeypatch):
+    from pathlib import Path
+    from app.api.ai_sync import publish_result
+    staging = tmp_path/'stage';staging.mkdir()
+    (staging/'ai-sync.pl.srt').write_text('validated SRT')
+    (staging/'ai-sync.json').write_text('{}')
+    replace = Path.replace
+    def fail(source,target):
+        if source.name == 'ai-sync.json':raise OSError('metadata write failure')
+        return replace(source,target)
+    monkeypatch.setattr(Path,'replace',fail)
+    with pytest.raises(OSError):publish_result(tmp_path,staging,'ai-sync')
+    assert not (tmp_path/'ai-sync.pl.srt').exists()
+    assert not (tmp_path/'ai-sync.json').exists()

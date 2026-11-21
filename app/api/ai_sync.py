@@ -1,11 +1,13 @@
 import json
+import shutil
+from tempfile import TemporaryDirectory
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict
 
-from app.services.ai_sync import (ModelConfiguration, ModelLimitError, ApiSettings, AiSyncError, SYNC_INSTRUCTION, chat_request,
+from app.services.ai_sync import (ModelConfiguration, ModelLimitError, ApiSettings, AiSyncError, AiSyncNeedsReview, SYNC_INSTRUCTION, chat_request,
                                   read_cues, segments, validate_result, TRANSLATION_INSTRUCTION, validate_translation)
 from app.services.alignment import sha256, write_preview
 from app.services.ai_console import capture
@@ -183,6 +185,30 @@ def saved_result(directory: Path, stem="ai-sync"):
     return result
 
 
+def publish_result(directory, staging, stem):
+    names = (f"{stem}.pl.srt", f"{stem}.json")
+    # Keep both previous files until the staged SRT and metadata have been published.
+    for name in names:
+        previous = directory / name
+        if previous.is_symlink():
+            raise AiSyncError('Nieprawidłowy plik poprzedniego wyniku AI')
+        if previous.exists():
+            shutil.copyfile(previous, staging / f"{name}.previous")
+    replaced = []
+    try:
+        for name in names:
+            (staging / name).replace(directory / name)
+            replaced.append(name)
+    except BaseException:
+        for name in reversed(replaced):
+            previous = staging / f"{name}.previous"
+            if previous.exists():
+                previous.replace(directory / name)
+            else:
+                (directory / name).unlink(missing_ok=True)
+        raise
+
+
 @router.post("/api/tasks/{job_id}/ai-sync", status_code=202)
 async def synchronize(job_id: str, payload: SyncRequest | DirectoryRequest, request: Request):
     return await process(job_id, payload, request, "PREPARE_SYNC")
@@ -272,9 +298,6 @@ async def execute(job_id, payload, request, pipeline, settings, expected_manifes
     duration = data.get("media", {}).get("duration_ms")
     if type(duration) is not int or duration <= 0:
         raise error("Brak poprawnego czasu trwania filmu")
-    # Remove the previous result before a new attempt, including invalid responses.
-    for name in (f"{stem}.json", f"{stem}.pl.srt"):
-        (directory / name).unlink(missing_ok=True)
     elapsed, usage = None, None
     try:
         with capture(request.app.state.ai_console, settings, "TRANSLATE" if translation else "SYNC", batch_parent or job_id,
@@ -291,41 +314,47 @@ async def execute(job_id, payload, request, pipeline, settings, expected_manifes
                 TRANSLATION_INSTRUCTION if translation else SYNC_INSTRUCTION, data)
             set_phase(request, job_id, 'Sprawdzanie odpowiedzi modelu', batch_parent)
             output = (validate_translation(result, english, duration) if translation
-                      else validate_result(result, polish, duration))
+                      else validate_result(result, polish, duration, english))
             prepared(request, job_id, pipeline, batch_parent)
             if digest != sha256(directory / "manifest.json"):
                 raise AiSyncError("Referencja zmieniła się podczas żądania; przygotuj dane ponownie")
             for entry, name_key in inputs:
                 input_file(directory, entry, name_key)
             set_phase(request, job_id, 'Zapisywanie napisów SRT', batch_parent)
-            target = directory / f"{stem}.pl.srt"
-            write_preview(output, target)
-            output_digest = sha256(target)
-            if batch_parent:
-                media_name = safe_filename(Path(request.app.state.jobs.get(job_id)['media_path']).stem)
-                filename = f"{media_name}.{'AI-Translated' if translation else 'AI-Synced'}-v001.pl.srt"
-            else:
-                with request.app.state.jobs._lock:
-                    filename = request.app.state.jobs.archive.record(request.app.state.jobs.get(job_id), target,
-                        'translation' if translation else 'synchronization', output_digest)
-            if filename is None:
-                raise AiSyncError("Nie udało się zarchiwizować wyniku SRT")
-            summary = {"model": settings.model, "elapsed_seconds": elapsed, "usage": usage,
-                       "mode": "translation" if translation else "sync",
-                       "total_cost": (usage or {}).get("cost"),
-                       "cue_count": len(output), "manifest_sha256": digest, "sha256": output_digest,
-                       "filename": filename,
-                       "inputs": [{"name": entry[name_key], "sha256": entry["sha256"]}
-                                  for entry, name_key in inputs]}
-            if batch_parent:
-                summary['settings_sha256'] = settings_digest(settings)
-            temporary = directory / f".{stem}.json.tmp"
-            temporary.write_text(json.dumps(summary, ensure_ascii=False), encoding="utf-8")
-            temporary.replace(directory / f"{stem}.json")
-            if not batch_parent:
-                with request.app.state.jobs._lock:
-                    request.app.state.jobs.archive.capture(request.app.state.jobs.get(job_id))
+            with TemporaryDirectory(prefix=f".{stem}-", dir=directory) as temporary_directory:
+                staging = Path(temporary_directory)
+                target = staging / f"{stem}.pl.srt"
+                write_preview(output, target)
+                output_digest = sha256(target)
+                if batch_parent:
+                    media_name = safe_filename(Path(request.app.state.jobs.get(job_id)['media_path']).stem)
+                    filename = f"{media_name}.{'AI-Translated' if translation else 'AI-Synced'}-v001.pl.srt"
+                else:
+                    with request.app.state.jobs._lock:
+                        filename = request.app.state.jobs.archive.record(request.app.state.jobs.get(job_id), target,
+                            'translation' if translation else 'synchronization', output_digest)
+                if filename is None:
+                    raise AiSyncError("Nie udało się zarchiwizować wyniku SRT")
+                summary = {"model": settings.model, "elapsed_seconds": elapsed, "usage": usage,
+                           "mode": "translation" if translation else "sync",
+                           "total_cost": (usage or {}).get("cost"),
+                           "cue_count": len(output), "manifest_sha256": digest, "sha256": output_digest,
+                           "filename": filename,
+                           "inputs": [{"name": entry[name_key], "sha256": entry["sha256"]}
+                                      for entry, name_key in inputs]}
+                if batch_parent:
+                    summary['settings_sha256'] = settings_digest(settings)
+                temporary = staging / f"{stem}.json"
+                temporary.write_text(json.dumps(summary, ensure_ascii=False), encoding="utf-8")
+                if not batch_parent:
+                    with request.app.state.jobs._lock:
+                        request.app.state.jobs.archive.capture(request.app.state.jobs.get(job_id))
+                publish_result(directory, staging, stem)
             return summary
+    except AiSyncNeedsReview as exc:
+        failure = error(str(exc), 422, elapsed, usage)
+        failure.detail.update(exc.review, code='AI_SYNC_NEEDS_REVIEW')
+        raise failure from exc
     except AiSyncError as exc:
         raise error(str(exc), 502, exc.elapsed_seconds if exc.elapsed_seconds is not None else elapsed,
                     exc.usage if exc.usage is not None else usage) from exc
