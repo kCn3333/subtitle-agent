@@ -33,7 +33,7 @@ jobs:
           version = runpy.run_path('app/__init__.py')['__version__']
           assert os.environ['GITHUB_REF_NAME'] == f'v{version}', 'Release tag must match app version'
           PYCODE
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
       - id: meta
         uses: docker/metadata-action@v5
         with:
