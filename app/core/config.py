@@ -30,27 +30,27 @@ class Settings(BaseSettings):
         default=[Path("/media/movies"), Path("/media/shows")],
         validation_alias=AliasChoices("SUBTITLE_AGENT_MEDIA_ROOTS", "MEDIA_ROOTS"),
     )
-    max_concurrent_jobs: int = 1
+    max_concurrent_jobs: int = Field(default=1, ge=1)
     max_queued_jobs: int = Field(default=5, ge=1, le=100)
     max_queued_ai_operations: int = Field(default=5, ge=1, le=100)
-    workpack_reference_score_margin: int = 10
-    workpack_max_reference_alternatives: int = 2
+    workpack_reference_score_margin: int = Field(default=10, ge=1)
+    workpack_max_reference_alternatives: int = Field(default=2, ge=1)
     workpack_include_reference_alternatives: bool = True
-    workpack_max_polish_candidates: int = 10
-    workpack_max_archive_bytes: int = 104857600
-    workpack_max_files: int = 100
+    workpack_max_polish_candidates: int = Field(default=10, ge=1)
+    workpack_max_archive_bytes: int = Field(default=104857600, ge=1)
+    workpack_max_files: int = Field(default=100, ge=1)
     directory_max_items: int = Field(default=500, ge=1, le=10000)
     directory_max_archive_bytes: int = Field(default=1073741824, ge=4096)
     directory_max_files: int = Field(default=10000, ge=3)
     ai_max_saved_models: int = Field(default=10, ge=1, le=100)
     archive_max_titles: int = Field(default=30, ge=1, le=10000)
-    workpack_cleanup_interval_hours: int = 6
+    workpack_cleanup_interval_hours: int = Field(default=6, ge=1)
     ffprobe_timeout_seconds: float = 30
     ffmpeg_timeout_seconds: float = 600
     include_graphic_reference: bool = False
     ocr_worker_url: str | None = None
     ocr_timeout_seconds: float = 900
-    ocr_max_output_bytes: int = 20 * 1024 * 1024
+    ocr_max_output_bytes: int = Field(default=20 * 1024 * 1024, ge=1)
 
     @field_validator("auth_trusted_proxies", mode="before")
     @classmethod
@@ -109,22 +109,6 @@ class Settings(BaseSettings):
         if not normalized.startswith("http://"):
             raise ValueError("OCR_WORKER_URL must use internal plain HTTP")
         return normalized
-
-    @field_validator("max_concurrent_jobs")
-    @classmethod
-    def positive_jobs(cls, value: int) -> int:
-        if value < 1:
-            raise ValueError("MAX_CONCURRENT_JOBS must be at least 1")
-        return value
-
-    @field_validator("workpack_reference_score_margin", "workpack_max_reference_alternatives",
-                     "workpack_max_polish_candidates", "workpack_max_archive_bytes", "workpack_max_files",
-                     "workpack_cleanup_interval_hours", "ocr_max_output_bytes")
-    @classmethod
-    def positive_workpack_limit(cls, value: int) -> int:
-        if value < 1:
-            raise ValueError("Workpack limits must be at least 1")
-        return value
 
 
 @lru_cache
