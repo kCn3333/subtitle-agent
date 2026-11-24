@@ -11,7 +11,7 @@ Podstawowe uruchomienie i ustawienia Compose opisuje [README](../README.md#uruch
 - Pusta lista proxy oznacza używanie IP bezpośredniego połączenia; za proxy wszyscy użytkownicy mogą wtedy podlegać wspólnej blokadzie logowania.
 - Worker OCR działa tylko w sieci Compose na porcie `8090`. Publiczny `/health` aplikacji zwraca wyłącznie status.
 
-Po trzech błędnych logowaniach IP jest blokowane domyślnie na godzinę (`AUTH_LOCKOUT_SECONDS=3600`). Sesja trwa 8 godzin (`AUTH_SESSION_SECONDS=28800`), a z opcją zapamiętania — 30 dni. Restart nie usuwa blokady; zmiana danych logowania i restart unieważniają sesje.
+Po trzech błędnych logowaniach kolejne próby z danego IP są blokowane domyślnie na godzinę (`AUTH_LOCKOUT_SECONDS=3600`); aktywne sesje zachowują dostęp. Sesja trwa 8 godzin (`AUTH_SESSION_SECONDS=28800`), a z opcją zapamiętania — 30 dni. Restart nie usuwa blokady; zmiana danych logowania i restart unieważniają sesje.
 
 ## Dane i zasoby
 

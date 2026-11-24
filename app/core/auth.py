@@ -6,7 +6,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse
 
-from app.services.auth import COOKIE, client_ip
+from app.services.auth import COOKIE
 
 
 class AuthMiddleware:
@@ -51,13 +51,6 @@ class AuthMiddleware:
         if public:
             return await self.app(scope, receive, secure_send)
         store = request.app.state.auth
-        try:
-            ip = client_ip(request, config.auth_trusted_proxies)
-        except ValueError:
-            return await reject(400, "INVALID_PROXY", "Nieprawidłowy adres klienta przekazany przez proxy.")
-        remaining = await run_in_threadpool(store.remaining, ip)
-        if remaining:
-            return await reject(429, "IP_BLOCKED", "Adres IP jest czasowo zablokowany.", {"Retry-After": str(remaining)})
         session = await run_in_threadpool(store.session, request.cookies.get(COOKIE, ""))
         if not session:
             if path.startswith("/api/") or request.method not in {"GET", "HEAD"}:

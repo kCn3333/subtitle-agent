@@ -10,6 +10,7 @@ from app.core.config import Settings
 from app.main import create_app
 from app.services.auth import COOKIE, AuthStore
 from app.services.system_probe import ToolInfo
+from tests.helpers import add_job
 
 
 @pytest.fixture
@@ -105,7 +106,10 @@ def test_third_failure_locks_ip_for_one_hour_even_for_correct_password(browser):
     assert blocked.status_code == 429
     assert int(blocked.headers['retry-after']) == 3600
     assert login(browser).status_code == 429
-    assert browser.get('/api/settings/ai').status_code == 429
+    response = browser.get('/api/settings/ai')
+    assert response.status_code == 401
+    assert response.json()['detail']['code'] == 'LOGIN_REQUIRED'
+    assert browser.get('/', follow_redirects=False).status_code == 303
     assert browser.get('/health').status_code == 200
     store = browser.app.state.auth
     restarted = AuthStore(store.path, store.settings)
@@ -113,6 +117,58 @@ def test_third_failure_locks_ip_for_one_hour_even_for_correct_password(browser):
     with store.connect() as db:
         db.execute('UPDATE auth_failures SET blocked_until=?', (time.time()-1,))
     assert login(browser).status_code == 200
+
+
+@pytest.mark.parametrize('remember', [False, True])
+@pytest.mark.parametrize('trusted_proxy', [False, True])
+def test_active_session_survives_failed_logins_from_same_ip(browser, remember, trusted_proxy):
+    # Share the running app and source IP, but keep the attacker's cookies separate.
+    attacker = TestClient(browser.app, client=('198.51.100.10', 4321))
+    try:
+        ip = '198.51.100.10'
+        if trusted_proxy:
+            browser.app.state.settings.auth_trusted_proxies = ['198.51.100.10/32']
+            ip = '203.0.113.8'
+            for client in (browser, attacker):
+                client.headers['X-Forwarded-For'] = ip
+        assert login(browser, remember=remember).status_code == 200
+        token = browser.cookies[COOKIE]
+        csrf = session_csrf(browser)
+        job_id, _ = add_job(browser.app.state.jobs, 'Owner session')
+        for expected in [401, 401, 429]:
+            assert login(attacker, password='wrong').status_code == expected
+        blocked = login(attacker)
+        assert blocked.status_code == 429
+        assert blocked.json()['detail']['code'] == 'IP_BLOCKED'
+        assert int(blocked.headers['retry-after']) > 0
+        store = browser.app.state.auth
+        with store.connect() as db:
+            lockout = db.execute('SELECT * FROM auth_failures WHERE ip=?', (ip,)).fetchone()
+        for path in ['/', '/settings', '/api/settings/ai', '/api/jobs',
+                     f'/api/tasks/{job_id}/download', f'/api/jobs/{job_id}/events']:
+            response = browser.get(path)
+            assert response.status_code == 200, (path, response.text)
+        payload = {'api_url': 'http://model/v1', 'model': 'test'}
+        for headers in [{}, {'X-CSRF-Token': 'bad'},
+                        {'X-CSRF-Token': csrf, 'Origin': 'https://evil.example'}]:
+            rejected = browser.put('/api/settings/ai', json=payload, headers=headers)
+            assert rejected.status_code == 403
+            assert rejected.json()['detail']['code'] == 'CSRF_FAILED'
+        assert browser.put('/api/settings/ai', json=payload,
+                           headers={'X-CSRF-Token': csrf, 'Origin': 'http://testserver'}).status_code == 200
+        assert browser.cookies[COOKIE] == token
+        assert store.session(token) is not None
+        assert browser.post('/api/auth/logout', headers={
+            'X-CSRF-Token': csrf, 'Origin': 'http://testserver'}).status_code == 200
+        assert store.session(token) is None
+        browser.cookies.set(COOKIE, token)
+        assert browser.get('/api/settings/ai').status_code == 401
+        assert attacker.get('/api/settings/ai').status_code == 401
+        assert login(attacker).status_code == 429
+        with store.connect() as db:
+            assert db.execute('SELECT * FROM auth_failures WHERE ip=?', (ip,)).fetchone() == lockout
+    finally:
+        attacker.close()
 
 
 def test_success_resets_failure_counter_and_expired_session_is_rejected(browser):
