@@ -68,14 +68,14 @@ jobs:
       - name: Run UI tests
         run: node --test tests/*_ui.test.cjs
       - name: Run Ruff and tests in Python 3.12 image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           target: test
           platforms: linux/amd64
           cache-from: type=gha,scope=app
       - id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64
@@ -115,7 +115,7 @@ jobs:
           docker exec subtitle-agent-test ffprobe -version
           docker exec subtitle-agent-test mkvextract --version
       - name: Build OCR worker
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile.ocr
@@ -150,7 +150,7 @@ jobs:
           python tests/container_ocr_smoke.py /tmp/ocr-fixture
       - if: github.event_name != 'pull_request'
         id: publish
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64
@@ -163,7 +163,7 @@ jobs:
           cache-from: type=gha,scope=app
       - if: github.event_name != 'pull_request'
         id: publish-ocr
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile.ocr
