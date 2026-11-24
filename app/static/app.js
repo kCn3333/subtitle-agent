@@ -1,98 +1,543 @@
-const form=document.querySelector('#job-form'),output=document.querySelector('#console');
-const statusEl=document.querySelector('#status'),progressEl=document.querySelector('#progress'),progressBar=document.querySelector('#progress-bar'),progressTrack=document.querySelector('.progress-track'),activityEl=document.querySelector('#current-activity');
-const results=document.querySelector('#results'),content=document.querySelector('#result-content'),download=document.querySelector('#download');
-const referenceBox=document.querySelector('#reference-choice'),referenceSelect=document.querySelector('#reference-source'),currentStatus=document.querySelector('#current-status'),referenceActions=document.querySelector('#reference-actions');
-let source=null,activeJobId=null,activeMediaTitle='Nieznany tytuł',activeDirectoryJob=null,jobViewVersion=0;
-const ocrActivity=document.createElement('div'),ocrActivityLabel=document.createElement('span'),ocrElapsed=document.createElement('span');
-ocrActivity.className='entry INFO ocr-console-entry';
-ocrActivity.setAttribute('aria-live','off');
-ocrActivity.append(ocrActivityLabel,ocrElapsed);
-let ocrStartedAt=null,ocrTimer=null,ocrConnected=true;
-function updateOcrElapsed(){
-  if(ocrStartedAt===null)return;
-  const seconds=Math.max(0,Math.floor((Date.now()-ocrStartedAt)/1000));
-  if(!output.contains(ocrActivity))output.append(ocrActivity);
-  ocrElapsed.textContent=` · czas oczekiwania: ${Math.floor(seconds/60)} min ${String(seconds%60).padStart(2,'0')} s`;
+const form = document.querySelector('#job-form'),
+  output = document.querySelector('#console');
+const statusEl = document.querySelector('#status'),
+  progressEl = document.querySelector('#progress'),
+  progressBar = document.querySelector('#progress-bar'),
+  progressTrack = document.querySelector('.progress-track'),
+  activityEl = document.querySelector('#current-activity');
+const results = document.querySelector('#results'),
+  content = document.querySelector('#result-content'),
+  download = document.querySelector('#download');
+const referenceBox = document.querySelector('#reference-choice'),
+  referenceSelect = document.querySelector('#reference-source'),
+  currentStatus = document.querySelector('#current-status'),
+  referenceActions = document.querySelector('#reference-actions');
+let source = null,
+  activeJobId = null,
+  activeMediaTitle = 'Nieznany tytuł',
+  activeDirectoryJob = null,
+  jobViewVersion = 0;
+const ocrActivity = document.createElement('div'),
+  ocrActivityLabel = document.createElement('span'),
+  ocrElapsed = document.createElement('span');
+ocrActivity.className = 'entry INFO ocr-console-entry';
+ocrActivity.setAttribute('aria-live', 'off');
+ocrActivity.append(ocrActivityLabel, ocrElapsed);
+let ocrStartedAt = null,
+  ocrTimer = null,
+  ocrConnected = true;
+function updateOcrElapsed() {
+  if (ocrStartedAt === null) return;
+  const seconds = Math.max(0, Math.floor((Date.now() - ocrStartedAt) / 1000));
+  if (!output.contains(ocrActivity)) output.append(ocrActivity);
+  ocrElapsed.textContent = ` · czas oczekiwania: ${Math.floor(seconds / 60)} min ${String(seconds % 60).padStart(2, '0')} s`;
 }
-function setOcrConnection(connected){
-  ocrConnected=connected;
-  ocrActivity.setAttribute('data-connected',String(connected));
-  ocrActivityLabel.textContent=connected?'[OCR_RUNNING] OCR w toku…':'[OCR_RUNNING] Brak połączenia — stan OCR niepotwierdzony';
+function setOcrConnection(connected) {
+  ocrConnected = connected;
+  ocrActivity.setAttribute('data-connected', String(connected));
+  ocrActivityLabel.textContent = connected
+    ? '[OCR_RUNNING] OCR w toku…'
+    : '[OCR_RUNNING] Brak połączenia — stan OCR niepotwierdzony';
 }
-function setOcrActivity(stage,progress,timestamp){
-  if(stage!=='OCR_RUNNING'||Number(progress)>=75){
-    if(ocrTimer!==null)clearInterval(ocrTimer);
-    ocrTimer=null;ocrStartedAt=null;ocrActivity.remove();
+function setOcrActivity(stage, progress, timestamp) {
+  if (stage !== 'OCR_RUNNING' || Number(progress) >= 75) {
+    if (ocrTimer !== null) clearInterval(ocrTimer);
+    ocrTimer = null;
+    ocrStartedAt = null;
+    ocrActivity.remove();
     return;
   }
-  const started=Date.parse(timestamp);
-  if(ocrStartedAt===null)ocrStartedAt=Number.isFinite(started)?started:Date.now();
+  const started = Date.parse(timestamp);
+  if (ocrStartedAt === null) ocrStartedAt = Number.isFinite(started) ? started : Date.now();
   setOcrConnection(ocrConnected);
   updateOcrElapsed();
-  if(ocrTimer===null)ocrTimer=setInterval(updateOcrElapsed,1000);
+  if (ocrTimer === null) ocrTimer = setInterval(updateOcrElapsed, 1000);
 }
 
-function clearConsole(){output.replaceChildren();updateOcrElapsed();if(typeof updateAiElapsed==='function')updateAiElapsed()}
-function line(level,stage,message,time=new Date(),progress=null){const el=document.createElement('div'),percent=progress==null?'':` [${Math.max(0,Math.min(100,Number(progress)||0))}%]`;el.className=`entry ${level}${stage.endsWith('_SUMMARY')?' operation-summary':''}${/^AI_(SYNC|TRANSLATE)(_|$)/.test(stage)?' ai-event':''}`;el.textContent=`[${time.toLocaleTimeString('pl-PL',{hour12:false})}] [${level}] [${stage}]${percent} ${message}`;output.append(el);if(ocrStartedAt!==null)output.append(ocrActivity);requestAnimationFrame(()=>{output.scrollTop=output.scrollHeight})}
-function nodeText(value){const node=document.createElement('span');node.textContent=value??'—';return node.outerHTML}
-function sourceId(item){return `${item.sourceType}:${item.sourceType==='external'?item.name:item.streamIndex}`}
-function referenceLabel(item){if(!item)return '—';const flag=item.forced?' · forced=true · kompletność wymaga oceny':'';if(item.sourceType==='external')return item.name+flag;return `#${item.streamIndex} · ${(item.codec||'').toUpperCase()} · ${(item.language||'—').toUpperCase()}${item.title?` · ${item.title}`:''}${flag}`}
-function ranking(items){return `<ol class="result-list">${(items||[]).map(item=>`<li><strong>${nodeText(referenceLabel(item))}</strong> — ${item.score} pkt<br><small>${nodeText((item.reasons||[]).join(', '))}</small></li>`).join('')||'<li>Brak</li>'}</ol>`}
-function identity(value){if(!value)return 'nierozpoznane';if(value.kind==='EPISODE')return `${value.series_title||'serial'} · S${String(value.season).padStart(2,'0')}E${String(value.episode).padStart(2,'0')}${value.episode_end?`-E${String(value.episode_end).padStart(2,'0')}`:''}`;return `${value.normalized_title||'film'}${value.year?` (${value.year})`:''}`}
-function candidates(items){return `<ul class="result-list">${(items||[]).map(item=>`<li><strong>${nodeText(item.name)}</strong><br><small>Dopasowanie nazwy: ${nodeText(item.identityMatch?.status||'—')} (${item.identityMatch?.confidence==null?'—':Math.round(item.identityMatch.confidence*100)+'%'}) · zgodność czasowa: ${nodeText(item.timingCompatibility)}<br>${nodeText((item.identityMatch?.reasons||[]).join(', '))}<br>Segmenty: ${nodeText(item.segments)} · zakres czasowy: ${duration(item.firstTimestamp==null?null:item.firstTimestamp*1000)}–${duration(item.lastTimestamp==null?null:item.lastTimestamp*1000)} · pokrycie: ${item.movieCoverage==null?'—':Math.round(item.movieCoverage*100)+'%'}${item.endOverrunSeconds>0?`<br>Koniec względem materiału: +${duration(item.endOverrunSeconds*1000)}`:''}${item.eligibleByDefault===false?`<br>Automatyczne użycie zablokowane; materiał wymaga ręcznej weryfikacji.`:""}${item.archiveName?`<br>W paczce: ${nodeText(item.archiveName)}`:""}${item.reasonCode?`<br>Powód: ${nodeText(item.reasonCode)}`:''}</small></li>`).join('')||'<li>Brak</li>'}</ul>`}
-function rejected(items){return `<ul class="result-list">${(items||[]).map(item=>`<li><strong>${nodeText(item.name)}</strong><br><small>${nodeText((item.matchReasons||[item.reason||'Nie można bezpiecznie dołączyć pliku']).join(', '))}</small></li>`).join('')||'<li>Brak</li>'}</ul>`}
-function hypotheses(items){return `<ul class="result-list">${(items||[]).map(item=>{
-  const credible=item.sufficientAnchors&&['HIGH','MEDIUM'].includes(item.confidence);
-  const assessment=item.contentAssessment;
-  const evidence=assessment?`<br>Podpisy autorów (do oceny): ${assessment.possibleAuthorCredits?.length||0} · plansze (do oceny): ${assessment.possibleTitleCards?.length||0} · kwestie bez potwierdzenia: ${assessment.unconfirmedDialogue?.length||0}<br>${nodeText(assessment.notice)}`:'';
-  return `<li><strong>${nodeText(item.originalName||item.candidate)}</strong><br><strong>${nodeText(credible?item.hypothesis:'brak wiarygodnej hipotezy')}</strong><br><small>${credible?`Offset: ${nodeText(item.offsetMs)} ms · rozrzut: ${nodeText(item.spreadMs)} ms · `:''}pokrycie: ${Math.round((item.analysisCoverage||0)*100)}% · pewność: ${nodeText(item.confidence)}${credible?'':' · brak wystarczającego potwierdzenia dialogów'}<br>${nodeText(item.verification)}${evidence}</small></li>`;
-}).join('')||'<li>Brak wystarczających danych</li>'}</ul>`}
+function clearConsole() {
+  output.replaceChildren();
+  updateOcrElapsed();
+  if (typeof updateAiElapsed === 'function') updateAiElapsed();
+}
+function line(level, stage, message, time = new Date(), progress = null) {
+  const el = document.createElement('div'),
+    percent = progress == null ? '' : ` [${Math.max(0, Math.min(100, Number(progress) || 0))}%]`;
+  el.className = `entry ${level}${stage.endsWith('_SUMMARY') ? ' operation-summary' : ''}${/^AI_(SYNC|TRANSLATE)(_|$)/.test(stage) ? ' ai-event' : ''}`;
+  el.textContent = `[${time.toLocaleTimeString('pl-PL', { hour12: false })}] [${level}] [${stage}]${percent} ${message}`;
+  output.append(el);
+  if (ocrStartedAt !== null) output.append(ocrActivity);
+  requestAnimationFrame(() => {
+    output.scrollTop = output.scrollHeight;
+  });
+}
+function nodeText(value) {
+  const node = document.createElement('span');
+  node.textContent = value ?? '—';
+  return node.outerHTML;
+}
+function sourceId(item) {
+  return `${item.sourceType}:${item.sourceType === 'external' ? item.name : item.streamIndex}`;
+}
+function referenceLabel(item) {
+  if (!item) return '—';
+  const flag = item.forced ? ' · forced=true · kompletność wymaga oceny' : '';
+  if (item.sourceType === 'external') return item.name + flag;
+  return (
+    `#${item.streamIndex} · ${(item.codec || '').toUpperCase()} · ` +
+    `${(item.language || '—').toUpperCase()}${item.title ? ` · ${item.title}` : ''}${flag}`
+  );
+}
+function ranking(items) {
+  return (
+    '<ol class="result-list">' +
+    ((items || [])
+      .map(
+        (item) =>
+          `<li><strong>${nodeText(referenceLabel(item))}</strong> — ${item.score} pkt` +
+          `<br><small>${nodeText((item.reasons || []).join(', '))}</small></li>`,
+      )
+      .join('') || '<li>Brak</li>') +
+    '</ol>'
+  );
+}
 
-function duration(ms){if(ms==null)return '—';const hours=Math.floor(ms/3600000),minutes=Math.floor(ms%3600000/60000),seconds=Math.floor(ms%60000/1000),millis=Math.round(ms%1000);return `${hours?String(hours).padStart(2,'0')+':':''}${String(minutes).padStart(2,'0')}:${String(seconds).padStart(2,'0')}.${String(millis).padStart(3,'0')}`}
-function fileSize(bytes){const size=Number(bytes)||0;return size>=1048576?`${(size/1048576).toFixed(2)} MB`:`${(size/1024).toFixed(1)} KB`}
-function tracks(items,subtitle=false){return `<ul class="result-list">${(items||[]).map(item=>`<li>#${nodeText(item.streamIndex)} · ${nodeText((item.codec||'').toUpperCase())} · ${nodeText((item.language||'—').toUpperCase())}${subtitle?'':` · ${nodeText(item.channelLayout||item.channels)}`}</li>`).join('')||'<li>Brak</li>'}</ul>`}
-function setProgress(value){const progress=Math.max(0,Math.min(100,Number(value)||0));progressEl.textContent=`${progress}%`;progressBar.style.width=`${progress}%`;progressTrack.setAttribute('aria-valuenow',String(progress))}
-function referenceNeedsConfirmation(report){return Boolean(report?.externalReferenceConfirmationRequired||report?.workpack?.referenceAmbiguous)}
-function setDownload(job,pack){const ready=Boolean(pack)&&!referenceNeedsConfirmation(job?.report);download.setAttribute('aria-disabled',String(!ready));if(ready){download.href=`/api/tasks/${job.jobId}/download`;download.download=pack.filename||''}else{download.removeAttribute('href');download.removeAttribute('download')}}
+function identity(value) {
+  if (!value) return 'nierozpoznane';
+  if (value.kind === 'EPISODE')
+    return (
+      `${value.series_title || 'serial'} · S${String(value.season).padStart(2, '0')}` +
+      `E${String(value.episode).padStart(2, '0')}${value.episode_end ? `-E${String(value.episode_end).padStart(2, '0')}` : ''}`
+    );
+  return `${value.normalized_title || 'film'}${value.year ? ` (${value.year})` : ''}`;
+}
+function candidates(items) {
+  return (
+    '<ul class="result-list">' +
+    ((items || [])
+      .map((item) => {
+        const confidence =
+          item.identityMatch?.confidence == null
+            ? '—'
+            : Math.round(item.identityMatch.confidence * 100) + '%';
+        const start = duration(item.firstTimestamp == null ? null : item.firstTimestamp * 1000);
+        const end = duration(item.lastTimestamp == null ? null : item.lastTimestamp * 1000);
+        const coverage =
+          item.movieCoverage == null ? '—' : Math.round(item.movieCoverage * 100) + '%';
+        return (
+          `<li><strong>${nodeText(item.name)}</strong><br>` +
+          `<small>Dopasowanie nazwy: ${nodeText(item.identityMatch?.status || '—')} (${confidence})` +
+          ` · zgodność czasowa: ${nodeText(item.timingCompatibility)}` +
+          `<br>${nodeText((item.identityMatch?.reasons || []).join(', '))}` +
+          `<br>Segmenty: ${nodeText(item.segments)} · zakres czasowy: ${start}–${end} · pokrycie: ${coverage}` +
+          (item.endOverrunSeconds > 0
+            ? `<br>Koniec względem materiału: +${duration(item.endOverrunSeconds * 1000)}`
+            : '') +
+          (item.eligibleByDefault === false
+            ? '<br>Automatyczne użycie zablokowane; materiał wymaga ręcznej weryfikacji.'
+            : '') +
+          (item.archiveName ? `<br>W paczce: ${nodeText(item.archiveName)}` : '') +
+          (item.reasonCode ? `<br>Powód: ${nodeText(item.reasonCode)}` : '') +
+          '</small></li>'
+        );
+      })
+      .join('') || '<li>Brak</li>') +
+    '</ul>'
+  );
+}
 
-function resetJobView(){
-  jobViewVersion++;
-  if(source)source.close();
-  source=null;activeJobId=null;activeDirectoryJob=null;activeMediaTitle='Nieznany tytuł';
-  localStorage.removeItem('subtitleAgentWorkpackJobId');
-  for(const selector of ['#batch-progress','#ai-batch-progress']){
-    const panel=document.querySelector(selector);panel.hidden=true;panel.replaceChildren();
+function rejected(items) {
+  return (
+    '<ul class="result-list">' +
+    ((items || [])
+      .map(
+        (item) =>
+          `<li><strong>${nodeText(item.name)}</strong><br>` +
+          `<small>${nodeText((item.matchReasons || [item.reason || 'Nie można bezpiecznie dołączyć pliku']).join(', '))}</small></li>`,
+      )
+      .join('') || '<li>Brak</li>') +
+    '</ul>'
+  );
+}
+
+function hypotheses(items) {
+  return `<ul class="result-list">${
+    (items || [])
+      .map((item) => {
+        const credible = item.sufficientAnchors && ['HIGH', 'MEDIUM'].includes(item.confidence);
+        const assessment = item.contentAssessment;
+        const evidence = assessment
+          ? `<br>Podpisy autorów (do oceny): ${assessment.possibleAuthorCredits?.length || 0} · ` +
+            `plansze (do oceny): ${assessment.possibleTitleCards?.length || 0} · ` +
+            `kwestie bez potwierdzenia: ${assessment.unconfirmedDialogue?.length || 0}` +
+            `<br>${nodeText(assessment.notice)}`
+          : '';
+        return (
+          `<li>` +
+          `<strong>${nodeText(item.originalName || item.candidate)}</strong>` +
+          `<br>` +
+          `<strong>${nodeText(credible ? item.hypothesis : 'brak wiarygodnej hipotezy')}</strong>` +
+          `<br>` +
+          '<small>' +
+          (credible
+            ? `Offset: ${nodeText(item.offsetMs)} ms · rozrzut: ${nodeText(item.spreadMs)} ms · `
+            : '') +
+          `pokrycie: ${Math.round((item.analysisCoverage || 0) * 100)}% · pewność: ${nodeText(item.confidence)}` +
+          (credible ? '' : ' · brak wystarczającego potwierdzenia dialogów') +
+          `<br>${nodeText(item.verification)}${evidence}</small></li>`
+        );
+      })
+      .join('') || '<li>Brak wystarczających danych</li>'
+  }</ul>`;
+}
+
+function duration(ms) {
+  if (ms == null) return '—';
+  const hours = Math.floor(ms / 3600000),
+    minutes = Math.floor((ms % 3600000) / 60000),
+    seconds = Math.floor((ms % 60000) / 1000),
+    millis = Math.round(ms % 1000);
+  return `${hours ? String(hours).padStart(2, '0') + ':' : ''}${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(millis).padStart(3, '0')}`;
+}
+function fileSize(bytes) {
+  const size = Number(bytes) || 0;
+  return size >= 1048576 ? `${(size / 1048576).toFixed(2)} MB` : `${(size / 1024).toFixed(1)} KB`;
+}
+function tracks(items, subtitle = false) {
+  return (
+    '<ul class="result-list">' +
+    ((items || [])
+      .map(
+        (item) =>
+          `<li>#${nodeText(item.streamIndex)} · ${nodeText((item.codec || '').toUpperCase())}` +
+          ` · ${nodeText((item.language || '—').toUpperCase())}` +
+          (subtitle ? '' : ` · ${nodeText(item.channelLayout || item.channels)}`) +
+          '</li>',
+      )
+      .join('') || '<li>Brak</li>') +
+    '</ul>'
+  );
+}
+
+function setProgress(value) {
+  const progress = Math.max(0, Math.min(100, Number(value) || 0));
+  progressEl.textContent = `${progress}%`;
+  progressBar.style.width = `${progress}%`;
+  progressTrack.setAttribute('aria-valuenow', String(progress));
+}
+function referenceNeedsConfirmation(report) {
+  return Boolean(
+    report?.externalReferenceConfirmationRequired || report?.workpack?.referenceAmbiguous,
+  );
+}
+function setDownload(job, pack) {
+  const ready = Boolean(pack) && !referenceNeedsConfirmation(job?.report);
+  download.setAttribute('aria-disabled', String(!ready));
+  if (ready) {
+    download.href = `/api/tasks/${job.jobId}/download`;
+    download.download = pack.filename || '';
+  } else {
+    download.removeAttribute('href');
+    download.removeAttribute('download');
   }
-  for(const selector of ['#batch-skip','#batch-resume','#batch-retry'])document.querySelector(selector).hidden=true;
-  results.hidden=true;referenceBox.hidden=true;referenceActions.hidden=true;currentStatus.hidden=false;
-  referenceSelect.replaceChildren();setDownload(null,null);setProgress(0);setOcrActivity('QUEUED',0);
-  if(typeof stopAiElapsed==='function')stopAiElapsed();
-  if(typeof hideAiHandoff==='function')hideAiHandoff();
-  statusEl.textContent='OCZEKIWANIE';activityEl.textContent='Wysyłanie nowego zadania…';
 }
 
-function referenceControls(report){const selected=report.selectedReference||report.selectedEnglish,pack=report.workpack;
-  referenceSelect.replaceChildren();for(const item of (report.referenceRanking||report.englishRanking)||[]){const option=document.createElement('option');option.value=sourceId(item);option.textContent=`${referenceLabel(item)} · ${item.score} pkt`;option.selected=selected&&sourceId(item)===sourceId(selected);referenceSelect.append(option)}
-  const confirmationRequired=Boolean(report.externalReferenceConfirmationRequired),canChoose=confirmationRequired||referenceSelect.options.length>1;
-  const summary=document.querySelector('#reference-summary');
-  summary.hidden=!selected||confirmationRequired;
-  summary.textContent=selected?`Wybrana referencja: ${referenceLabel(selected)}`:'';
-  document.querySelector('#reference-question').hidden=!confirmationRequired;
-  document.querySelector('#reference-label').className=confirmationRequired?'sr-only':'';
-  document.querySelector('#reference-field').hidden=!canChoose;
-  referenceActions.hidden=!canChoose;
-  document.querySelector('#rebuild').textContent=confirmationRequired?'Tak, użyj jako wzorca':pack?.referenceAmbiguous?'Zatwierdź wybór':'Zbuduj ponownie';
-  referenceBox.hidden=!(selected||canChoose);
-  currentStatus.hidden=!referenceBox.hidden;
+function resetJobView() {
+  jobViewVersion++;
+  if (source) source.close();
+  source = null;
+  activeJobId = null;
+  activeDirectoryJob = null;
+  activeMediaTitle = 'Nieznany tytuł';
+  localStorage.removeItem('subtitleAgentWorkpackJobId');
+  for (const selector of ['#batch-progress', '#ai-batch-progress']) {
+    const panel = document.querySelector(selector);
+    panel.hidden = true;
+    panel.replaceChildren();
+  }
+  for (const selector of ['#batch-skip', '#batch-resume', '#batch-retry'])
+    document.querySelector(selector).hidden = true;
+  results.hidden = true;
+  referenceBox.hidden = true;
+  referenceActions.hidden = true;
+  currentStatus.hidden = false;
+  referenceSelect.replaceChildren();
+  setDownload(null, null);
+  setProgress(0);
+  setOcrActivity('QUEUED', 0);
+  if (typeof stopAiElapsed === 'function') stopAiElapsed();
+  if (typeof hideAiHandoff === 'function') hideAiHandoff();
+  statusEl.textContent = 'OCZEKIWANIE';
+  activityEl.textContent = 'Wysyłanie nowego zadania…';
 }
-function render(job){if(typeof taskNotifications!=='undefined'&&!['INSPECTION_READY','WORKPACK_READY','WORKPACK_INCOMPLETE','NEEDS_OCR','FAILED','INTERRUPTED'].includes(job.status))taskNotifications.trackJob(job.jobId);const report=job.report||{},pack=report.workpack;activeDirectoryJob=null;for(const selector of ['#batch-skip','#batch-resume','#batch-retry']){const button=document.querySelector(selector);if(button)button.hidden=true;}const batchPanel=document.querySelector('#batch-progress');if(batchPanel)batchPanel.hidden=!report.batch;if(report.batch&&typeof renderDirectoryBatch==='function'){renderDirectoryBatch(job);return;}activeMediaTitle=job.displayTitle||readableMediaTitle(report.media?.name||report.mediaInspection?.name||'');setDownload(job,pack);if(!report.jobType){results.hidden=true;referenceBox.hidden=true;referenceActions.hidden=true;currentStatus.hidden=false;return}activeJobId=job.jobId;results.hidden=false;
-  const selected=(report.selectedReference||report.selectedEnglish),warnings=[...(report.warnings||[]),...(report.incompleteReasons||[])];
-  const media=report.mediaInspection||{},fps=media.fps||{},ignored=report.ignoredUnrelatedSubtitleFiles||0,ocr=report.ocr,zipDetails=pack?`<dt>Rozmiar ZIP</dt><dd>${fileSize(pack.sizeBytes)}</dd><dt>SHA-256</dt><dd>${nodeText(pack.sha256)}</dd>`:'',ocrMessage=ocr?.structuralQuality==='GOOD'?'Struktura OCR poprawna — tekst wymaga korekty językowej':`Struktura OCR wymaga weryfikacji (${nodeText(ocr?.structuralQuality)})`,ocrDetails=ocr?`<h3>OCR referencji</h3><p>${ocrMessage}</p><dl><dt>Silnik</dt><dd>${nodeText(ocr.engine)}</dd><dt>Struktura</dt><dd>${nodeText(ocr.structuralQuality)}</dd><dt>Tekst</dt><dd>${nodeText(ocr.textQuality)}</dd><dt>Segmenty</dt><dd>${nodeText(ocr.cueCount)}</dd><dt>Puste segmenty</dt><dd>${nodeText(ocr.emptyCueCount)}</dd></dl>`:'';
-  content.innerHTML=`<dl><dt>Tryb</dt><dd>${nodeText(report.pipeline)}</dd><dt>Rozpoznane medium</dt><dd>${nodeText(identity(report.media?.identity))}</dd><dt>Wybrana referencja</dt><dd>${nodeText(referenceLabel(selected))}</dd>${zipDetails}</dl>${ocrDetails}<h3>Dane materiału</h3><dl><dt>Plik</dt><dd>${nodeText(media.name)}</dd><dt>Typ</dt><dd>${nodeText(identity(media.identity))}</dd><dt>Czas</dt><dd>${duration(media.duration_ms)}</dd><dt>Kontener</dt><dd>${nodeText(media.container)}</dd><dt>Wideo</dt><dd>${nodeText((media.video_codec||'').toUpperCase())} · ${nodeText(media.width)}×${nodeText(media.height)}</dd><dt>FPS</dt><dd>${nodeText(fps.decimal)} (${nodeText(fps.fraction)})</dd><dt>Rozmiar</dt><dd>${nodeText(media.size_bytes)} B</dd><dt>Bitrate</dt><dd>${nodeText(media.bitrate)} bit/s</dd></dl><h3>Audio</h3>${tracks(media.audio_tracks)}<h3>Napisy osadzone</h3>${tracks(report.embeddedSubtitleTracks,true)}<h3>Ranking ścieżek referencyjnych</h3>${ranking((report.referenceRanking||report.englishRanking))}<h3>Pasujące lub niejednoznaczne napisy PL</h3>${candidates(report.polishCandidateInspection)}${report.incompatiblePolishCandidates?.length?`<h3>Niezgodne czasowo napisy PL</h3>${candidates(report.incompatiblePolishCandidates)}`:''}${ignored?`<p>Pominięto ${ignored} plików dotyczących innych odcinków lub filmów.</p>`:''}${report.rejectedPolishCandidates?.length?`<h3>Odrzucone napisy PL</h3>${rejected(report.rejectedPolishCandidates)}`:''}<h3>Hipotezy offsetu lub driftu</h3>${hypotheses(report.synchronizationHypotheses)}<h3>Ostrzeżenia</h3><div class="warning-box">${warnings.map(item=>`<p>⚠ ${nodeText(item)}</p>`).join('')||'<p>Brak ostrzeżeń.</p>'}</div>`;
+
+function referenceControls(report) {
+  const selected = report.selectedReference || report.selectedEnglish,
+    pack = report.workpack;
+  referenceSelect.replaceChildren();
+  for (const item of report.referenceRanking || report.englishRanking || []) {
+    const option = document.createElement('option');
+    option.value = sourceId(item);
+    option.textContent = `${referenceLabel(item)} · ${item.score} pkt`;
+    option.selected = selected && sourceId(item) === sourceId(selected);
+    referenceSelect.append(option);
+  }
+  const confirmationRequired = Boolean(report.externalReferenceConfirmationRequired),
+    canChoose = confirmationRequired || referenceSelect.options.length > 1;
+  const summary = document.querySelector('#reference-summary');
+  summary.hidden = !selected || confirmationRequired;
+  summary.textContent = selected ? `Wybrana referencja: ${referenceLabel(selected)}` : '';
+  document.querySelector('#reference-question').hidden = !confirmationRequired;
+  document.querySelector('#reference-label').className = confirmationRequired ? 'sr-only' : '';
+  document.querySelector('#reference-field').hidden = !canChoose;
+  referenceActions.hidden = !canChoose;
+  document.querySelector('#rebuild').textContent = confirmationRequired
+    ? 'Tak, użyj jako wzorca'
+    : pack?.referenceAmbiguous
+      ? 'Zatwierdź wybór'
+      : 'Zbuduj ponownie';
+  referenceBox.hidden = !(selected || canChoose);
+  currentStatus.hidden = !referenceBox.hidden;
+}
+function render(job) {
+  if (
+    typeof taskNotifications !== 'undefined' &&
+    ![
+      'INSPECTION_READY',
+      'WORKPACK_READY',
+      'WORKPACK_INCOMPLETE',
+      'NEEDS_OCR',
+      'FAILED',
+      'INTERRUPTED',
+    ].includes(job.status)
+  )
+    taskNotifications.trackJob(job.jobId);
+  const report = job.report || {},
+    pack = report.workpack;
+  activeDirectoryJob = null;
+  for (const selector of ['#batch-skip', '#batch-resume', '#batch-retry']) {
+    const button = document.querySelector(selector);
+    if (button) button.hidden = true;
+  }
+  const batchPanel = document.querySelector('#batch-progress');
+  if (batchPanel) batchPanel.hidden = !report.batch;
+  if (report.batch && typeof renderDirectoryBatch === 'function') {
+    renderDirectoryBatch(job);
+    return;
+  }
+  activeMediaTitle =
+    job.displayTitle ||
+    readableMediaTitle(report.media?.name || report.mediaInspection?.name || '');
+  setDownload(job, pack);
+  if (!report.jobType) {
+    results.hidden = true;
+    referenceBox.hidden = true;
+    referenceActions.hidden = true;
+    currentStatus.hidden = false;
+    return;
+  }
+  activeJobId = job.jobId;
+  results.hidden = false;
+  const selected = report.selectedReference || report.selectedEnglish,
+    warnings = [...(report.warnings || []), ...(report.incompleteReasons || [])];
+  const media = report.mediaInspection || {},
+    fps = media.fps || {},
+    ignored = report.ignoredUnrelatedSubtitleFiles || 0,
+    ocr = report.ocr,
+    zipDetails = pack
+      ? `<dt>Rozmiar ZIP</dt><dd>${fileSize(pack.sizeBytes)}</dd><dt>SHA-256</dt><dd>${nodeText(pack.sha256)}</dd>`
+      : '',
+    ocrMessage =
+      ocr?.structuralQuality === 'GOOD'
+        ? 'Struktura OCR poprawna — tekst wymaga korekty językowej'
+        : `Struktura OCR wymaga weryfikacji (${nodeText(ocr?.structuralQuality)})`,
+    ocrDetails = ocr
+      ? `<h3>OCR referencji</h3>` +
+        `<p>${ocrMessage}</p>` +
+        `<dl>` +
+        `<dt>Silnik</dt>` +
+        `<dd>${nodeText(ocr.engine)}</dd>` +
+        `<dt>Struktura</dt>` +
+        `<dd>${nodeText(ocr.structuralQuality)}</dd>` +
+        `<dt>Tekst</dt>` +
+        `<dd>${nodeText(ocr.textQuality)}</dd>` +
+        `<dt>Segmenty</dt>` +
+        `<dd>${nodeText(ocr.cueCount)}</dd>` +
+        `<dt>Puste segmenty</dt>` +
+        `<dd>${nodeText(ocr.emptyCueCount)}</dd></dl>`
+      : '';
+  content.innerHTML =
+    `<dl>` +
+    `<dt>Tryb</dt>` +
+    `<dd>${nodeText(report.pipeline)}</dd>` +
+    `<dt>Rozpoznane medium</dt>` +
+    `<dd>${nodeText(identity(report.media?.identity))}</dd>` +
+    `<dt>Wybrana referencja</dt>` +
+    `<dd>${nodeText(referenceLabel(selected))}</dd>${zipDetails}</dl>${ocrDetails}` +
+    `<h3>Dane materiału</h3>` +
+    `<dl>` +
+    `<dt>Plik</dt>` +
+    `<dd>${nodeText(media.name)}</dd>` +
+    `<dt>Typ</dt>` +
+    `<dd>${nodeText(identity(media.identity))}</dd>` +
+    `<dt>Czas</dt>` +
+    `<dd>${duration(media.duration_ms)}</dd>` +
+    `<dt>Kontener</dt>` +
+    `<dd>${nodeText(media.container)}</dd>` +
+    `<dt>Wideo</dt>` +
+    `<dd>${nodeText((media.video_codec || '').toUpperCase())} · ${nodeText(media.width)}×${nodeText(media.height)}</dd>` +
+    `<dt>FPS</dt>` +
+    `<dd>${nodeText(fps.decimal)} (${nodeText(fps.fraction)})</dd>` +
+    `<dt>Rozmiar</dt>` +
+    `<dd>${nodeText(media.size_bytes)} B</dd>` +
+    `<dt>Bitrate</dt>` +
+    `<dd>${nodeText(media.bitrate)} bit/s</dd></dl>` +
+    `<h3>Audio</h3>${tracks(media.audio_tracks)}` +
+    `<h3>Napisy osadzone</h3>${tracks(report.embeddedSubtitleTracks, true)}` +
+    `<h3>Ranking ścieżek referencyjnych</h3>${ranking(report.referenceRanking || report.englishRanking)}` +
+    `<h3>Pasujące lub niejednoznaczne napisy PL</h3>${candidates(report.polishCandidateInspection)}` +
+    (report.incompatiblePolishCandidates?.length
+      ? `<h3>Niezgodne czasowo napisy PL</h3>${candidates(report.incompatiblePolishCandidates)}`
+      : '') +
+    (ignored ? `<p>Pominięto ${ignored} plików dotyczących innych odcinków lub filmów.</p>` : '') +
+    (report.rejectedPolishCandidates?.length
+      ? `<h3>Odrzucone napisy PL</h3>${rejected(report.rejectedPolishCandidates)}`
+      : '') +
+    `<h3>Hipotezy offsetu lub driftu</h3>${hypotheses(report.synchronizationHypotheses)}` +
+    `<h3>Ostrzeżenia</h3>` +
+    '<div class="warning-box">' +
+    (warnings.map((item) => `<p>⚠ ${nodeText(item)}</p>`).join('') || '<p>Brak ostrzeżeń.</p>') +
+    '</div>';
   referenceControls(report);
-  if(typeof renderAiSync==='function')renderAiSync(job)}
-async function load(jobId){const version=jobViewVersion;const response=await fetch(`/api/tasks/${jobId}`);if(response.ok){const job=await response.json();if(version!==jobViewVersion||(activeJobId&&activeJobId!==jobId))return;statusEl.textContent=job.status;setProgress(job.progress);render(job)}}
-function connect(jobId,after=0){referenceBox.hidden=true;referenceActions.hidden=true;currentStatus.hidden=false;activityEl.textContent='Oczekiwanie na postęp zadania…';if(source)source.close();setOcrActivity("QUEUED",0);setOcrConnection(false);const connection=new EventSource(`/api/jobs/${jobId}/events?after=${after}`);source=connection;let finished=false;line('DEBUG','SSE',`Połączenie ze strumieniem zdarzeń zadania ${jobId}`);connection.addEventListener('open',()=>{if(source!==connection)return;setOcrConnection(true);line('SUCCESS','SSE','Połączono — oczekiwanie na kolejne etapy')});connection.addEventListener('job',event=>{if(source!==connection)return;const data=JSON.parse(event.data);setOcrActivity(data.stage,data.progress,data.timestamp);statusEl.textContent=data.stage;setProgress(data.progress);activityEl.textContent=data.message;line(data.level,data.stage,data.message,new Date(data.timestamp),data.progress);if(['INSPECTION_READY','WORKPACK_READY','WORKPACK_INCOMPLETE','NEEDS_OCR','FAILED','INTERRUPTED','BATCH_PAUSED'].includes(data.stage)){finished=true;connection.close();if(source===connection)source=null;line('DEBUG','SSE','Zadanie zakończone — strumień zdarzeń zamknięty');load(jobId)}});connection.onerror=()=>{if(!finished&&source===connection){setOcrConnection(false);activityEl.textContent='Utracono połączenie — trwa ponowne łączenie';line('WARNING','SSE','Utracono połączenie. Trwa ponowne łączenie…')}};localStorage.setItem('subtitleAgentWorkpackJobId',jobId)}
-form.addEventListener('submit',async event=>{event.preventDefault();const button=form.querySelector('button'),mode=document.querySelector('#task-type').value;button.disabled=true;resetJobView();output.replaceChildren();line('INFO','REQUEST',`${operationName(mode)} · Film: ${readableMediaTitle(document.querySelector('#media-path').value)}`);try{const response=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mediaPath:document.querySelector('#media-path').value,mode})});const body=await response.json();if(!response.ok)throw new Error(body.detail?.message||'Nie udało się utworzyć zadania');if(typeof taskNotifications!=='undefined')taskNotifications.trackJob(body.jobId);activeMediaTitle=body.displayTitle||readableMediaTitle(document.querySelector('#media-path').value);activeJobId=body.jobId;activeDirectoryJob=null;results.hidden=true;if(body.jobType==='DIRECTORY_WORKPACK')await load(body.jobId);line('SUCCESS','REQUEST',`Zadanie przyjęte · Film: ${activeMediaTitle}`);connect(body.jobId)}catch(error){setDownload(null,null);line('ERROR','REQUEST',error.message)}finally{button.disabled=false}});
-document.querySelector('#rebuild').addEventListener('click',async()=>{if(!activeJobId)return;if(activeDirectoryJob){await continueDirectoryBatch('reference');return;}line('INFO','REFERENCE',`Przebudowa workpacka · Film: ${activeMediaTitle}`);const response=await fetch(`/api/workpacks/${activeJobId}/reference`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({referenceSourceId:referenceSelect.value})});const body=await response.json();if(!response.ok){line('ERROR','REFERENCE',body.detail?.message||'Nie udało się zmienić referencji');await load(activeJobId);return}if(typeof taskNotifications!=='undefined')taskNotifications.trackJob(activeJobId,true);referenceBox.hidden=true;setDownload(null,null);connect(activeJobId,body.afterSequence)});
-download.addEventListener('click',()=>line('INFO','DOWNLOAD',`Pobieranie workpacka · Film: ${activeMediaTitle}`));document.querySelector('#clear').addEventListener('click',clearConsole);const saved=localStorage.getItem('subtitleAgentWorkpackJobId');if(saved){load(saved);connect(saved)}
+  if (typeof renderAiSync === 'function') renderAiSync(job);
+}
+async function load(jobId) {
+  const version = jobViewVersion;
+  const response = await fetch(`/api/tasks/${jobId}`);
+  if (response.ok) {
+    const job = await response.json();
+    if (version !== jobViewVersion || (activeJobId && activeJobId !== jobId)) return;
+    statusEl.textContent = job.status;
+    setProgress(job.progress);
+    render(job);
+  }
+}
+function connect(jobId, after = 0) {
+  referenceBox.hidden = true;
+  referenceActions.hidden = true;
+  currentStatus.hidden = false;
+  activityEl.textContent = 'Oczekiwanie na postęp zadania…';
+  if (source) source.close();
+  setOcrActivity('QUEUED', 0);
+  setOcrConnection(false);
+  const connection = new EventSource(`/api/jobs/${jobId}/events?after=${after}`);
+  source = connection;
+  let finished = false;
+  line('DEBUG', 'SSE', `Połączenie ze strumieniem zdarzeń zadania ${jobId}`);
+  connection.addEventListener('open', () => {
+    if (source !== connection) return;
+    setOcrConnection(true);
+    line('SUCCESS', 'SSE', 'Połączono — oczekiwanie na kolejne etapy');
+  });
+  connection.addEventListener('job', (event) => {
+    if (source !== connection) return;
+    const data = JSON.parse(event.data);
+    setOcrActivity(data.stage, data.progress, data.timestamp);
+    statusEl.textContent = data.stage;
+    setProgress(data.progress);
+    activityEl.textContent = data.message;
+    line(data.level, data.stage, data.message, new Date(data.timestamp), data.progress);
+    if (
+      [
+        'INSPECTION_READY',
+        'WORKPACK_READY',
+        'WORKPACK_INCOMPLETE',
+        'NEEDS_OCR',
+        'FAILED',
+        'INTERRUPTED',
+        'BATCH_PAUSED',
+      ].includes(data.stage)
+    ) {
+      finished = true;
+      connection.close();
+      if (source === connection) source = null;
+      line('DEBUG', 'SSE', 'Zadanie zakończone — strumień zdarzeń zamknięty');
+      load(jobId);
+    }
+  });
+  connection.onerror = () => {
+    if (!finished && source === connection) {
+      setOcrConnection(false);
+      activityEl.textContent = 'Utracono połączenie — trwa ponowne łączenie';
+      line('WARNING', 'SSE', 'Utracono połączenie. Trwa ponowne łączenie…');
+    }
+  };
+  localStorage.setItem('subtitleAgentWorkpackJobId', jobId);
+}
+form.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const button = form.querySelector('button'),
+    mode = document.querySelector('#task-type').value;
+  button.disabled = true;
+  resetJobView();
+  output.replaceChildren();
+  line(
+    'INFO',
+    'REQUEST',
+    `${operationName(mode)} · Film: ${readableMediaTitle(document.querySelector('#media-path').value)}`,
+  );
+  try {
+    const response = await fetch('/api/tasks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mediaPath: document.querySelector('#media-path').value, mode }),
+    });
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.detail?.message || 'Nie udało się utworzyć zadania');
+    if (typeof taskNotifications !== 'undefined') taskNotifications.trackJob(body.jobId);
+    activeMediaTitle =
+      body.displayTitle || readableMediaTitle(document.querySelector('#media-path').value);
+    activeJobId = body.jobId;
+    activeDirectoryJob = null;
+    results.hidden = true;
+    if (body.jobType === 'DIRECTORY_WORKPACK') await load(body.jobId);
+    line('SUCCESS', 'REQUEST', `Zadanie przyjęte · Film: ${activeMediaTitle}`);
+    connect(body.jobId);
+  } catch (error) {
+    setDownload(null, null);
+    line('ERROR', 'REQUEST', error.message);
+  } finally {
+    button.disabled = false;
+  }
+});
+document.querySelector('#rebuild').addEventListener('click', async () => {
+  if (!activeJobId) return;
+  if (activeDirectoryJob) {
+    await continueDirectoryBatch('reference');
+    return;
+  }
+  line('INFO', 'REFERENCE', `Przebudowa workpacka · Film: ${activeMediaTitle}`);
+  const response = await fetch(`/api/workpacks/${activeJobId}/reference`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ referenceSourceId: referenceSelect.value }),
+  });
+  const body = await response.json();
+  if (!response.ok) {
+    line('ERROR', 'REFERENCE', body.detail?.message || 'Nie udało się zmienić referencji');
+    await load(activeJobId);
+    return;
+  }
+  if (typeof taskNotifications !== 'undefined') taskNotifications.trackJob(activeJobId, true);
+  referenceBox.hidden = true;
+  setDownload(null, null);
+  connect(activeJobId, body.afterSequence);
+});
+download.addEventListener('click', () =>
+  line('INFO', 'DOWNLOAD', `Pobieranie workpacka · Film: ${activeMediaTitle}`),
+);
+document.querySelector('#clear').addEventListener('click', clearConsole);
+const saved = localStorage.getItem('subtitleAgentWorkpackJobId');
+if (saved) {
+  load(saved);
+  connect(saved);
+}

@@ -23,7 +23,7 @@ async function setup(response,state={status:'idle'},directory=null){
   const script=readFileSync('app/static/ai-sync.js','utf8');
   runInNewContext(readFileSync('app/static/ai-metrics.js','utf8'),context);
   runInNewContext(readFileSync('app/static/media-title.js','utf8'),context);
-  runInNewContext(readFileSync('app/static/app.js','utf8').match(/^function referenceNeedsConfirmation.*$/m)[0],context);
+  runInNewContext(readFileSync('app/static/app.js','utf8').match(/^function referenceNeedsConfirmation\(report\)\s*\{[\s\S]*?\}/m)[0],context);
   runInNewContext(script,context);
   if(!directory?.fromCache)await context.renderAiSync(directory?.job||{jobId:'job',status:'WORKPACK_READY',displayTitle:'Come and See (1985)',report:{pipeline:'PREPARE_SYNC',
     selectedEnglish:{streamIndex:4},polishCandidates:[{archiveName:'polish/a.srt',originalName:'A'},{archiveName:'polish/b.srt'}]}});
