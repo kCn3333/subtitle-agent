@@ -35,7 +35,7 @@ jobs:
           PYCODE
       - uses: docker/setup-buildx-action@v3
       - id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.IMAGE_NAME }}
           tags: |
@@ -46,7 +46,7 @@ jobs:
           labels: |
             org.opencontainers.image.source=https://github.com/kCn3333/subtitle-agent
       - id: ocr-meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.OCR_IMAGE_NAME }}
           tags: |
